@@ -2,15 +2,23 @@
 
 package main
 
+var goexit chan (string)
+
 func main() {
 
 	parse_cli()
 	log.set(cli.log_level, cli.stamps)
 
 	log.info("start meadow")
-	log.debug("some debugging message")
-	log.trace("some trace message")
-	log.err("some error message")
-	log.info("finish meadow")
-	log.fatal("some fatal exit message")
+
+	goexit = make(chan string)
+	getbuf = make(chan PktBuf, 1)
+	retbuf = make(chan PktBuf, MAXBUF)
+
+	go pkt_buffers()
+	go fwd_to_gw()
+
+	msg := <-goexit
+
+	log.info("finish meadow: %v", msg)
 }

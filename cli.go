@@ -18,7 +18,7 @@ var cli struct {
 	hosts_path string
 	dns_path   string
 	// derived
-	gw_mtu    uint32
+	gw_mtu    uint
 	log_level uint
 }
 
@@ -44,7 +44,7 @@ func parse_cli() {
 	}
 	flag.Parse()
 
-	cli.gw_mtu = 1504
+	cli.gw_mtu = 1500
 
 	if cli.trace {
 		cli.log_level = TRACE
