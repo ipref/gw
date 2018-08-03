@@ -20,7 +20,24 @@ const (
 
 var be = binary.BigEndian
 
-func pp_raw(pb *PktBuf) {
+func fwd_to_gw() {
+
+	var pb *PktBuf
+
+	pb = <-getbuf
+	pb.fill(UDP)
+	if log.level <= TRACE {
+		pb.pp_net()
+		pb.pp_tran()
+		pb.pp_raw()
+	}
+
+	goexit <- "ok"
+}
+
+/* PktBuf helper functions */
+
+func (pb *PktBuf) pp_raw() {
 
 	// RAW  45 00 00 74 2e 52 40 00 40 11 d0 b6 0a fb 1b 6f c0 a8 54 5e 04 15 04 15 00 ..
 
@@ -41,7 +58,7 @@ func pp_raw(pb *PktBuf) {
 	log.trace(sb.String())
 }
 
-func pp_net(pb *PktBuf) {
+func (pb *PktBuf) pp_net() {
 
 	// IP[udp] 4500  192.168.84.93  10.254.22.202  len(64) id(1) ttl(64) frag:4000 csum:0000
 
@@ -81,7 +98,7 @@ func pp_net(pb *PktBuf) {
 	log.trace(sb.String())
 }
 
-func pp_tran(pb *PktBuf) {
+func (pb *PktBuf) pp_tran() {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 	if len(pkt) < 20 {
@@ -114,7 +131,7 @@ func pp_tran(pb *PktBuf) {
 	log.trace(sb.String())
 }
 
-func fill_iphdr(pb *PktBuf) {
+func (pb *PktBuf) fill_iphdr() {
 
 	pb.iphdr = pb.tail
 	pb.tail += 20
@@ -130,7 +147,7 @@ func fill_iphdr(pb *PktBuf) {
 	copy(pb.pkt[pb.iphdr+16:pb.iphdr+20], []byte{192, 168, 84, 94})       // dst
 }
 
-func fill_udphdr(pb *PktBuf) {
+func (pb *PktBuf) fill_udphdr() {
 
 	pb.udphdr = pb.tail
 	pb.tail += 8
@@ -145,7 +162,7 @@ func fill_udphdr(pb *PktBuf) {
 	be.PutUint16(pb.pkt[pb.iphdr+2:pb.iphdr+4], uint16(pb.tail-pb.iphdr)) // pktlen
 }
 
-func fill_payload(pb *PktBuf) {
+func (pb *PktBuf) fill_payload() {
 
 	bb := byte(7)
 	beg := pb.tail
@@ -163,7 +180,7 @@ func fill_payload(pb *PktBuf) {
 	be.PutUint16(pb.pkt[pb.iphdr+2:pb.iphdr+4], uint16(pb.tail-pb.iphdr)) // pktlen
 }
 
-func fill(pb *PktBuf, proto uint) {
+func (pb *PktBuf) fill(proto uint) {
 
 	if len(pb.pkt) < int(cli.gw_mtu+TUNHDR) {
 		log.fatal("packet buffer too short: %v, needs %v", len(pb.pkt), cli.gw_mtu+TUNHDR)
@@ -171,28 +188,13 @@ func fill(pb *PktBuf, proto uint) {
 
 	pb.data = OPTLEN + TUNHDR
 	pb.tail = pb.data
-	fill_iphdr(pb)
+	pb.fill_iphdr()
 
 	switch proto {
 	case TCP:
 	case UDP:
-		fill_udphdr(pb)
-		fill_payload(pb)
+		pb.fill_udphdr()
+		pb.fill_payload()
 	case ICMP:
 	}
-}
-
-func fwd_to_gw() {
-
-	var pb *PktBuf
-
-	pb = <-getbuf
-	fill(pb, UDP)
-	if log.level <= TRACE {
-		pp_net(pb)
-		pp_tran(pb)
-		pp_raw(pb)
-	}
-
-	goexit <- "ok"
 }
