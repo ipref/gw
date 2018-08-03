@@ -20,13 +20,14 @@ const (
 
 var be = binary.BigEndian
 
-func pp_raw(pkt []byte) {
+func pp_raw(pb *PktBuf) {
 
 	// RAW  45 00 00 74 2e 52 40 00 40 11 d0 b6 0a fb 1b 6f c0 a8 54 5e 04 15 04 15 00 ..
 
 	const max = 128
 	var sb strings.Builder
 
+	pkt := pb.pkt[pb.data:pb.tail]
 	sb.WriteString("RAW ")
 	for ii := 0; ii < len(pkt); ii++ {
 		if ii < max {
@@ -40,13 +41,14 @@ func pp_raw(pkt []byte) {
 	log.trace(sb.String())
 }
 
-func pp_net(pkt []byte) {
+func pp_net(pb *PktBuf) {
 
 	// IP[udp] 4500  192.168.84.93  10.254.22.202  len(64) id(1) ttl(64) frag:4000 csum:0000
 
 	var sb strings.Builder
 
-	if (len(pkt) < 20) || (pkt[0]&0xf0 != 0x40) || (len(pkt) != int((pkt[0]&0xf)*4)) {
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+	if (len(pkt) < 20) || (pkt[0]&0xf0 != 0x40) || (len(pkt) < int((pkt[0]&0xf)*4)) {
 		sb.WriteString("NON-IP ")
 		if len(pkt) >= 2 {
 			sb.WriteString(hex.EncodeToString(pkt[:2]))
@@ -63,24 +65,25 @@ func pp_net(pkt []byte) {
 	case ICMP:
 		sb.WriteString("IP[ICMP] ")
 	default:
-		sb.WriteString(fmt.Sprintf("IP[%u]", pkt[9]))
+		sb.WriteString(fmt.Sprintf("IP[%v]", pkt[9]))
 	}
 	sb.WriteString(hex.EncodeToString(pkt[:2]))
 	sb.WriteString("  ")
 	sb.WriteString(net.IP(pkt[12:16]).String())
 	sb.WriteString("  ")
 	sb.WriteString(net.IP(pkt[16:20]).String())
-	sb.WriteString(fmt.Sprintf("  len(%u)", be.Uint16(pkt[2:4])))
-	sb.WriteString(fmt.Sprintf(" id(%u)", be.Uint16(pkt[4:6])))
-	sb.WriteString(fmt.Sprintf(" ttl(%u)", pkt[8]))
+	sb.WriteString(fmt.Sprintf("  len(%v)", be.Uint16(pkt[2:4])))
+	sb.WriteString(fmt.Sprintf(" id(%v)", be.Uint16(pkt[4:6])))
+	sb.WriteString(fmt.Sprintf(" ttl(%v)", pkt[8]))
 	sb.WriteString(fmt.Sprintf(" frag:%04x", be.Uint16(pkt[6:8])))
 	sb.WriteString(fmt.Sprintf(" csum:%04x", be.Uint16(pkt[10:12])))
 
 	log.trace(sb.String())
 }
 
-func pp_tran(pkt []byte) {
+func pp_tran(pb *PktBuf) {
 
+	pkt := pb.pkt[pb.iphdr:pb.tail]
 	if len(pkt) < 20 {
 		return
 	}
@@ -98,9 +101,9 @@ func pp_tran(pkt []byte) {
 			return
 		}
 		sb.WriteString("UDP")
-		sb.WriteString(fmt.Sprintf("  %u", be.Uint16(pkt[off+0:off+2])))
-		sb.WriteString(fmt.Sprintf("  %u", be.Uint16(pkt[off+2:off+4])))
-		sb.WriteString(fmt.Sprintf("  len(%u)", be.Uint16(pkt[off+4:off+6])))
+		sb.WriteString(fmt.Sprintf("  %v", be.Uint16(pkt[off+0:off+2])))
+		sb.WriteString(fmt.Sprintf("  %v", be.Uint16(pkt[off+2:off+4])))
+		sb.WriteString(fmt.Sprintf("  len(%v)", be.Uint16(pkt[off+4:off+6])))
 		sb.WriteString(fmt.Sprintf(" csum:%04x", be.Uint16(pkt[off+6:off+8])))
 
 	case ICMP:
@@ -111,7 +114,7 @@ func pp_tran(pkt []byte) {
 	log.trace(sb.String())
 }
 
-func fill_iphdr(pb PktBuf) {
+func fill_iphdr(pb *PktBuf) {
 
 	pb.iphdr = pb.tail
 	pb.tail += 20
@@ -127,7 +130,7 @@ func fill_iphdr(pb PktBuf) {
 	copy(pb.pkt[pb.iphdr+16:pb.iphdr+20], []byte{192, 168, 84, 94})       // dst
 }
 
-func fill_udphdr(pb PktBuf) {
+func fill_udphdr(pb *PktBuf) {
 
 	pb.udphdr = pb.tail
 	pb.tail += 8
@@ -142,7 +145,7 @@ func fill_udphdr(pb PktBuf) {
 	be.PutUint16(pb.pkt[pb.iphdr+2:pb.iphdr+4], uint16(pb.tail-pb.iphdr)) // pktlen
 }
 
-func fill_payload(pb PktBuf) {
+func fill_payload(pb *PktBuf) {
 
 	bb := byte(7)
 	beg := pb.tail
@@ -152,15 +155,21 @@ func fill_payload(pb PktBuf) {
 		pb.pkt[ii] = bb
 		bb++
 	}
+
+	switch pb.pkt[pb.iphdr+9] {
+	case UDP:
+		be.PutUint16(pb.pkt[pb.udphdr+4:pb.udphdr+6], uint16(pb.tail-pb.udphdr)) // datalen
+	}
+	be.PutUint16(pb.pkt[pb.iphdr+2:pb.iphdr+4], uint16(pb.tail-pb.iphdr)) // pktlen
 }
 
-func fill(pb PktBuf, proto uint) {
+func fill(pb *PktBuf, proto uint) {
 
 	if len(pb.pkt) < int(cli.gw_mtu+TUNHDR) {
 		log.fatal("packet buffer too short: %v, needs %v", len(pb.pkt), cli.gw_mtu+TUNHDR)
 	}
 
-	pb.data = cli.gw_mtu + TUNHDR
+	pb.data = OPTLEN + TUNHDR
 	pb.tail = pb.data
 	fill_iphdr(pb)
 
@@ -175,14 +184,14 @@ func fill(pb PktBuf, proto uint) {
 
 func fwd_to_gw() {
 
-	var pb PktBuf
+	var pb *PktBuf
 
 	pb = <-getbuf
 	fill(pb, UDP)
 	if log.level <= TRACE {
-		pp_net(pb.pkt)
-		pp_tran(pb.pkt)
-		pp_raw(pb.pkt)
+		pp_net(pb)
+		pp_tran(pb)
+		pp_raw(pb)
 	}
 
 	goexit <- "ok"

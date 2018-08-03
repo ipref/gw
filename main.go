@@ -12,8 +12,8 @@ func main() {
 	log.info("start meadow")
 
 	goexit = make(chan string)
-	getbuf = make(chan PktBuf, 1)
-	retbuf = make(chan PktBuf, MAXBUF)
+	getbuf = make(chan *PktBuf, 1)
+	retbuf = make(chan *PktBuf, MAXBUF)
 
 	go pkt_buffers()
 	go fwd_to_gw()

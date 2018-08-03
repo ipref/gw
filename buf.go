@@ -16,8 +16,8 @@ type PktBuf struct {
 	icmphdr uint
 }
 
-var getbuf chan (PktBuf)
-var retbuf chan (PktBuf)
+var getbuf chan (*PktBuf)
+var retbuf chan (*PktBuf)
 
 /* Buffer allocator
 
@@ -28,7 +28,7 @@ limit and no packets in retbuf, we wait until one is returned.
 */
 func pkt_buffers() {
 
-	var pb PktBuf
+	var pb *PktBuf
 	allocated := 0 // num of allocated buffers
 
 	for {
@@ -37,7 +37,7 @@ func pkt_buffers() {
 			select {
 			case pb = <-retbuf:
 			default:
-				pb = PktBuf{pkt: make([]byte, cli.gw_mtu+TUNHDR, cli.gw_mtu+TUNHDR)}
+				pb = &PktBuf{pkt: make([]byte, cli.gw_mtu+TUNHDR, cli.gw_mtu+TUNHDR)}
 				allocated += 1
 				log.info("new PktBuf allocated, total(%v)", allocated)
 			}
