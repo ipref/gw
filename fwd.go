@@ -11,28 +11,28 @@ import (
 )
 
 const (
-	ICMP   = 1
-	TCP    = 6
-	UDP    = 17
-	OPTLEN = uint(8 + 4 + 4 + 16 + 16) // udphdr + encap + opt + ref + ref
-	TUNHDR = uint(4)
+	ICMP    = 1
+	TCP     = 6
+	UDP     = 17
+	OPTLEN  = uint(8 + 4 + 4 + 16 + 16) // udphdr + encap + opt + ref + ref
+	TUNHDR  = uint(4)
+	PKTQLEN = 2
 )
 
 var be = binary.BigEndian
 
+func add_ipref_option(pb *PktBuf) {
+}
+
 func fwd_to_gw() {
 
-	var pb *PktBuf
+	their_ipref = make(map[uint32]IpRefRec)
+	our_ipref = make(map[uint32]IpRefRec)
 
-	pb = <-getbuf
-	pb.fill(UDP)
-	if log.level <= TRACE {
-		pb.pp_net()
-		pb.pp_tran()
-		pb.pp_raw()
-	}
+	pb := <-recv_tun
+	add_ipref_option(pb)
+	send_gw <- pb
 
-	goexit <- "ok"
 }
 
 /* PktBuf helper functions */
