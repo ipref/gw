@@ -21,7 +21,10 @@ const (
 
 var be = binary.BigEndian
 
-func add_ipref_option(pb *PktBuf) {
+func insert_ipref_option(pb *PktBuf) {
+}
+
+func remove_ipref_option(pb *PktBuf) {
 }
 
 func fwd_to_gw() {
@@ -30,8 +33,19 @@ func fwd_to_gw() {
 	our_ipref = make(map[uint32]IpRefRec)
 
 	pb := <-recv_tun
-	add_ipref_option(pb)
+	insert_ipref_option(pb)
 	send_gw <- pb
+
+}
+
+func fwd_to_tun() {
+
+	our_ip = make(map[uint32]map[Ref]IpRec)
+	our_ea = make(map[uint32]map[Ref]IpRec)
+
+	pb := <-recv_gw
+	remove_ipref_option(pb)
+	send_tun <- pb
 
 }
 

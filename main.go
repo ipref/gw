@@ -23,6 +23,7 @@ func main() {
 
 	go pkt_buffers()
 	go fwd_to_gw()
+	go fwd_to_tun()
 
 	go gw_receiver()
 	go gw_sender()
