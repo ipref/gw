@@ -2,7 +2,24 @@
 
 package main
 
+import (
+	"os"
+	"os/signal"
+	"syscall"
+)
+
 var goexit chan (string)
+
+func catch_signals() {
+
+	sigchan := make(chan os.Signal, 1)
+	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
+
+	sig := <-sigchan
+
+	signal.Stop(sigchan)
+	goexit <- "signal(" + sig.String() + ")"
+}
 
 func main() {
 
@@ -11,6 +28,7 @@ func main() {
 	log.info("start meadow")
 
 	goexit = make(chan string)
+	go catch_signals()
 
 	getbuf = make(chan *PktBuf, 1)
 	retbuf = make(chan *PktBuf, MAXBUF)

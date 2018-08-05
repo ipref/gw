@@ -17,8 +17,6 @@ func gw_sender() {
 	}
 
 	retbuf <- pb
-
-	goexit <- "ok"
 }
 
 func gw_receiver() {
