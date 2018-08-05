@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -44,7 +45,7 @@ func parse_cli() {
 	}
 	flag.Parse()
 
-	cli.gw_mtu = 1500
+	// initialize logger
 
 	if cli.trace {
 		cli.log_level = TRACE
@@ -53,4 +54,38 @@ func parse_cli() {
 	} else {
 		cli.log_level = INFO
 	}
+
+	log.set(cli.log_level, cli.stamps)
+
+	// verify ip addresses
+
+	cli.gw_ip = "192.168.84.93"
+
+	// deduce mtu
+
+	cli.gw_mtu = 1500
+
+	// normalize file paths
+
+	cli.hosts_path = normalize(cli.hosts_path)
+	cli.dns_path = normalize(cli.dns_path)
+}
+
+func normalize(path string) string {
+
+	if len(path) == 0 {
+		return path
+	}
+
+	npath, err := filepath.Abs(path)
+	if err != nil {
+		log.fatal("invalid file path: %v: %v", path, err)
+	}
+
+	npath, err = filepath.EvalSymlinks(npath)
+	if err != nil {
+		log.fatal("invalid file path: %v: %v", path, err)
+	}
+
+	return npath
 }

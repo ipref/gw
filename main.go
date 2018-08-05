@@ -6,8 +6,7 @@ var goexit chan (string)
 
 func main() {
 
-	parse_cli()
-	log.set(cli.log_level, cli.stamps)
+	parse_cli() // also initializes log
 
 	log.info("start meadow")
 
@@ -22,6 +21,8 @@ func main() {
 	send_gw = make(chan *PktBuf, PKTQLEN)
 
 	go pkt_buffers()
+	go dns_watcher()
+
 	go fwd_to_gw()
 	go fwd_to_tun()
 
