@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -48,6 +49,24 @@ by DNS watchers or timers.
 type Ref struct {
 	h uint64
 	l uint64
+}
+
+func (ref *Ref) isZero() bool {
+	return ref.h == 0 && ref.l == 0
+}
+
+func (ref *Ref) String() string {
+	if ref.h == 0 {
+		return fmt.Sprintf("%x", ref.l)
+	}
+	return fmt.Sprintf("%x-%016x", ref.h, ref.l)
+}
+
+type AddrRec struct {
+	ea  uint32
+	ip  uint32
+	gw  uint32
+	ref Ref
 }
 
 type IpRefRec struct {
