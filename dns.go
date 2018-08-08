@@ -12,6 +12,7 @@ import (
 	"net"
 	"path/filepath"
 	"regexp"
+	//"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -203,8 +204,8 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 				log.err("parse hosts: %v(%v): invalid IPv4 gw address: %v", fname, lno, gwtoks[1])
 				continue
 			}
-			if gw.IsUnspecified() {
-				log.err("parse hosts: %v(%v): null gw address: %v", fname, lno, gwtoks[1])
+			if !gw.IsGlobalUnicast() {
+				log.err("parse hosts: %v(%v): non-unicast gw: %v", fname, lno, gwtoks[1])
 				continue
 			}
 			arec.gw = be.Uint32(gw)
@@ -224,7 +225,7 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 				continue
 			}
 			if len(reftoks) > 1 {
-				log.err("parse hosts: %v(%v): invalid reference: %v", fname, lno, strings.Join(reftoks[1:], " "))
+				log.err("parse hosts: %v(%v): invalid reference: %v", fname, lno, rtoks[1])
 				continue
 			}
 
@@ -239,17 +240,27 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 
 		// build string showing gw + ref
 
-		var recstr strings.Builder
+		var sb strings.Builder
+
+		sb.WriteString(addr.String())
+		for ii := sb.Len(); ii < 15; ii++ {
+			sb.WriteString(" ")
+		}
+
+		sb.WriteString("  =  ")
 
 		if arec.gw != 0 {
 			gw := []byte{0, 0, 0, 0}
+			len := sb.Len()
 			be.PutUint32(gw, arec.gw)
-			recstr.WriteString("  ")
-			recstr.WriteString(net.IP(gw).String())
+			sb.WriteString(net.IP(gw).String())
+			for ii := sb.Len(); ii < len+16; ii++ {
+				sb.WriteString(" ")
+			}
 		}
 		if !arec.ref.isZero() {
-			recstr.WriteString(" + ")
-			recstr.WriteString(arec.ref.String())
+			sb.WriteString("+ ")
+			sb.WriteString(arec.ref.String())
 		}
 
 		// add records to arec
@@ -261,25 +272,25 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 			arec.ip = be.Uint32(addr)
 			arecs[arec.ip] = arec
 
-			log.info("parse hosts: %v(%v): pub  %v%v", fname, lno, addr, recstr.String())
+			log.debug("parse hosts: %3d  pub  %v", lno, sb.String())
 
 		} else if rectype == "ext" {
 
 			// for ext entries, both gw and the reference are mandatory
 
 			if arec.gw == 0 {
-				log.err("parse hosts: %v(%v): missing gw address: %v: %v", fname, lno)
+				log.err("parse hosts: %v(%v): missing gw address", fname, lno)
 				continue
 			}
 
 			if arec.ref.isZero() {
-				log.err("parse hosts: %v(%v): missing reference: %v: %v", fname, lno)
+				log.err("parse hosts: %v(%v): missing reference", fname, lno)
 				continue
 			}
 
 			arec.ea = be.Uint32(addr)
-			arecs[arec.ip] = arec
-			log.info("parse hosts: %v(%v): ext  %v%v", fname, lno, addr, recstr.String())
+			arecs[arec.ea] = arec
+			log.debug("parse hosts: %3d  ext  %v", lno, sb.String())
 		}
 	}
 
@@ -301,6 +312,46 @@ func parse_hosts(path string, timer *time.Timer) {
 		input := bytes.NewReader(wholefile)
 		arecs := parse_hosts_file(fname, input)
 		log.debug("parse hosts: num address records: %v", len(arecs))
+		/*
+			if log.level <= DEBUG {
+				keys := make([]uint32, 0, len(arecs))
+				for key, _ := range arecs {
+					keys = append(keys, key)
+				}
+				sort.Slice(keys, func (i,j int) bool {return keys[i] < keys[j]})
+				for _, key := range keys {
+					arec := arecs[key]
+					ip := []byte{0, 0, 0, 0}
+					var sb strings.Builder
+
+					if arec.ea == 0 {
+						sb.WriteString("pub  ")
+						be.PutUint32(ip, arec.ip)
+					} else {
+						sb.WriteString("ext  ")
+						be.PutUint32(ip, arec.ea)
+					}
+					sb.WriteString(net.IP(ip).String())
+					for ii := sb.Len(); ii < 21; ii++ {
+						sb.WriteString(" ")
+					}
+					sb.WriteString("=  ")
+					if arec.gw != 0 {
+						len := sb.Len()
+						be.PutUint32(ip, arec.gw)
+						sb.WriteString(net.IP(ip).String())
+						for ii := sb.Len(); ii < len + 15; ii++ {
+							sb.WriteString(" ")
+						}
+					}
+					if !arec.ref.isZero() {
+						sb.WriteString("+ ")
+						sb.WriteString(arec.ref.String())
+					}
+					log.debug("    %v", sb.String())
+				}
+			}
+		*/
 	}
 }
 
