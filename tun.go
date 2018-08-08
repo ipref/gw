@@ -18,7 +18,7 @@ func tun_receiver() {
 	pb := <-getbuf
 	pb.fill(UDP)
 
-	time.Sleep(579 * time.Microsecond)
+	time.Sleep(879 * time.Microsecond)
 
 	log.debug("received pkt from tun")
 	if log.level <= TRACE {

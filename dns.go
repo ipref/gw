@@ -147,7 +147,7 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 		}
 		addr := net.ParseIP(ltoks[0])
 		if addr == nil {
-			log.err("parse hosts: %v(%v): invalid IP address: %v", fname, lno, ltoks[0])
+			log.err("dns watcher: %v(%v): invalid IP address: %v", fname, lno, ltoks[0])
 			continue
 		}
 
@@ -169,7 +169,7 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 
 		gwtoks := strings.Fields(rtoks[0])
 		if len(gwtoks) == 0 {
-			log.err("parse hosts: %v(%v): missing IPREF record type", fname, lno)
+			log.err("dns watcher: %v(%v): missing IPREF record type", fname, lno)
 			continue
 		}
 
@@ -182,30 +182,30 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 		} else if gwtoks[0] == "loc" || gwtoks[0] == "local" {
 			continue // local host
 		} else {
-			log.err("parse hosts: %v(%v): invalid IPREF record type: %v", fname, lno, gwtoks[0])
+			log.err("dns watcher: %v(%v): invalid IPREF record type: %v", fname, lno, gwtoks[0])
 			continue
 		}
 
 		// parse gw
 
 		if len(gwtoks) > 2 {
-			log.err("parse hosts: %v(%v): invalid gw address: %v", fname, lno, strings.Join(gwtoks[1:], " "))
+			log.err("dns watcher: %v(%v): invalid gw address: %v", fname, lno, strings.Join(gwtoks[1:], " "))
 			continue
 		}
 
 		if len(gwtoks) == 2 {
 			gw := net.ParseIP(gwtoks[1])
 			if gw == nil {
-				log.err("parse hosts: %v(%v): invalid gw address: %v", fname, lno, gwtoks[1])
+				log.err("dns watcher: %v(%v): invalid gw address: %v", fname, lno, gwtoks[1])
 				continue
 			}
 			gw = gw.To4()
 			if gw == nil {
-				log.err("parse hosts: %v(%v): invalid IPv4 gw address: %v", fname, lno, gwtoks[1])
+				log.err("dns watcher: %v(%v): invalid IPv4 gw address: %v", fname, lno, gwtoks[1])
 				continue
 			}
 			if !gw.IsGlobalUnicast() {
-				log.err("parse hosts: %v(%v): non-unicast gw: %v", fname, lno, gwtoks[1])
+				log.err("dns watcher: %v(%v): non-unicast gw: %v", fname, lno, gwtoks[1])
 				continue
 			}
 			arec.gw = be.Uint32(gw)
@@ -214,24 +214,24 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 		// parse ref
 
 		if len(rtoks) > 2 {
-			log.err("parse hosts: %v(%v): invalid reference: %v", fname, lno, strings.Join(rtoks[1:], " + "))
+			log.err("dns watcher: %v(%v): invalid reference: %v", fname, lno, strings.Join(rtoks[1:], " + "))
 			continue
 		}
 
 		if len(rtoks) == 2 {
 			reftoks := strings.Fields(rtoks[1])
 			if len(reftoks) == 0 {
-				log.err("parse hosts: %v(%v): missing reference", fname, lno)
+				log.err("dns watcher: %v(%v): missing reference", fname, lno)
 				continue
 			}
 			if len(reftoks) > 1 {
-				log.err("parse hosts: %v(%v): invalid reference: %v", fname, lno, rtoks[1])
+				log.err("dns watcher: %v(%v): invalid reference: %v", fname, lno, rtoks[1])
 				continue
 			}
 
 			ref, err := parse_ref(reftoks[0])
 			if err != nil {
-				log.err("parse hosts: %v(%v): invalid reference: %v: %v", fname, lno, reftoks[0], err)
+				log.err("dns watcher: %v(%v): invalid reference: %v: %v", fname, lno, reftoks[0], err)
 				continue
 			}
 
@@ -272,25 +272,25 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 			arec.ip = be.Uint32(addr)
 			arecs[arec.ip] = arec
 
-			log.debug("parse hosts: %3d  pub  %v", lno, sb.String())
+			log.debug("dns watcher: %v %3d  pub  %v", fname, lno, sb.String())
 
 		} else if rectype == "ext" {
 
 			// for ext entries, both gw and the reference are mandatory
 
 			if arec.gw == 0 {
-				log.err("parse hosts: %v(%v): missing gw address", fname, lno)
+				log.err("dns watcher: %v(%v): missing gw address", fname, lno)
 				continue
 			}
 
 			if arec.ref.isZero() {
-				log.err("parse hosts: %v(%v): missing reference", fname, lno)
+				log.err("dns watcher: %v(%v): missing reference", fname, lno)
 				continue
 			}
 
 			arec.ea = be.Uint32(addr)
 			arecs[arec.ea] = arec
-			log.debug("parse hosts: %3d  ext  %v", lno, sb.String())
+			log.debug("dns watcher: %v %3d  ext  %v", fname, lno, sb.String())
 		}
 	}
 
@@ -305,53 +305,13 @@ func parse_hosts(path string, timer *time.Timer) {
 
 		wholefile, err := ioutil.ReadFile(path)
 		if err != nil {
-			log.err("parse hosts: cannot read %v: %v", fname, err)
+			log.err("dns watcher: cannot read file %v: %v", fname, err)
 			return
 		}
-		log.info("parse hosts: parsing: %v", fname)
+		log.debug("dns watcher: parsing file: %v", fname)
 		input := bytes.NewReader(wholefile)
 		arecs := parse_hosts_file(fname, input)
-		log.debug("parse hosts: num address records: %v", len(arecs))
-		/*
-			if log.level <= DEBUG {
-				keys := make([]uint32, 0, len(arecs))
-				for key, _ := range arecs {
-					keys = append(keys, key)
-				}
-				sort.Slice(keys, func (i,j int) bool {return keys[i] < keys[j]})
-				for _, key := range keys {
-					arec := arecs[key]
-					ip := []byte{0, 0, 0, 0}
-					var sb strings.Builder
-
-					if arec.ea == 0 {
-						sb.WriteString("pub  ")
-						be.PutUint32(ip, arec.ip)
-					} else {
-						sb.WriteString("ext  ")
-						be.PutUint32(ip, arec.ea)
-					}
-					sb.WriteString(net.IP(ip).String())
-					for ii := sb.Len(); ii < 21; ii++ {
-						sb.WriteString(" ")
-					}
-					sb.WriteString("=  ")
-					if arec.gw != 0 {
-						len := sb.Len()
-						be.PutUint32(ip, arec.gw)
-						sb.WriteString(net.IP(ip).String())
-						for ii := sb.Len(); ii < len + 15; ii++ {
-							sb.WriteString(" ")
-						}
-					}
-					if !arec.ref.isZero() {
-						sb.WriteString("+ ")
-						sb.WriteString(arec.ref.String())
-					}
-					log.debug("    %v", sb.String())
-				}
-			}
-		*/
+		log.info("dns watcher: parsing file: %v: total number of address records: %v", fname, len(arecs))
 	}
 }
 
@@ -359,7 +319,7 @@ func parse_hosts(path string, timer *time.Timer) {
 func parse_dns(path string, timer *time.Timer) {
 
 	for _ = range timer.C {
-		log.info("dns watcher: parsing: %v", filepath.Base(path))
+		log.debug("dns watcher: parsing: %v", filepath.Base(path))
 	}
 }
 
