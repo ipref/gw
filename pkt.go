@@ -63,40 +63,6 @@ func (pb *PktBuf) len() int {
 	return int(pb.tail - pb.data)
 }
 
-//func (pb *PktBuf) size int {
-//	return len(pb.pkt)
-//}
-
-func (pb *PktBuf) qualify() {
-
-	pblen := pb.len()
-
-	if pblen == 0 { // empty pkt
-		return
-	}
-
-	if (pb.pkt[pb.data] & 0xf0) == 0x40 { // IPv4 pkt
-		pb.iphdr = pb.data
-		return
-	}
-
-	// we use IPv1 for internal packet types
-
-	if (pb.pkt[pb.data]&0xf0) != 0x10 || pblen < 16 {
-		log.err("PktBuf: unexpected packet type: %v len(%v)", pb.pkt[pb.data]>>4, pblen)
-		return
-	}
-
-	switch pb.pkt[pb.data] & 0x0f {
-	case V1_PKT_AREC:
-		pb.arechdr = pb.data
-	case V1_PKT_TMR:
-		pb.tmrhdr = pb.data
-	default:
-		log.err("PktBuf: unknown packet type: %v", pb.pkt[pb.data]&0x0f)
-	}
-}
-
 var getbuf chan (*PktBuf)
 var retbuf chan (*PktBuf)
 

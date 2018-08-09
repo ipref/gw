@@ -200,10 +200,9 @@ func fwd_to_gw() {
 
 	for pb := range recv_tun {
 
-		pb.qualify()
 		switch {
 
-		case pb.iphdr != 0:
+		case pb.pkt[pb.data]&0xf0 == 0x40:
 
 			verdict := insert_ipref_option(pb)
 			switch verdict {
@@ -217,12 +216,12 @@ func fwd_to_gw() {
 				retbuf <- pb
 			}
 
-		case pb.arechdr != 0:
+		case pb.pkt[pb.data] == 0x10+V1_PKT_AREC:
 			retbuf <- pb
-		case pb.tmrhdr != 0:
+		case pb.pkt[pb.data] == 0x10+V1_PKT_TMR:
 			retbuf <- pb
 		default:
-			log.err("fwd_to_gw: unknown packet, dropping")
+			log.err("fwd_to_gw: unknown packet type: 0x%02x, dropping", pb.pkt[pb.data])
 			retbuf <- pb
 		}
 	}
@@ -235,10 +234,9 @@ func fwd_to_tun() {
 
 	for pb := range recv_gw {
 
-		pb.qualify()
 		switch {
 
-		case pb.iphdr != 0:
+		case pb.pkt[pb.data]&0xf0 == 0x40:
 
 			verdict := remove_ipref_option(pb)
 			switch verdict {
@@ -252,12 +250,12 @@ func fwd_to_tun() {
 				retbuf <- pb
 			}
 
-		case pb.arechdr != 0:
+		case pb.pkt[pb.data] == 0x10+V1_PKT_AREC:
 			retbuf <- pb
-		case pb.tmrhdr != 0:
+		case pb.pkt[pb.data] == 0x10+V1_PKT_TMR:
 			retbuf <- pb
 		default:
-			log.err("fwd_to_gw: unknown packet, dropping")
+			log.err("fwd_to_tun: unknown packet type: 0x%02x, dropping", pb.pkt[pb.data])
 			retbuf <- pb
 		}
 	}

@@ -325,8 +325,6 @@ func install_hosts_records(arecs map[uint32]AddrRec) {
 			log.fatal("dns watcher: packet small to fit address record") // paranoia
 		}
 
-		pb.arechdr = pb.data
-
 		pkt[off+0] = 0x10 + V1_PKT_AREC
 		pkt[off+V1_CMDIX] = V1_SET_HOSTS_REC
 		pkt[off+V1_SRCQIX] = 0
@@ -367,10 +365,10 @@ func install_hosts_records(arecs map[uint32]AddrRec) {
 
 		// send items
 
-		log.info("dns watcher: sending hosts records with mark: %v, num(%v)", mark, numitems)
-
-		pb.tail = off
 		be.PutUint16(pkt[cmd+2:cmd+4], uint16(numitems))
+		pb.tail = off
+
+		log.info("dns watcher: sending hosts records to mapper with mark: %v, num(%v)", mark, numitems)
 
 		recv_tun <- pb
 		recv_gw <- pb
