@@ -89,7 +89,7 @@ type Mark struct {
 
 func (m *Mark) init() {
 
-	m.base = time.Now()
+	m.base = time.Now().Add(-time.Second) // make sure marker.now() is always > 0
 }
 
 func (m *Mark) now() uint32 {
