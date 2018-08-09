@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	"time"
 )
 
 /* Data organization
@@ -70,14 +69,14 @@ type AddrRec struct {
 }
 
 type IpRefRec struct {
-	ip     uint32
-	ref    Ref
-	expire time.Duration
+	ip   uint32
+	ref  Ref
+	mark uint32 // time offset or revision (which could be time offset, too)
 }
 
 type IpRec struct {
-	ip     uint32
-	expire time.Duration
+	ip   uint32
+	mark uint32
 }
 
 type IpToIpRef map[uint32]IpRefRec

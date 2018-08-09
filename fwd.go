@@ -21,34 +21,6 @@ const (
 
 var be = binary.BigEndian
 
-func insert_ipref_option(pb *PktBuf) {
-}
-
-func remove_ipref_option(pb *PktBuf) {
-}
-
-func fwd_to_gw() {
-
-	their_ipref = make(map[uint32]IpRefRec)
-	our_ipref = make(map[uint32]IpRefRec)
-
-	pb := <-recv_tun
-	insert_ipref_option(pb)
-	send_gw <- pb
-
-}
-
-func fwd_to_tun() {
-
-	our_ip = make(map[uint32]map[Ref]IpRec)
-	our_ea = make(map[uint32]map[Ref]IpRec)
-
-	pb := <-recv_gw
-	remove_ipref_option(pb)
-	send_tun <- pb
-
-}
-
 /* PktBuf helper functions */
 
 func (pb *PktBuf) pp_raw() {
@@ -194,7 +166,7 @@ func (pb *PktBuf) fill_payload() {
 	be.PutUint16(pb.pkt[pb.iphdr+2:pb.iphdr+4], uint16(pb.tail-pb.iphdr)) // pktlen
 }
 
-func (pb *PktBuf) fill(proto uint) {
+func (pb *PktBuf) fill(proto int) {
 
 	if len(pb.pkt) < int(cli.gw_mtu+TUNHDR) {
 		log.fatal("packet buffer too short: %v, needs %v", len(pb.pkt), cli.gw_mtu+TUNHDR)
@@ -211,4 +183,58 @@ func (pb *PktBuf) fill(proto uint) {
 		pb.fill_payload()
 	case ICMP:
 	}
+}
+
+func insert_ipref_option(pb *PktBuf) int {
+	return DROP
+}
+
+func remove_ipref_option(pb *PktBuf) int {
+	return DROP
+}
+
+func fwd_to_gw() {
+
+	their_ipref = make(map[uint32]IpRefRec)
+	our_ipref = make(map[uint32]IpRefRec)
+
+	for pb := range recv_tun {
+
+		pb.qualify()
+		switch {
+
+		case pb.iphdr != 0:
+
+			verdict := insert_ipref_option(pb)
+			switch verdict {
+			case ACCEPT:
+				send_gw <- pb
+			case DROP:
+				retbuf <- pb
+			case STOLEN:
+			default:
+				log.err("fwd_to_gw: unknown verdict: %v, dropping", verdict)
+				retbuf <- pb
+			}
+
+		case pb.arechdr != 0:
+			retbuf <- pb
+		case pb.tmrhdr != 0:
+			retbuf <- pb
+		default:
+			log.err("fwd_to_gw: unknown packet, dropping")
+			retbuf <- pb
+		}
+	}
+}
+
+func fwd_to_tun() {
+
+	our_ip = make(map[uint32]map[Ref]IpRec)
+	our_ea = make(map[uint32]map[Ref]IpRec)
+
+	pb := <-recv_gw
+	remove_ipref_option(pb)
+	send_tun <- pb
+
 }
