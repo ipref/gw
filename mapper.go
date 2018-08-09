@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 )
 
 /* Data organization
@@ -81,6 +82,23 @@ type IpRec struct {
 
 type IpToIpRef map[uint32]IpRefRec
 type IpRefToIp map[uint32]map[Ref]IpRec
+
+type Mark struct {
+	base time.Time
+}
+
+func (m *Mark) init() {
+
+	m.base = time.Now()
+}
+
+func (m *Mark) now() uint32 {
+
+	return uint32(time.Now().Sub(m.base) / time.Second)
+
+}
+
+var marker Mark
 
 var their_ipref IpToIpRef
 var our_ipref IpToIpRef

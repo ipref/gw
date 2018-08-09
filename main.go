@@ -27,6 +27,8 @@ func main() {
 
 	log.info("start meadow")
 
+	marker.init()
+
 	goexit = make(chan string)
 	go catch_signals()
 
