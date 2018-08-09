@@ -297,6 +297,86 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 	return arecs
 }
 
+func install_hosts_records(arecs map[uint32]AddrRec) {
+
+	if len(arecs) == 0 {
+		return
+	}
+
+	mark := marker.now()
+
+	keys := make([]uint32, 0, len(arecs))
+	for key, _ := range arecs {
+		keys = append(keys, key)
+	}
+	numkeys := len(keys)
+
+	for ix := 0; ix < numkeys; {
+
+		pb := <-getbuf
+
+		// header
+
+		pkt := pb.pkt
+		pktlen := len(pkt)
+		off := pb.data
+
+		if pktlen < int(off+V1_HDRLEN+4+V1_AREC_LEN) {
+			log.fatal("dns watcher: packet small to fit address record") // paranoia
+		}
+
+		pb.arechdr = pb.data
+
+		pkt[off+0] = 0x10 + V1_PKT_AREC
+		pkt[off+V1_CMDIX] = V1_SET_HOSTS_REC
+		pkt[off+V1_SRCQIX] = 0
+		pkt[off+V1_DSTQIX] = 0
+		be.PutUint32(pkt[off+V1_MARKIX:off+V1_MARKIX+4], mark)
+		be.PutUint32(pkt[off+V1_RESERVED1IX:off+V1_RESERVED1IX+4], 0)
+		be.PutUint32(pkt[off+V1_RESERVED2IX:off+V1_RESERVED2IX+4], 0)
+		off += V1_HDRLEN
+
+		// cmd
+
+		cmd := off
+		pkt[cmd+1] = V1_AREC
+		off += 4
+		numitems := 0
+
+		// items
+
+		for off < uint(pktlen-V1_AREC_LEN) {
+
+			rec, ok := arecs[keys[ix]]
+			if !ok {
+				log.fatal("dns watcher: unexpected invalid key") // paranoia
+			}
+			be.PutUint32(pkt[off+0:off+4], rec.ea)
+			be.PutUint32(pkt[off+4:off+8], rec.ip)
+			be.PutUint32(pkt[off+8:off+12], rec.gw)
+			be.PutUint64(pkt[off+12:off+20], rec.ref.h)
+			be.PutUint64(pkt[off+20:off+28], rec.ref.l)
+			off += V1_AREC_LEN
+
+			numitems++
+			ix++
+			if ix >= numkeys {
+				break
+			}
+		}
+
+		// send items
+
+		log.info("dns watcher: sending hosts records with mark: %v, num(%v)", mark, numitems)
+
+		pb.tail = off
+		be.PutUint16(pkt[cmd+2:cmd+4], uint16(numitems))
+
+		recv_tun <- pb
+		recv_gw <- pb
+	}
+}
+
 func parse_hosts(path string, timer *time.Timer) {
 
 	fname := filepath.Base(path)
@@ -312,6 +392,8 @@ func parse_hosts(path string, timer *time.Timer) {
 		input := bytes.NewReader(wholefile)
 		arecs := parse_hosts_file(fname, input)
 		log.info("dns watcher: parsing file: %v: total number of address records: %v", fname, len(arecs))
+
+		install_hosts_records(arecs)
 	}
 }
 

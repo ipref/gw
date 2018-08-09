@@ -15,11 +15,15 @@ const ( // packet handling verdicts
 
 const ( // internal packet constants (Ipv1)
 
-	V1_HDRLEN = 16
-	V1_CMDIX  = 1
-	V1_SRCQIX = 2
-	V1_DSTQIX = 3
-	V1_MARKIX = 4
+	V1_HDRLEN      = 16
+	V1_CMDIX       = 1
+	V1_SRCQIX      = 2
+	V1_DSTQIX      = 3
+	V1_MARKIX      = 4
+	V1_RESERVED1IX = 8
+	V1_RESERVED2IX = 12
+
+	V1_AREC_LEN = 4 + 4 + 4 + 8 + 8 // ea + ip + gw + ref.h + ref.l
 )
 
 const ( // data item types
@@ -58,6 +62,10 @@ type PktBuf struct {
 func (pb *PktBuf) len() int {
 	return int(pb.tail - pb.data)
 }
+
+//func (pb *PktBuf) size int {
+//	return len(pb.pkt)
+//}
 
 func (pb *PktBuf) qualify() {
 

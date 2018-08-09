@@ -233,8 +233,32 @@ func fwd_to_tun() {
 	our_ip = make(map[uint32]map[Ref]IpRec)
 	our_ea = make(map[uint32]map[Ref]IpRec)
 
-	pb := <-recv_gw
-	remove_ipref_option(pb)
-	send_tun <- pb
+	for pb := range recv_gw {
 
+		pb.qualify()
+		switch {
+
+		case pb.iphdr != 0:
+
+			verdict := remove_ipref_option(pb)
+			switch verdict {
+			case ACCEPT:
+				send_tun <- pb
+			case DROP:
+				retbuf <- pb
+			case STOLEN:
+			default:
+				log.err("fwd_to_gw: unknown verdict: %v, dropping", verdict)
+				retbuf <- pb
+			}
+
+		case pb.arechdr != 0:
+			retbuf <- pb
+		case pb.tmrhdr != 0:
+			retbuf <- pb
+		default:
+			log.err("fwd_to_gw: unknown packet, dropping")
+			retbuf <- pb
+		}
+	}
 }
