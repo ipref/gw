@@ -195,8 +195,7 @@ func remove_ipref_option(pb *PktBuf) int {
 
 func fwd_to_gw() {
 
-	their_ipref = make(map[uint32]IpRefRec)
-	our_ipref = make(map[uint32]IpRefRec)
+	map_gw.init()
 
 	for pb := range recv_tun {
 
@@ -229,8 +228,7 @@ func fwd_to_gw() {
 
 func fwd_to_tun() {
 
-	our_ip = make(map[uint32]map[Ref]IpRec)
-	our_ea = make(map[uint32]map[Ref]IpRec)
+	map_tun.init()
 
 	for pb := range recv_gw {
 

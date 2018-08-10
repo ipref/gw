@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/cznic/b"
 	"time"
 )
 
@@ -80,9 +81,6 @@ type IpRec struct {
 	mark uint32
 }
 
-type IpToIpRef map[uint32]IpRefRec
-type IpRefToIp map[uint32]map[Ref]IpRec
-
 type Mark struct {
 	base time.Time
 }
@@ -98,9 +96,61 @@ func (m *Mark) now() uint32 {
 
 }
 
+func ref_cmp(a, b interface{}) int {
+
+	if a.(Ref).h < b.(Ref).h {
+		return -1
+	} else if a.(Ref).h > b.(Ref).h {
+		return 1
+	} else if a.(Ref).l < b.(Ref).l {
+		return -1
+	} else if a.(Ref).l > b.(Ref).l {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+func addr_cmp(a, b interface{}) int {
+
+	if a.(uint32) < b.(uint32) {
+		return -1
+	} else if a.(uint32) > b.(uint32) {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+// -- MapGw --------------------------------------------------------------------
+
+type MapGw struct {
+	their_ipref *b.Tree // map[uint32]IpRefRec
+	our_ipref   *b.Tree // map[uint32]IpRefRec
+}
+
+func (mgw *MapGw) init() {
+
+	mgw.their_ipref = b.TreeNew(b.Cmp(addr_cmp))
+	mgw.our_ipref = b.TreeNew(b.Cmp(addr_cmp))
+}
+
+// -- MapTun -------------------------------------------------------------------
+
+type MapTun struct {
+	our_ip *b.Tree // map[uint32]map[Ref]IpRec
+	our_ea *b.Tree // map[uint32]map[Ref]IpRec
+}
+
+func (mtun *MapTun) init() {
+
+	mtun.our_ip = b.TreeNew(b.Cmp(addr_cmp))
+	mtun.our_ea = b.TreeNew(b.Cmp(addr_cmp))
+}
+
+// -- Variables ----------------------------------------------------------------
+
 var marker Mark
 
-var their_ipref IpToIpRef
-var our_ipref IpToIpRef
-var our_ip IpRefToIp
-var our_ea IpRefToIp
+var map_gw MapGw   // exclusively owned by fwd_to_gw
+var map_tun MapTun // exclusively owned by fwd_to_tun
