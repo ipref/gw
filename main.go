@@ -27,6 +27,7 @@ func main() {
 
 	log.info("start meadow")
 
+	owners.init()
 	marker.init()
 
 	goexit = make(chan string)

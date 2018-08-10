@@ -199,28 +199,30 @@ func fwd_to_gw() {
 
 	for pb := range recv_tun {
 
+		verdict := DROP
+
 		switch {
 
 		case pb.pkt[pb.data]&0xf0 == 0x40:
 
-			verdict := insert_ipref_option(pb)
-			switch verdict {
-			case ACCEPT:
+			verdict = insert_ipref_option(pb)
+			if verdict == ACCEPT {
 				send_gw <- pb
-			case DROP:
-				retbuf <- pb
-			case STOLEN:
-			default:
-				log.err("fwd_to_gw: unknown verdict: %v, dropping", verdict)
-				retbuf <- pb
 			}
 
 		case pb.pkt[pb.data] == 0x10+V1_PKT_AREC:
-			retbuf <- pb
+
+			verdict = map_gw.address_records(pb)
+
 		case pb.pkt[pb.data] == 0x10+V1_PKT_TMR:
-			retbuf <- pb
+
+			verdict = map_gw.timer(pb)
+
 		default:
 			log.err("fwd_to_gw: unknown packet type: 0x%02x, dropping", pb.pkt[pb.data])
+		}
+
+		if verdict == DROP {
 			retbuf <- pb
 		}
 	}

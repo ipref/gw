@@ -297,7 +297,7 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 	return arecs
 }
 
-func install_hosts_records(arecs map[uint32]AddrRec) {
+func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
 
 	if len(arecs) == 0 {
 		return
@@ -327,12 +327,12 @@ func install_hosts_records(arecs map[uint32]AddrRec) {
 		}
 
 		pkt[off+0] = 0x10 + V1_PKT_AREC
-		pkt[off+V1_CMDIX] = V1_SET_HOSTS_REC
-		pkt[off+V1_SRCQIX] = 0
-		pkt[off+V1_DSTQIX] = 0
-		be.PutUint32(pkt[off+V1_MARKIX:off+V1_MARKIX+4], mark)
-		be.PutUint32(pkt[off+V1_RESERVED1IX:off+V1_RESERVED1IX+4], 0)
-		be.PutUint32(pkt[off+V1_RESERVED2IX:off+V1_RESERVED2IX+4], 0)
+		pkt[off+V1_CMD] = V1_SET_HOSTS_REC
+		pkt[off+V1_SRCQ] = 0
+		pkt[off+V1_DSTQ] = 0
+		be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], mark)
+		be.PutUint32(pkt[off+V1_OID:off+V1_OID+4], uint32(oid))
+		be.PutUint32(pkt[off+V1_RESERVED:off+V1_RESERVED+4], 0)
 		off += V1_HDRLEN
 
 		// cmd
@@ -381,6 +381,7 @@ func install_hosts_records(arecs map[uint32]AddrRec) {
 func parse_hosts(path string, timer *time.Timer) {
 
 	fname := filepath.Base(path)
+	oid := owners.new_oid(path)
 
 	for _ = range timer.C {
 
@@ -389,20 +390,23 @@ func parse_hosts(path string, timer *time.Timer) {
 			log.err("dns watcher: cannot read file %v: %v", fname, err)
 			return
 		}
-		log.debug("dns watcher: parsing file: %v", fname)
+		log.debug("dns watcher: oid(%v) parsing file: %v", oid, fname)
 		input := bytes.NewReader(wholefile)
 		arecs := parse_hosts_file(fname, input)
 		log.info("dns watcher: parsing file: %v: total number of address records: %v", fname, len(arecs))
 
-		install_hosts_records(arecs)
+		install_hosts_records(oid, arecs)
 	}
 }
 
 // parse file with dns records
 func parse_dns(path string, timer *time.Timer) {
 
+	fname := filepath.Base(path)
+	oid := owners.new_oid(path)
+
 	for _ = range timer.C {
-		log.debug("dns watcher: parsing: %v", filepath.Base(path))
+		log.debug("dns watcher: oid(%v) parsing file: %v", oid, fname)
 	}
 }
 

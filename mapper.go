@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"github.com/cznic/b"
+	"sync"
 	"time"
 )
 
@@ -47,6 +48,29 @@ is no locking. Updates to the maps are performed by the forwardes when prompted
 by DNS watchers or timers.
 */
 
+type Owners struct {
+	oids []string
+	mtx  sync.Mutex
+}
+
+func (o *Owners) init() {
+	o.oids = make([]string, 1, 16)
+	o.oids[0] = "none"
+}
+
+func (o *Owners) new_oid(name string) uint32 {
+
+	if len(name) == 0 {
+		log.fatal("mapper: missing owner name")
+	}
+
+	o.mtx.Lock()
+	oid := uint32(len(o.oids))
+	o.oids = append(o.oids, name)
+	o.mtx.Unlock()
+	return oid
+}
+
 type Ref struct {
 	h uint64
 	l uint64
@@ -74,11 +98,13 @@ type IpRefRec struct {
 	ip   uint32
 	ref  Ref
 	mark uint32 // time offset or revision (which could be time offset, too)
+	oid  int32  // owner id
 }
 
 type IpRec struct {
 	ip   uint32
 	mark uint32
+	oid  int32
 }
 
 type Mark struct {
@@ -135,6 +161,14 @@ func (mgw *MapGw) init() {
 	mgw.our_ipref = b.TreeNew(b.Cmp(addr_cmp))
 }
 
+func (mgw *MapGw) timer(pb *PktBuf) int {
+	return DROP
+}
+
+func (mgw *MapGw) address_records(pb *PktBuf) int {
+	return DROP
+}
+
 // -- MapTun -------------------------------------------------------------------
 
 type MapTun struct {
@@ -151,6 +185,7 @@ func (mtun *MapTun) init() {
 // -- Variables ----------------------------------------------------------------
 
 var marker Mark
+var owners Owners
 
 var map_gw MapGw   // exclusively owned by fwd_to_gw
 var map_tun MapTun // exclusively owned by fwd_to_tun

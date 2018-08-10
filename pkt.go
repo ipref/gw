@@ -15,13 +15,13 @@ const ( // packet handling verdicts
 
 const ( // internal packet constants (Ipv1)
 
-	V1_HDRLEN      = 16
-	V1_CMDIX       = 1
-	V1_SRCQIX      = 2
-	V1_DSTQIX      = 3
-	V1_MARKIX      = 4
-	V1_RESERVED1IX = 8
-	V1_RESERVED2IX = 12
+	V1_HDRLEN   = 16
+	V1_CMD      = 1
+	V1_SRCQ     = 2
+	V1_DSTQ     = 3
+	V1_MARK     = 4
+	V1_OID      = 8
+	V1_RESERVED = 12
 
 	V1_AREC_LEN = 4 + 4 + 4 + 8 + 8 // ea + ip + gw + ref.h + ref.l
 )
