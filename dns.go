@@ -314,6 +314,7 @@ func install_hosts_records(arecs map[uint32]AddrRec) {
 	for ix := 0; ix < numkeys; {
 
 		pb := <-getbuf
+		pbb := <-getbuf
 
 		// header
 
@@ -368,10 +369,12 @@ func install_hosts_records(arecs map[uint32]AddrRec) {
 		be.PutUint16(pkt[cmd+2:cmd+4], uint16(numitems))
 		pb.tail = off
 
+		pbb.copy_from(pb)
+
 		log.info("dns watcher: sending hosts records to mapper with mark: %v, num(%v)", mark, numitems)
 
 		recv_tun <- pb
-		recv_gw <- pb
+		recv_gw <- pbb
 	}
 }
 

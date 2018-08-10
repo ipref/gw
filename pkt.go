@@ -63,6 +63,24 @@ func (pb *PktBuf) len() int {
 	return int(pb.tail - pb.data)
 }
 
+func (pb *PktBuf) copy_from(pbo *PktBuf) {
+
+	if len(pb.pkt) < int(pbo.tail) {
+		log.fatal("pkt: buffer to small to copy from another pkt")
+	}
+
+	pb.data = pbo.data
+	pb.tail = pbo.tail
+	pb.iphdr = pbo.iphdr
+	pb.udphdr = pbo.udphdr
+	pb.tcphdr = pbo.tcphdr
+	pb.icmphdr = pbo.icmphdr
+	pb.arechdr = pbo.arechdr
+	pb.tmrhdr = pbo.tmrhdr
+
+	copy(pb.pkt[pb.data:pb.tail], pbo.pkt[pb.data:pb.tail])
+}
+
 var getbuf chan (*PktBuf)
 var retbuf chan (*PktBuf)
 
@@ -86,7 +104,7 @@ func pkt_buffers() {
 			default:
 				pb = &PktBuf{pkt: make([]byte, cli.gw_mtu+TUNHDR, cli.gw_mtu+TUNHDR)}
 				allocated += 1
-				log.info("new PktBuf allocated, total(%v)", allocated)
+				log.info("pkt: new PktBuf allocated, total(%v)", allocated)
 			}
 		} else {
 			pb = <-retbuf
