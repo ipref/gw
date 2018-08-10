@@ -24,8 +24,8 @@ In the meadow implementation of IPREF, where local network host addresses are
 never aliased by encoding addresses, the quad can be decomposed into two
 disjoined relations comprised of three elements:
 
-    (ea,     gw, ref)     implemented with:      our_eas  their_gws:their_refs
-    (    ip, gw, ref)     implemented with:      our_ips  our_gws:our_refs
+    (ea,     gw, ref)     implemented with:      our_ea  their_gw:their_ref
+    (    ip, gw, ref)     implemented with:      our_ip  our_gw:our_ref
 
 These relations must be maintained across all maps used in the implementation.
 
@@ -151,8 +151,8 @@ func addr_cmp(a, b interface{}) int {
 // -- MapGw --------------------------------------------------------------------
 
 type MapGw struct {
-	their_ipref *b.Tree // map[uint32]IpRefRec
-	our_ipref   *b.Tree // map[uint32]IpRefRec
+	their_ipref *b.Tree // map[uint32]IpRefRec		our_ea -> (their_gw, their_ref)
+	our_ipref   *b.Tree // map[uint32]IpRefRec		our_ip -> (our_gw,   our_ref)
 }
 
 func (mgw *MapGw) init() {
@@ -172,8 +172,8 @@ func (mgw *MapGw) address_records(pb *PktBuf) int {
 // -- MapTun -------------------------------------------------------------------
 
 type MapTun struct {
-	our_ip *b.Tree // map[uint32]map[Ref]IpRec
-	our_ea *b.Tree // map[uint32]map[Ref]IpRec
+	our_ip *b.Tree // map[uint32]map[Ref]IpRec		our_gw   -> our_ref   -> our_ip
+	our_ea *b.Tree // map[uint32]map[Ref]IpRec		their_gw -> their_ref -> our_ea
 }
 
 func (mtun *MapTun) init() {
