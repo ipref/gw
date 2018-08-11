@@ -25,7 +25,7 @@ func main() {
 
 	parse_cli() // also initializes log
 
-	log.info("start meadow")
+	log.info("START meadow")
 
 	owners.init()
 	marker.init()
@@ -55,5 +55,5 @@ func main() {
 
 	msg := <-goexit
 
-	log.info("finish meadow: %v", msg)
+	log.info("FINISH meadow: %v", msg)
 }

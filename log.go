@@ -38,7 +38,9 @@ func (l *Log) set(level uint, stamps bool) {
 func (l *Log) fatal(msg string, params ...interface{}) {
 
 	if l.level <= FATAL {
-		golog.Fatalf("FAT  "+msg, params...)
+		golog.Printf("FAT  "+msg, params...)
+		goexit <- "fatal"
+		select {}
 	}
 }
 
