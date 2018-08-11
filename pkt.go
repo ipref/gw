@@ -59,10 +59,6 @@ type PktBuf struct {
 	tmrhdr  uint
 }
 
-func (pb *PktBuf) len() int {
-	return int(pb.tail - pb.data)
-}
-
 func (pb *PktBuf) copy_from(pbo *PktBuf) {
 
 	if len(pb.pkt) < int(pbo.tail) {
@@ -79,6 +75,18 @@ func (pb *PktBuf) copy_from(pbo *PktBuf) {
 	pb.tmrhdr = pbo.tmrhdr
 
 	copy(pb.pkt[pb.data:pb.tail], pbo.pkt[pb.data:pb.tail])
+}
+
+func (pb *PktBuf) len() int {
+	return int(pb.tail - pb.data)
+}
+
+func (pb *PktBuf) set_arechdr() {
+
+	if pb.pkt[pb.data] != 0x10+V1_PKT_AREC || pb.len() < 16 {
+		log.fatal("pkt: unexpected invalid adress record packet")
+	}
+	pb.arechdr = pb.data
 }
 
 var getbuf chan (*PktBuf)
