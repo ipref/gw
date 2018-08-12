@@ -8,6 +8,8 @@ import (
 	"syscall"
 )
 
+const DEVEL_ECHO = true // enable internal discard/echo for development
+
 var goexit chan (string)
 
 func catch_signals() {

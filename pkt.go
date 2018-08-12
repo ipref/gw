@@ -77,6 +77,10 @@ func (pb *PktBuf) copy_from(pbo *PktBuf) {
 	copy(pb.pkt[pb.data:pb.tail], pbo.pkt[pb.data:pb.tail])
 }
 
+func (pb *PktBuf) iphdrlen() int {
+	return int((pb.pkt[pb.iphdr] & 0x0f) * 4)
+}
+
 func (pb *PktBuf) len() int {
 	return int(pb.tail - pb.data)
 }
@@ -87,6 +91,21 @@ func (pb *PktBuf) set_arechdr() {
 		log.fatal("pkt: unexpected invalid adress record packet")
 	}
 	pb.arechdr = pb.data
+}
+
+func (pb *PktBuf) set_iphdr() {
+
+	pb.iphdr = pb.data
+}
+
+func (pb *PktBuf) set_tcphdr() {
+
+	pb.tcphdr = pb.iphdr + uint(pb.iphdrlen())
+}
+
+func (pb *PktBuf) set_udphdr() {
+
+	pb.udphdr = pb.iphdr + uint(pb.iphdrlen())
 }
 
 var getbuf chan (*PktBuf)
