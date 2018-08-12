@@ -60,16 +60,26 @@ func (l *Log) info(msg string, params ...interface{}) {
 
 func (l *Log) debug(msg string, params ...interface{}) {
 
-	if l.level <= DEBUG {
-		_, fname, line, ok := runtime.Caller(1)
-		if ok {
-			ix := strings.LastIndex(fname, "/")
-			if ix < 0 {
-				msg = fmt.Sprintf("%v(%v): ", fname, line) + msg
-			} else {
-				msg = fmt.Sprintf("%v(%v): ", fname[ix+1:], line) + msg
-			}
-		}
+	if len(cli.debug) == 0 {
+		return
+	}
+
+	_, fname, line, ok := runtime.Caller(1)
+	if !ok {
+		return
+	}
+
+	bix := 0
+	eix := len(fname)
+	if ix := strings.LastIndex(fname, "/"); ix >= 0 {
+		bix = ix + 1
+	}
+	if ix := strings.LastIndex(fname, "."); ix >= 0 {
+		eix = ix
+	}
+
+	if cli.debug[fname[bix:eix]] || cli.debug["all"] {
+		msg = fmt.Sprintf("%v(%v): ", fname[bix:], line) + msg
 		golog.Printf("dbg  "+msg, params...)
 	}
 }

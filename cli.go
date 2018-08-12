@@ -11,7 +11,7 @@ import (
 )
 
 var cli struct {
-	debug      bool
+	debug      map[string]bool
 	trace      bool
 	stamps     bool
 	gw_ip      string
@@ -25,13 +25,15 @@ var cli struct {
 
 func parse_cli() {
 
-	flag.BoolVar(&cli.debug, "debug", false, "enable debug messages")
+	var debugstr string
+
+	flag.StringVar(&debugstr, "debug", "", "enable debug in listed, comma separated files or 'all'")
 	flag.BoolVar(&cli.trace, "trace", false, "enable packet trace")
 	flag.BoolVar(&cli.stamps, "time-stamps", false, "print logs with time stamps")
-	flag.StringVar(&cli.gw_ip, "gateway", "", "ip address on the interface connected to public network")
+	flag.StringVar(&cli.gw_ip, "gateway", "", "ip address of the public network interface")
 	flag.StringVar(&cli.ea_net, "encode-net", "10.240.0.0/12", "private network for encoding external ipref addresses")
-	flag.StringVar(&cli.hosts_path, "hosts", "/etc/hosts", "static host name lookup file")
-	flag.StringVar(&cli.dns_path, "dns", "", "advertised ipref hosts file")
+	flag.StringVar(&cli.hosts_path, "hosts", "/etc/hosts", "host name lookup file")
+	flag.StringVar(&cli.dns_path, "dns", "", "dns file with IPREF addresses of local hosts")
 	flag.Usage = func() {
 		toks := strings.Split(os.Args[0], "/")
 		prog := toks[len(toks)-1]
@@ -45,12 +47,30 @@ func parse_cli() {
 	}
 	flag.Parse()
 
+	// parse debug string
+
+	cli.debug = make(map[string]bool)
+
+	for _, fname := range strings.Split(debugstr, ",") {
+
+		if len(fname) == 0 {
+			continue
+		}
+		bix := 0
+		eix := len(fname)
+		if ix := strings.LastIndex(fname, "/"); ix >= 0 {
+			bix = ix + 1
+		}
+		if ix := strings.LastIndex(fname, "."); ix >= 0 {
+			eix = ix
+		}
+		cli.debug[fname[bix:eix]] = true
+	}
+
 	// initialize logger
 
 	if cli.trace {
 		cli.log_level = TRACE
-	} else if cli.debug {
-		cli.log_level = DEBUG
 	} else {
 		cli.log_level = INFO
 	}
