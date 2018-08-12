@@ -3,6 +3,7 @@
 package main
 
 import (
+	"net"
 	"time"
 )
 
@@ -11,6 +12,17 @@ var send_tun chan (*PktBuf)
 
 func tun_sender() {
 
+	for pb := range send_tun {
+
+		log.debug("tun: pkt to send to tun interface  IP(%v)  %v  %v  len(%v)",
+			pb.pkt[pb.data+9], net.IP(pb.pkt[pb.data+12:pb.data+16]),
+			net.IP(pb.pkt[pb.data+16:pb.data+20]),
+			be.Uint16(pb.pkt[pb.data+2:pb.data+4]))
+		if log.level <= TRACE {
+			pb.pp_net("tun out: ")
+		}
+		retbuf <- pb
+	}
 }
 
 func tun_receiver() {
@@ -20,11 +32,14 @@ func tun_receiver() {
 
 	time.Sleep(879 * time.Microsecond)
 
-	log.debug("received pkt from tun")
+	log.debug("tun: pkt received from tun interface  IP(%v)  %v  %v  len(%v)",
+		pb.pkt[pb.data+9], net.IP(pb.pkt[pb.data+12:pb.data+16]),
+		net.IP(pb.pkt[pb.data+16:pb.data+20]),
+		be.Uint16(pb.pkt[pb.data+2:pb.data+4]))
 	if log.level <= TRACE {
-		pb.pp_net()
-		pb.pp_tran()
-		pb.pp_raw()
+		pb.pp_net("tun in:  ")
+		pb.pp_tran("tun in:  ")
+		pb.pp_raw("tun in:  ")
 	}
 
 	recv_tun <- pb

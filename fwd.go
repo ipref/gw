@@ -23,7 +23,7 @@ var be = binary.BigEndian
 
 /* PktBuf helper functions */
 
-func (pb *PktBuf) pp_raw() {
+func (pb *PktBuf) pp_raw(pfx string) {
 
 	// RAW  45 00 00 74 2e 52 40 00 40 11 d0 b6 0a fb 1b 6f c0 a8 54 5e 04 15 04 15 00 ..
 
@@ -31,6 +31,7 @@ func (pb *PktBuf) pp_raw() {
 	var sb strings.Builder
 
 	pkt := pb.pkt[pb.data:pb.tail]
+	sb.WriteString(pfx)
 	sb.WriteString("RAW ")
 	for ii := 0; ii < len(pkt); ii++ {
 		if ii < max {
@@ -44,7 +45,7 @@ func (pb *PktBuf) pp_raw() {
 	log.trace(sb.String())
 }
 
-func (pb *PktBuf) pp_net() {
+func (pb *PktBuf) pp_net(pfx string) {
 
 	// IP[udp] 4500  192.168.84.93  10.254.22.202  len(64) id(1) ttl(64) frag:4000 csum:0000
 
@@ -52,6 +53,7 @@ func (pb *PktBuf) pp_net() {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 	if (len(pkt) < 20) || (pkt[0]&0xf0 != 0x40) || (len(pkt) < int((pkt[0]&0xf)*4)) {
+		sb.WriteString(pfx)
 		sb.WriteString("NON-IP ")
 		if len(pkt) >= 2 {
 			sb.WriteString(hex.EncodeToString(pkt[:2]))
@@ -59,6 +61,8 @@ func (pb *PktBuf) pp_net() {
 		log.trace(sb.String())
 		return
 	}
+
+	sb.WriteString(pfx)
 
 	switch pkt[9] {
 	case TCP:
@@ -84,7 +88,7 @@ func (pb *PktBuf) pp_net() {
 	log.trace(sb.String())
 }
 
-func (pb *PktBuf) pp_tran() {
+func (pb *PktBuf) pp_tran(pfx string) {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 	if len(pkt) < 20 {
@@ -93,6 +97,8 @@ func (pb *PktBuf) pp_tran() {
 
 	var sb strings.Builder
 	off := (pkt[0] & 0xf) * 4
+
+	sb.WriteString(pfx)
 
 	switch pkt[9] {
 	case TCP:
@@ -141,7 +147,7 @@ func (pb *PktBuf) fill_udphdr() {
 	pb.pkt[pb.iphdr+9] = UDP
 
 	be.PutUint16(pb.pkt[pb.udphdr+0:pb.udphdr+2], 44123)                     // src port
-	be.PutUint16(pb.pkt[pb.udphdr+2:pb.udphdr+4], 2177)                      // dst port
+	be.PutUint16(pb.pkt[pb.udphdr+2:pb.udphdr+4], 7)                         // dst port (echo)
 	be.PutUint16(pb.pkt[pb.udphdr+4:pb.udphdr+6], uint16(pb.tail-pb.udphdr)) // datalen
 	be.PutUint16(pb.pkt[pb.udphdr+6:pb.udphdr+8], 0x0000)                    // udp csum
 
@@ -186,11 +192,11 @@ func (pb *PktBuf) fill(proto int) {
 }
 
 func insert_ipref_option(pb *PktBuf) int {
-	return DROP
+	return ACCEPT
 }
 
 func remove_ipref_option(pb *PktBuf) int {
-	return DROP
+	return ACCEPT
 }
 
 func fwd_to_gw() {
