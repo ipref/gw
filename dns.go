@@ -323,7 +323,7 @@ func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
 		off := pb.data
 
 		if pktlen < int(off+V1_HDRLEN+4+V1_AREC_LEN) {
-			log.fatal("dns watcher: packet small to fit address record") // paranoia
+			log.fatal("dns watcher: packet too small to fit address record") // paranoia
 		}
 
 		pkt[off+0] = 0x10 + V1_PKT_AREC
@@ -350,14 +350,74 @@ func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
 			if !ok {
 				log.fatal("dns watcher: unexpected invalid key") // paranoia
 			}
+
+			// validate
+
+			if rec.ea != 0 && rec.ip == 0 {
+
+				if rec.gw == 0 || rec.ref.isZero() {
+					log.err("dns watcher: invalid ea address record: %08x %08x %08x %v, ignoring",
+						rec.ea, rec.ip, rec.gw, rec.ref.String())
+					goto skip_record
+				}
+
+			} else if rec.ea == 0 && rec.ip != 0 {
+
+				if rec.gw == 0 {
+					gw := net.ParseIP(cli.gw_ip)
+					if gw == nil {
+						log.fatal("dns watcher: invalid local gateway: %v", cli.gw_ip)
+					}
+					rec.gw = be.Uint32(gw.To4())
+				}
+
+				if rec.ref.isZero() {
+
+					ref := <-random_dns_ref
+					rec.ref = ref
+					log.info("dns watcher: allocated dns ref: %08x %08x %08x %v",
+						rec.ea, rec.ip, rec.gw, rec.ref.String())
+				}
+
+				if rec.gw == 0 || rec.ref.isZero() {
+					log.err("dns watcher: invalid ip address record: %08x %08x %08x %v, ignoring",
+						rec.ea, rec.ip, rec.gw, rec.ref.String())
+					goto skip_record
+				}
+
+			} else {
+				log.err("dns watcher: invalid address record: %08x %08x %08x %v, ignoring",
+					rec.ea, rec.ip, rec.gw, rec.ref.String())
+				goto skip_record
+			}
+
+			// make sure second byte rule is honored
+
+			if rec.ea != 0 && ((rec.ea>>8)&0xFF) >= SECOND_BYTE {
+				log.err("dns watcher: address record second byte violation(ea): %08x %08x %08x %v, ignoring",
+					rec.ea, rec.ip, rec.gw, rec.ref.String())
+				goto skip_record
+			}
+
+			if rec.ip != 0 && ((rec.ref.l>>8)&0xFF) >= SECOND_BYTE {
+				log.err("dns watcher: address record second byte violation(ref): %08x %08x %08x %v, ignoring",
+					rec.ea, rec.ip, rec.gw, rec.ref.String())
+				goto skip_record
+			}
+
+			// pack it up
+
 			be.PutUint32(pkt[off+0:off+4], rec.ea)
 			be.PutUint32(pkt[off+4:off+8], rec.ip)
 			be.PutUint32(pkt[off+8:off+12], rec.gw)
 			be.PutUint64(pkt[off+12:off+20], rec.ref.h)
 			be.PutUint64(pkt[off+20:off+28], rec.ref.l)
-			off += V1_AREC_LEN
 
+			off += V1_AREC_LEN
 			numitems++
+
+		skip_record:
+
 			ix++
 			if ix >= numkeys {
 				break
@@ -366,15 +426,26 @@ func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
 
 		// send items
 
-		be.PutUint16(pkt[cmd+2:cmd+4], uint16(numitems))
-		pb.tail = off
+		if numitems > 0 {
 
-		pbb.copy_from(pb)
+			be.PutUint16(pkt[cmd+2:cmd+4], uint16(numitems))
+			pb.tail = off
 
-		log.info("dns watcher: sending hosts records to mapper with mark: %v, num(%v)", mark, numitems)
+			pbb.copy_from(pb)
 
-		recv_tun <- pb
-		recv_gw <- pbb
+			log.info("dns watcher: sending hosts records to mapper: oid(%v) mark(%v), num(%v)",
+				oid, mark, numitems)
+
+			recv_tun <- pb
+			recv_gw <- pbb
+
+		} else {
+
+			log.info("dns watcher: no valid hosts records to send to mapper: oid(%v)", oid)
+
+			retbuf <- pb
+			retbuf <- pbb
+		}
 	}
 }
 

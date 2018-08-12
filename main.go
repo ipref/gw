@@ -33,6 +33,9 @@ func main() {
 	goexit = make(chan string)
 	go catch_signals()
 
+	go gen_dns_refs()
+	go gen_mapper_refs()
+
 	getbuf = make(chan *PktBuf, 1)
 	retbuf = make(chan *PktBuf, MAXBUF)
 

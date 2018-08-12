@@ -48,18 +48,6 @@ is no locking. Updates to the maps are performed by the forwardes when prompted
 by DNS watchers or timers.
 */
 
-/* Address and reference allocation
-
-Local network encoded addresses and references may be allocated by the mapper
-or by a local DNS server. To avoid conflicts, meadow implementation imposes
-a rule where the second to last byte of an allocated IP address or the second
-to last byte of an allocated reference must be 100 or higher if allocated
-by the mapper and it must be less than 100 if allocated by DNS server or
-listed in /etc/hosts.
-*/
-
-const SECOND_BYTE = 100 // second to last byte must be < 100 for DNS allocations
-
 type Owners struct {
 	oids []string
 	mtx  sync.Mutex
@@ -204,13 +192,13 @@ func (mgw *MapGw) address_records(pb *PktBuf) int {
 			ref.h = be.Uint64(pkt[off+12 : off+20])
 			ref.l = be.Uint64(pkt[off+10 : off+28])
 
-			if gw == 0 || (ref.h == 0 && ref.l == 0) {
+			if gw == 0 || ref.isZero() {
 				log.fatal("mgw: unexpected null gw + ref")
 			}
 
 			if ea != 0 && ip == 0 {
 
-				if pkt[off+2] >= SECOND_BYTE || pkt[off+26] >= SECOND_BYTE {
+				if pkt[off+2] >= SECOND_BYTE {
 					log.err("mgw: second byte rule violation, %08x %08x %08x %v", ea, ip, gw, ref)
 					continue
 				}
@@ -219,7 +207,7 @@ func (mgw *MapGw) address_records(pb *PktBuf) int {
 
 			} else if ea == 0 && ip != 0 {
 
-				if pkt[off+6] >= SECOND_BYTE || pkt[off+26] >= SECOND_BYTE {
+				if pkt[off+26] >= SECOND_BYTE {
 					log.err("mgw: second byte rule violation, %08x %08x %08x %v", ea, ip, gw, ref)
 					continue
 				}
@@ -303,13 +291,13 @@ func (mtun *MapTun) address_records(pb *PktBuf) int {
 			ref.h = be.Uint64(pkt[off+12 : off+20])
 			ref.l = be.Uint64(pkt[off+10 : off+28])
 
-			if gw == 0 || (ref.h == 0 && ref.l == 0) {
+			if gw == 0 || ref.isZero() {
 				log.fatal("mtun: unexpected null gw + ref")
 			}
 
 			if ea != 0 && ip == 0 {
 
-				if pkt[off+2] >= SECOND_BYTE || pkt[off+26] >= SECOND_BYTE {
+				if pkt[off+2] >= SECOND_BYTE {
 					log.err("mtun: second byte rule violation, %08x %08x %08x %v", ea, ip, gw, ref)
 					continue
 				}
@@ -323,7 +311,7 @@ func (mtun *MapTun) address_records(pb *PktBuf) int {
 
 			} else if ea == 0 && ip != 0 {
 
-				if pkt[off+6] >= SECOND_BYTE || pkt[off+26] >= SECOND_BYTE {
+				if pkt[off+26] >= SECOND_BYTE {
 					log.err("mtun: second byte rule violation, %08x %08x %08x %v", ea, ip, gw, ref)
 					continue
 				}
