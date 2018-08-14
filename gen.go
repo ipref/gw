@@ -21,6 +21,9 @@ const (
 	SECOND_BYTE = 100
 )
 
+var random_dns_ref chan Ref
+var random_mapper_ref chan Ref
+
 // generate random refs with second to last byte < SECOND_BYTE
 func gen_dns_refs() {
 
@@ -80,9 +83,6 @@ func gen_mapper_refs() {
 		random_mapper_ref <- ref
 	}
 }
-
-var random_dns_ref chan Ref
-var random_mapper_ref chan Ref
 
 //var random_dns_ea chan uint32
 //var random_mapper_ea chan uint32
