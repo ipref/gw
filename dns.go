@@ -318,33 +318,28 @@ func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
 
 		// header
 
+		pb.set_arechdr()
+		pb.write_v1_header(V1_PKT_AREC, V1_SET_AREC, oid, mark)
+
 		pkt := pb.pkt
-		pktlen := len(pkt)
-		off := pb.data
+		off := pb.arechdr + V1_HDRLEN
 
-		if pktlen < int(off+V1_HDRLEN+4+V1_AREC_LEN) {
-			log.fatal("dns watcher: packet too small to fit address record") // paranoia
+		if off > uint(len(pkt)-4-V1_AREC_LEN) {
+			log.fatal("dns watcher: not enough space for an address record") // paranoia
 		}
-
-		pkt[off+0] = 0x10 + V1_PKT_AREC
-		pkt[off+V1_CMD] = V1_SET_HOSTS_REC
-		pkt[off+V1_SRCQ] = 0
-		pkt[off+V1_DSTQ] = 0
-		be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], mark)
-		be.PutUint32(pkt[off+V1_OID:off+V1_OID+4], uint32(oid))
-		be.PutUint32(pkt[off+V1_RESERVED:off+V1_RESERVED+4], 0)
-		off += V1_HDRLEN
 
 		// cmd
 
 		cmd := off
+		pkt[cmd+0] = 0
 		pkt[cmd+1] = V1_AREC
-		off += 4
+
 		numitems := 0
+		off += 4
 
 		// items
 
-		for off < uint(pktlen-V1_AREC_LEN) {
+		for off <= uint(len(pkt)-V1_AREC_LEN) {
 
 			rec, ok := arecs[keys[ix]]
 			if !ok {
@@ -364,11 +359,7 @@ func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
 			} else if rec.ea == 0 && rec.ip != 0 {
 
 				if rec.gw == 0 {
-					gw := net.ParseIP(cli.gw_ip)
-					if gw == nil {
-						log.fatal("dns watcher: invalid local gateway: %v", cli.gw_ip)
-					}
-					rec.gw = be.Uint32(gw.To4())
+					rec.gw = cli.gw_ip
 				}
 
 				if rec.ref.isZero() {
@@ -391,7 +382,7 @@ func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
 				goto skip_record
 			}
 
-			// make sure second byte rule is honored
+			// make sure second byte rule is met
 
 			if rec.ea != 0 && ((rec.ea>>8)&0xFF) >= SECOND_BYTE {
 				log.err("dns watcher: address record second byte violation(ea): %08x %08x %08x %v, ignoring",

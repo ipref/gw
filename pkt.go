@@ -19,8 +19,8 @@ const ( // internal packet constants (Ipv1)
 	V1_CMD      = 1
 	V1_SRCQ     = 2
 	V1_DSTQ     = 3
-	V1_MARK     = 4
-	V1_OID      = 8
+	V1_OID      = 4
+	V1_MARK     = 8
 	V1_RESERVED = 12
 
 	V1_AREC_LEN = 4 + 4 + 4 + 8 + 8 // ea + ip + gw + ref.h + ref.l
@@ -39,7 +39,7 @@ const ( // internal packet types
 
 const ( // AREC commands
 
-	V1_SET_HOSTS_REC = iota + 1
+	V1_SET_AREC = iota + 1
 )
 
 const ( // TMR commands
@@ -47,6 +47,11 @@ const ( // TMR commands
 	V1_PURGE_EXPIRED = iota + 1
 )
 
+type IcmpReq struct { // params for icmp requests
+	thype byte // we want 'type' but it's a reserved keyword
+	code  byte
+	mtu   uint16
+}
 type PktBuf struct {
 	pkt     []byte
 	data    uint
@@ -57,6 +62,7 @@ type PktBuf struct {
 	icmphdr uint
 	arechdr uint
 	tmrhdr  uint
+	icmp    IcmpReq
 }
 
 func (pb *PktBuf) copy_from(pbo *PktBuf) {
@@ -73,6 +79,7 @@ func (pb *PktBuf) copy_from(pbo *PktBuf) {
 	pb.icmphdr = pbo.icmphdr
 	pb.arechdr = pbo.arechdr
 	pb.tmrhdr = pbo.tmrhdr
+	pb.icmp = pbo.icmp
 
 	copy(pb.pkt[pb.data:pb.tail], pbo.pkt[pb.data:pb.tail])
 }
@@ -106,6 +113,24 @@ func (pb *PktBuf) set_tcphdr() {
 func (pb *PktBuf) set_udphdr() {
 
 	pb.udphdr = pb.iphdr + uint(pb.iphdrlen())
+}
+
+func (pb *PktBuf) write_v1_header(thype, cmd byte, oid, mark uint32) {
+
+	pkt := pb.pkt
+	off := pb.arechdr
+
+	if (len(pkt) - int(off)) < V1_HDRLEN {
+		log.fatal("pkt: not enough space for v1 header")
+	}
+
+	pkt[off+0] = 0x10 + thype
+	pkt[off+V1_CMD] = cmd
+	pkt[off+V1_SRCQ] = 0
+	pkt[off+V1_DSTQ] = 0
+	be.PutUint32(pkt[off+V1_OID:off+V1_OID+4], oid)
+	be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], mark)
+	be.PutUint32(pkt[off+V1_RESERVED:off+V1_RESERVED+4], 0)
 }
 
 var getbuf chan (*PktBuf)
