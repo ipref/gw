@@ -299,11 +299,11 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 
 func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
 
-	if len(arecs) == 0 {
-		return
-	}
+	// get mark for new keys
 
 	mark := marker.now()
+
+	// send new address records (if any, could be 0)
 
 	keys := make([]uint32, 0, len(arecs))
 	for key, _ := range arecs {
@@ -438,6 +438,21 @@ func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
 			retbuf <- pbb
 		}
 	}
+
+	// set new mark (whether we sent any records or not)
+
+	pb := <-getbuf
+	pbb := <-getbuf
+
+	pb.set_arechdr()
+	pb.write_v1_header(V1_PKT_AREC, V1_SET_MARK, oid, mark)
+	pbb.copy_from(pb)
+
+	recv_tun <- pb
+	recv_gw <- pbb
+
+	retbuf <- pb
+	retbuf <- pbb
 }
 
 func parse_hosts(path string, timer *time.Timer) {

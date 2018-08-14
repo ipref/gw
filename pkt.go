@@ -40,6 +40,7 @@ const ( // internal packet types
 const ( // AREC commands
 
 	V1_SET_AREC = iota + 1
+	V1_SET_MARK
 )
 
 const ( // TMR commands

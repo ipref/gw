@@ -162,75 +162,6 @@ type MapGw struct {
 	cur_mark    []uint32 // current mark per oid
 }
 
-func (mgw *MapGw) address_records(pb *PktBuf) int {
-
-	pkt := pb.pkt
-	oid := be.Uint32(pkt[pb.arechdr+V1_OID : pb.arechdr+V1_OID+4])
-	mark := be.Uint32(pkt[pb.arechdr+V1_MARK : pb.arechdr+V1_MARK+4])
-	mgw.set_cur_mark(oid, mark)
-
-	switch pkt[pb.arechdr+V1_CMD] {
-	case V1_SET_AREC:
-
-		if pb.len() < 16+4+V1_AREC_LEN {
-			log.fatal("mgw: address records packet unexpectedly too short")
-		}
-
-		off := int(pb.arechdr + 16)
-
-		if pkt[off+1] != V1_AREC {
-			log.fatal("mgw: unexpected item type: %v", pkt[off+1])
-		}
-		num_items := be.Uint16(pkt[off+2 : off+4])
-
-		off += 4
-
-		if num_items == 0 || int(num_items*V1_AREC_LEN) != (pb.len()-off) {
-			log.fatal("mgw: mismatch between number (%v) of items and packet length (%v)", num_items, pb.len())
-		}
-
-		for ii := 0; ii < int(num_items); ii, off = ii+1, off+V1_AREC_LEN {
-
-			var ref Ref
-			ea := be.Uint32(pkt[off+0 : off+4])
-			ip := be.Uint32(pkt[off+4 : off+8])
-			gw := be.Uint32(pkt[off+8 : off+12])
-			ref.h = be.Uint64(pkt[off+12 : off+20])
-			ref.l = be.Uint64(pkt[off+10 : off+28])
-
-			if gw == 0 || ref.isZero() {
-				log.fatal("mgw: unexpected null gw + ref")
-			}
-
-			if ea != 0 && ip == 0 {
-
-				if pkt[off+2] >= SECOND_BYTE {
-					log.err("mgw: second byte rule violation, %08x %08x %08x %v", ea, ip, gw, ref)
-					continue
-				}
-
-				mgw.their_ipref.Set(ea, IpRefRec{gw, ref, oid, mark})
-
-			} else if ea == 0 && ip != 0 {
-
-				if pkt[off+26] >= SECOND_BYTE {
-					log.err("mgw: second byte rule violation, %08x %08x %08x %v", ea, ip, gw, ref)
-					continue
-				}
-
-				mgw.our_ipref.Set(ip, IpRefRec{gw, ref, oid, mark})
-
-			} else {
-				log.fatal("mgw: unexpected invalid address record ea: %08x ip: %08x", ea, ip)
-			}
-		}
-
-	default:
-		log.fatal("mgw: unexpected address records command: %v", pkt[pb.arechdr+V1_CMD])
-	}
-	return DROP
-}
-
 func (mgw *MapGw) get_dst_ipref(dst uint32) IpRefRec {
 
 	iprefrec, ok := mgw.their_ipref.Get(dst)
@@ -243,7 +174,7 @@ func (mgw *MapGw) get_dst_ipref(dst uint32) IpRefRec {
 
 		rec := iprefrec.(IpRefRec)
 		rec.mark = mgw.cur_mark[mgw.oid] + MAPPER_REC_TMOUT
-		mgw.their_ipref.Set(dst, interface{}(rec)) // bump up expiration
+		mgw.their_ipref.Set(dst, rec) // bump up expiration
 	}
 
 	return iprefrec.(IpRefRec)
@@ -320,6 +251,84 @@ func (mgw *MapGw) set_cur_mark(oid, mark uint32) {
 	mgw.cur_mark[oid] = mark
 }
 
+func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
+
+	pkt := pb.pkt
+	oid := be.Uint32(pkt[pb.arechdr+V1_OID : pb.arechdr+V1_OID+4])
+	mark := be.Uint32(pkt[pb.arechdr+V1_MARK : pb.arechdr+V1_MARK+4])
+
+	switch pkt[pb.arechdr+V1_CMD] {
+	case V1_SET_AREC:
+
+		if pb.len() < 16+4+V1_AREC_LEN {
+			log.fatal("mgw: address records packet unexpectedly too short")
+		}
+
+		off := int(pb.arechdr + 16)
+
+		if pkt[off+1] != V1_AREC {
+			log.fatal("mgw: unexpected item type: %v", pkt[off+1])
+		}
+		num_items := be.Uint16(pkt[off+2 : off+4])
+
+		off += 4
+
+		if num_items == 0 || int(num_items*V1_AREC_LEN) != (pb.len()-off) {
+			log.fatal("mgw: mismatch between number (%v) of items and packet length (%v)", num_items, pb.len())
+		}
+
+		for ii := 0; ii < int(num_items); ii, off = ii+1, off+V1_AREC_LEN {
+
+			var ref Ref
+			ea := be.Uint32(pkt[off+0 : off+4])
+			ip := be.Uint32(pkt[off+4 : off+8])
+			gw := be.Uint32(pkt[off+8 : off+12])
+			ref.h = be.Uint64(pkt[off+12 : off+20])
+			ref.l = be.Uint64(pkt[off+10 : off+28])
+
+			if gw == 0 || ref.isZero() {
+				log.fatal("mgw: unexpected null gw + ref")
+			}
+
+			if ea != 0 && ip == 0 {
+
+				if pkt[off+2] >= SECOND_BYTE {
+					log.err("mgw: second byte rule violation, %08x %08x %08x %v", ea, ip, gw, ref)
+					continue
+				}
+
+				mgw.their_ipref.Set(ea, IpRefRec{gw, ref, oid, mark})
+
+			} else if ea == 0 && ip != 0 {
+
+				if pkt[off+26] >= SECOND_BYTE {
+					log.err("mgw: second byte rule violation, %08x %08x %08x %v", ea, ip, gw, ref)
+					continue
+				}
+
+				mgw.our_ipref.Set(ip, IpRefRec{gw, ref, oid, mark})
+
+			} else {
+				log.fatal("mgw: unexpected invalid address record ea: %08x ip: %08x", ea, ip)
+			}
+		}
+
+	default:
+		log.fatal("mgw: unexpected address records command: %v", pkt[pb.arechdr+V1_CMD])
+	}
+	return DROP
+}
+
+func (mgw *MapGw) set_new_mark(pb *PktBuf) int {
+
+	pkt := pb.pkt
+	oid := be.Uint32(pkt[pb.arechdr+V1_OID : pb.arechdr+V1_OID+4])
+	mark := be.Uint32(pkt[pb.arechdr+V1_MARK : pb.arechdr+V1_MARK+4])
+	mgw.set_cur_mark(oid, mark)
+
+	return DROP
+}
+
 func (mgw *MapGw) timer(pb *PktBuf) int {
 	return DROP
 }
@@ -333,12 +342,30 @@ type MapTun struct {
 	cur_mark []uint32 // current mark per oid
 }
 
-func (mtun *MapTun) address_records(pb *PktBuf) int {
+func (mtun *MapTun) init(oid uint32) {
+
+	mtun.our_ip = b.TreeNew(b.Cmp(addr_cmp))
+	mtun.our_ea = b.TreeNew(b.Cmp(addr_cmp))
+	mtun.oid = oid
+	mtun.cur_mark = make([]uint32, 2)
+}
+
+func (mtun *MapTun) set_cur_mark(oid, mark uint32) {
+
+	if oid == 0 || mark == 0 {
+		log.fatal("mtun: unexpected invalid oid(%v) or mark(%v)", oid, mark)
+	}
+	if oid >= uint32(len(mtun.cur_mark)) {
+		mtun.cur_mark = append(mtun.cur_mark, make([]uint32, oid-uint32(len(mtun.cur_mark))+1)...)
+	}
+	mtun.cur_mark[oid] = mark
+}
+
+func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
 	pkt := pb.pkt
 	oid := be.Uint32(pkt[pb.arechdr+V1_OID : pb.arechdr+V1_OID+4])
 	mark := be.Uint32(pkt[pb.arechdr+V1_MARK : pb.arechdr+V1_MARK+4])
-	mtun.set_cur_mark(oid, mark)
 
 	switch pkt[pb.arechdr+V1_CMD] {
 	case V1_SET_AREC:
@@ -412,23 +439,14 @@ func (mtun *MapTun) address_records(pb *PktBuf) int {
 	return DROP
 }
 
-func (mtun *MapTun) init(oid uint32) {
+func (mtun *MapTun) set_new_mark(pb *PktBuf) int {
 
-	mtun.our_ip = b.TreeNew(b.Cmp(addr_cmp))
-	mtun.our_ea = b.TreeNew(b.Cmp(addr_cmp))
-	mtun.oid = oid
-	mtun.cur_mark = make([]uint32, 2)
-}
+	pkt := pb.pkt
+	oid := be.Uint32(pkt[pb.arechdr+V1_OID : pb.arechdr+V1_OID+4])
+	mark := be.Uint32(pkt[pb.arechdr+V1_MARK : pb.arechdr+V1_MARK+4])
+	mtun.set_cur_mark(oid, mark)
 
-func (mtun *MapTun) set_cur_mark(oid, mark uint32) {
-
-	if oid == 0 || mark == 0 {
-		log.fatal("mtun: unexpected invalid oid(%v) or mark(%v)", oid, mark)
-	}
-	if oid >= uint32(len(mtun.cur_mark)) {
-		mtun.cur_mark = append(mtun.cur_mark, make([]uint32, oid-uint32(len(mtun.cur_mark))+1)...)
-	}
-	mtun.cur_mark[oid] = mark
+	return DROP
 }
 
 // -- Variables ----------------------------------------------------------------

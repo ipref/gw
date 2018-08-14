@@ -232,7 +232,14 @@ func fwd_to_gw() {
 		case pb.pkt[pb.data] == 0x10+V1_PKT_AREC:
 
 			pb.set_arechdr()
-			verdict = map_gw.address_records(pb)
+			switch pb.pkt[pb.arechdr+V1_CMD] {
+			case V1_SET_AREC:
+				verdict = map_gw.set_new_address_records(pb)
+			case V1_SET_MARK:
+				verdict = map_gw.set_new_mark(pb)
+			default:
+				log.err("fwd_to_gw: unknown address records command: %v, ignoring", pb.pkt[pb.arechdr+V1_CMD])
+			}
 
 		case pb.pkt[pb.data] == 0x10+V1_PKT_TMR:
 
@@ -266,7 +273,14 @@ func fwd_to_tun() {
 		case pb.pkt[pb.data] == 0x10+V1_PKT_AREC:
 
 			pb.set_arechdr()
-			verdict = map_tun.address_records(pb)
+			switch pb.pkt[pb.arechdr+V1_CMD] {
+			case V1_SET_AREC:
+				verdict = map_tun.set_new_address_records(pb)
+			case V1_SET_MARK:
+				verdict = map_tun.set_new_mark(pb)
+			default:
+				log.err("fwd_to_tun: unknown address records command: %v, ignoring", pb.pkt[pb.arechdr+V1_CMD])
+			}
 
 		case pb.pkt[pb.data] == 0x10+V1_PKT_TMR:
 
