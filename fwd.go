@@ -135,8 +135,8 @@ func (pb *PktBuf) fill_iphdr() {
 	pb.pkt[pb.iphdr+8] = 64                                               // ttl
 	pb.pkt[pb.iphdr+9] = 0                                                // protocol
 	be.PutUint16(pb.pkt[pb.iphdr+10:pb.iphdr+12], 0x0000)                 // hdr csum
-	copy(pb.pkt[pb.iphdr+12:pb.iphdr+16], []byte{192, 168, 84, 93})       // src
-	copy(pb.pkt[pb.iphdr+16:pb.iphdr+20], []byte{192, 168, 84, 94})       // dst
+	copy(pb.pkt[pb.iphdr+12:pb.iphdr+16], []byte{192, 168, 73, 127})      // src taro-7
+	copy(pb.pkt[pb.iphdr+16:pb.iphdr+20], []byte{10, 254, 22, 202})       // dst tikopia-8
 }
 
 func (pb *PktBuf) fill_udphdr() {
@@ -192,16 +192,28 @@ func (pb *PktBuf) fill(proto int) {
 }
 
 func insert_ipref_option(pb *PktBuf) int {
+
+	pkt := pb.pkt
+
+	if (be.Uint16(pkt[pb.iphdr+6:pb.iphdr+8]) & 0x1fff) != 0 {
+		log.debug("insert opt: pkt is a fragment, dropping")
+		return DROP
+	}
+	/*
+		src := be.Uint32(pkt[pb.iphdr+12:pb.iphdr+16])
+		dst := be.Uint32(pkt[pb.iphdr+16:pb.iphdr+20])
+
+		map_gw.
+	*/
 	return ACCEPT
 }
 
 func remove_ipref_option(pb *PktBuf) int {
+	log.debug("remove opt")
 	return ACCEPT
 }
 
 func fwd_to_gw() {
-
-	map_gw.init()
 
 	for pb := range recv_tun {
 
@@ -211,6 +223,7 @@ func fwd_to_gw() {
 
 		case pb.pkt[pb.data]&0xf0 == 0x40:
 
+			pb.set_iphdr()
 			verdict = insert_ipref_option(pb)
 			if verdict == ACCEPT {
 				send_gw <- pb
@@ -236,8 +249,6 @@ func fwd_to_gw() {
 }
 
 func fwd_to_tun() {
-
-	map_tun.init()
 
 	for pb := range recv_gw {
 

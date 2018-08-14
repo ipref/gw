@@ -48,6 +48,11 @@ is no locking. Updates to the maps are performed by the forwardes when prompted
 by DNS watchers or timers.
 */
 
+const (
+	MAPPER_REC_TMOUT  = 1800 // 30min
+	MAPPER_REC_UPDATE = MAPPER_REC_TMOUT - MAPPER_REC_TMOUT/4
+)
+
 type Owners struct {
 	oids []string
 	mtx  sync.Mutex
@@ -153,6 +158,7 @@ func addr_cmp(a, b interface{}) int {
 type MapGw struct {
 	their_ipref *b.Tree  // map[uint32]IpRefRec		our_ea -> (their_gw, their_ref)
 	our_ipref   *b.Tree  // map[uint32]IpRefRec		our_ip -> (our_gw,   our_ref)
+	oid         uint32   // must be the same for both mgw and mtun
 	cur_mark    []uint32 // current mark per oid
 }
 
@@ -164,7 +170,7 @@ func (mgw *MapGw) address_records(pb *PktBuf) int {
 	mgw.set_cur_mark(oid, mark)
 
 	switch pkt[pb.arechdr+V1_CMD] {
-	case V1_SET_HOSTS_REC:
+	case V1_SET_AREC:
 
 		if pb.len() < 16+4+V1_AREC_LEN {
 			log.fatal("mgw: address records packet unexpectedly too short")
@@ -225,10 +231,81 @@ func (mgw *MapGw) address_records(pb *PktBuf) int {
 	return DROP
 }
 
-func (mgw *MapGw) init() {
+func (mgw *MapGw) get_dst_ipref(dst uint32) IpRefRec {
 
+	iprefrec, ok := mgw.their_ipref.Get(dst)
+
+	if !ok || iprefrec.(IpRefRec).mark < mgw.cur_mark[mgw.oid] {
+
+		iprefrec = interface{}(IpRefRec{0, Ref{0, 0}, 0, 0}) // not found
+
+	} else if iprefrec.(IpRefRec).oid == mgw.oid && iprefrec.(IpRefRec).mark-mgw.cur_mark[mgw.oid] < MAPPER_REC_UPDATE {
+
+		rec := iprefrec.(IpRefRec)
+		rec.mark = mgw.cur_mark[mgw.oid] + MAPPER_REC_TMOUT
+		mgw.their_ipref.Set(dst, interface{}(rec)) // bump up expiration
+	}
+
+	return iprefrec.(IpRefRec)
+}
+
+func (mgw *MapGw) get_src_ipref(src uint32) IpRefRec {
+
+	iprefrec, ok := mgw.our_ipref.Get(src)
+	if ok {
+		if iprefrec.(IpRefRec).oid == mgw.oid && iprefrec.(IpRefRec).mark-mgw.cur_mark[mgw.oid] < MAPPER_REC_UPDATE {
+
+			rec := iprefrec.(IpRefRec)
+			rec.mark = mgw.cur_mark[mgw.oid] + MAPPER_REC_TMOUT
+			mgw.our_ipref.Set(src, rec) // bump up expiration
+		}
+	} else {
+
+		// local host ip does not have a map to ipref, create it
+
+		ref := <-random_mapper_ref
+		iprefrec = interface{}(IpRefRec{
+			cli.gw_ip,
+			ref,
+			mgw.oid,
+			mgw.cur_mark[mgw.oid] + MAPPER_REC_TMOUT,
+		})
+		mgw.our_ipref.Set(src, iprefrec)
+
+		// tell mtun about it
+
+		pb := <-getbuf
+		if uint(len(pb.pkt))-pb.data < V1_HDRLEN+4+V1_AREC_LEN {
+			log.fatal("mgw: not enough space for an address record") // paranoia
+		}
+		pb.set_arechdr()
+		pb.write_v1_header(V1_PKT_AREC, V1_SET_AREC, mgw.oid, iprefrec.(IpRefRec).mark)
+
+		pkt := pb.pkt
+		off := pb.arechdr + V1_HDRLEN
+		pkt[0] = 0
+		pkt[1] = V1_SET_AREC
+		be.PutUint32(pkt[off+2:off+4], 1)
+		off += 4
+		be.PutUint32(pkt[off+0:off+4], 0)
+		be.PutUint32(pkt[off+4:off+8], src)
+		be.PutUint32(pkt[off+8:off+12], cli.gw_ip)
+		be.PutUint64(pkt[off+12:off+20], ref.h)
+		be.PutUint64(pkt[off+20:off+28], ref.l)
+		pb.tail = off + V1_AREC_LEN
+
+		<-recv_gw
+	}
+	return iprefrec.(IpRefRec)
+
+}
+
+func (mgw *MapGw) init(oid uint32) {
+
+	mgw.oid = owners.new_oid("mgw")
 	mgw.their_ipref = b.TreeNew(b.Cmp(addr_cmp))
 	mgw.our_ipref = b.TreeNew(b.Cmp(addr_cmp))
+	mgw.oid = oid
 	mgw.cur_mark = make([]uint32, 2)
 }
 
@@ -252,6 +329,7 @@ func (mgw *MapGw) timer(pb *PktBuf) int {
 type MapTun struct {
 	our_ip   *b.Tree  // map[uint32]map[Ref]IpRec		our_gw   -> our_ref   -> our_ip
 	our_ea   *b.Tree  // map[uint32]map[Ref]IpRec		their_gw -> their_ref -> our_ea
+	oid      uint32   // must be the same for both mgw and mtun
 	cur_mark []uint32 // current mark per oid
 }
 
@@ -263,7 +341,7 @@ func (mtun *MapTun) address_records(pb *PktBuf) int {
 	mtun.set_cur_mark(oid, mark)
 
 	switch pkt[pb.arechdr+V1_CMD] {
-	case V1_SET_HOSTS_REC:
+	case V1_SET_AREC:
 
 		if pb.len() < 16+4+V1_AREC_LEN {
 			log.fatal("mtun: address records packet unexpectedly too short")
@@ -334,10 +412,11 @@ func (mtun *MapTun) address_records(pb *PktBuf) int {
 	return DROP
 }
 
-func (mtun *MapTun) init() {
+func (mtun *MapTun) init(oid uint32) {
 
 	mtun.our_ip = b.TreeNew(b.Cmp(addr_cmp))
 	mtun.our_ea = b.TreeNew(b.Cmp(addr_cmp))
+	mtun.oid = oid
 	mtun.cur_mark = make([]uint32, 2)
 }
 

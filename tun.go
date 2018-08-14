@@ -30,7 +30,7 @@ func tun_receiver() {
 	pb := <-getbuf
 	pb.fill(UDP)
 
-	time.Sleep(879 * time.Microsecond)
+	time.Sleep(1879 * time.Microsecond)
 
 	log.debug("tun: pkt received from tun interface  IP(%v)  %v  %v  len(%v)",
 		pb.pkt[pb.data+9], net.IP(pb.pkt[pb.data+12:pb.data+16]),

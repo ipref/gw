@@ -29,25 +29,36 @@ func main() {
 
 	log.info("START meadow")
 
-	owners.init()
-	marker.init()
-
 	goexit = make(chan string)
 	go catch_signals()
 
-	go gen_dns_refs()
-	go gen_mapper_refs()
+	owners.init()
+	marker.init()
+
+	mapper_oid := owners.new_oid("mapper") // both mapper sets need the same oid and timer mark
+	map_gw.init(mapper_oid)
+	map_tun.init(mapper_oid)
+	mapper_mark := marker.now()
+	map_gw.set_cur_mark(mapper_oid, mapper_mark)
+	map_tun.set_cur_mark(mapper_oid, mapper_mark)
 
 	getbuf = make(chan *PktBuf, 1)
 	retbuf = make(chan *PktBuf, MAXBUF)
+
+	icmpreq = make(chan *PktBuf, PKTQLEN)
 
 	recv_tun = make(chan *PktBuf, PKTQLEN)
 	send_tun = make(chan *PktBuf, PKTQLEN)
 	recv_gw = make(chan *PktBuf, PKTQLEN)
 	send_gw = make(chan *PktBuf, PKTQLEN)
 
+	go gen_dns_refs()
+	go gen_mapper_refs()
+
 	go pkt_buffers()
 	go dns_watcher()
+
+	go icmp()
 
 	go fwd_to_gw()
 	go fwd_to_tun()
