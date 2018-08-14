@@ -5,33 +5,36 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
 var cli struct {
-	debug      map[string]bool
+	debuglist  string
 	trace      bool
 	stamps     bool
-	gw_ip      string
-	ea_net     string
+	gw         string
+	ea         string
 	hosts_path string
 	dns_path   string
 	// derived
+	debug     map[string]bool
+	ea_ip     uint32
+	ea_mask   uint32
+	gw_ip     uint32
 	gw_mtu    uint
 	log_level uint
 }
 
 func parse_cli() {
 
-	var debugstr string
-
-	flag.StringVar(&debugstr, "debug", "", "enable debug in listed, comma separated files or 'all'")
+	flag.StringVar(&cli.debuglist, "debug", "", "enable debug in listed, comma separated files or 'all'")
 	flag.BoolVar(&cli.trace, "trace", false, "enable packet trace")
 	flag.BoolVar(&cli.stamps, "time-stamps", false, "print logs with time stamps")
-	flag.StringVar(&cli.gw_ip, "gateway", "", "ip address of the public network interface")
-	flag.StringVar(&cli.ea_net, "encode-net", "10.240.0.0/12", "private network for encoding external ipref addresses")
+	flag.StringVar(&cli.gw, "gateway", "", "ip address of the public network interface")
+	flag.StringVar(&cli.ea, "encode-net", "10.240.0.0/12", "private network for encoding external ipref addresses")
 	flag.StringVar(&cli.hosts_path, "hosts", "/etc/hosts", "host name lookup file")
 	flag.StringVar(&cli.dns_path, "dns", "", "dns file with IPREF addresses of local hosts")
 	flag.Usage = func() {
@@ -47,11 +50,11 @@ func parse_cli() {
 	}
 	flag.Parse()
 
-	// parse debug string
+	// initialize logger
 
 	cli.debug = make(map[string]bool)
 
-	for _, fname := range strings.Split(debugstr, ",") {
+	for _, fname := range strings.Split(cli.debuglist, ",") {
 
 		if len(fname) == 0 {
 			continue
@@ -67,8 +70,6 @@ func parse_cli() {
 		cli.debug[fname[bix:eix]] = true
 	}
 
-	// initialize logger
-
 	if cli.trace {
 		cli.log_level = TRACE
 	} else {
@@ -77,9 +78,36 @@ func parse_cli() {
 
 	log.set(cli.log_level, cli.stamps)
 
-	// verify ip addresses
+	// parse gw addresses
 
-	cli.gw_ip = "192.168.84.93"
+	gw := net.ParseIP(cli.gw)
+	if gw == nil {
+		log.fatal("invalid gateway IP address: %v", cli.gw)
+	}
+
+	if !gw.IsGlobalUnicast() {
+		log.fatal("gateway IP address is not a valid unicast address: %v", cli.gw)
+	}
+	cli.gw_ip = be.Uint32(gw.To4())
+
+	// parse ea net
+
+	_, ipnet, err := net.ParseCIDR(cli.ea)
+	if err != nil {
+		log.fatal("invalid encode-net: %v", cli.ea)
+	}
+
+	if !ipnet.IP.IsGlobalUnicast() {
+		log.fatal("encode-net is not a valid unicast address: %v", cli.ea)
+	}
+
+	ones, bits := ipnet.Mask.Size()
+	if ones == 0 || ones == 32 || bits != 32 {
+		log.fatal("invalid encode-net mask: %v", cli.ea)
+	}
+
+	cli.ea_ip = be.Uint32(ipnet.IP.To4())
+	cli.ea_mask = be.Uint32(net.IP(ipnet.Mask).To4())
 
 	// deduce mtu
 
