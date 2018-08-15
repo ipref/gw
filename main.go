@@ -69,6 +69,8 @@ func main() {
 	go tun_receiver()
 	go tun_sender()
 
+	go timer()
+
 	msg := <-goexit
 
 	log.info("FINISH meadow: %v", msg)

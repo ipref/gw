@@ -5,8 +5,6 @@ package main
 import (
 	"fmt"
 	"github.com/cznic/b"
-	"sync"
-	"time"
 )
 
 /* Data organization
@@ -48,34 +46,6 @@ is no locking. Updates to the maps are performed by the forwardes when prompted
 by DNS watchers or timers.
 */
 
-const (
-	MAPPER_REC_TMOUT  = 1800 // 30min
-	MAPPER_REC_UPDATE = MAPPER_REC_TMOUT - MAPPER_REC_TMOUT/4
-)
-
-type Owners struct {
-	oids []string
-	mtx  sync.Mutex
-}
-
-func (o *Owners) init() {
-	o.oids = make([]string, 1, 16)
-	o.oids[0] = "none"
-}
-
-func (o *Owners) new_oid(name string) uint32 {
-
-	if len(name) == 0 {
-		log.fatal("mapper: missing owner name")
-	}
-
-	o.mtx.Lock()
-	oid := uint32(len(o.oids))
-	o.oids = append(o.oids, name)
-	o.mtx.Unlock()
-	return oid
-}
-
 type Ref struct {
 	h uint64
 	l uint64
@@ -110,21 +80,6 @@ type IpRec struct {
 	ip   uint32
 	oid  uint32
 	mark uint32
-}
-
-type Mark struct {
-	base time.Time
-}
-
-func (m *Mark) init() {
-
-	m.base = time.Now().Add(-time.Second) // make sure marker.now() is always > 0
-}
-
-func (m *Mark) now() uint32 {
-
-	return uint32(time.Now().Sub(m.base) / time.Second)
-
 }
 
 func ref_cmp(a, b interface{}) int {
@@ -170,10 +125,10 @@ func (mgw *MapGw) get_dst_ipref(dst uint32) IpRefRec {
 
 		iprefrec = interface{}(IpRefRec{0, Ref{0, 0}, 0, 0}) // not found
 
-	} else if iprefrec.(IpRefRec).oid == mgw.oid && iprefrec.(IpRefRec).mark-mgw.cur_mark[mgw.oid] < MAPPER_REC_UPDATE {
+	} else if iprefrec.(IpRefRec).oid == mgw.oid && iprefrec.(IpRefRec).mark-mgw.cur_mark[mgw.oid] < MAPPER_REFRESH {
 
 		rec := iprefrec.(IpRefRec)
-		rec.mark = mgw.cur_mark[mgw.oid] + MAPPER_REC_TMOUT
+		rec.mark = mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
 		mgw.their_ipref.Set(dst, rec) // bump up expiration
 	}
 
@@ -184,10 +139,10 @@ func (mgw *MapGw) get_src_ipref(src uint32) IpRefRec {
 
 	iprefrec, ok := mgw.our_ipref.Get(src)
 	if ok {
-		if iprefrec.(IpRefRec).oid == mgw.oid && iprefrec.(IpRefRec).mark-mgw.cur_mark[mgw.oid] < MAPPER_REC_UPDATE {
+		if iprefrec.(IpRefRec).oid == mgw.oid && iprefrec.(IpRefRec).mark-mgw.cur_mark[mgw.oid] < MAPPER_REFRESH {
 
 			rec := iprefrec.(IpRefRec)
-			rec.mark = mgw.cur_mark[mgw.oid] + MAPPER_REC_TMOUT
+			rec.mark = mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
 			mgw.our_ipref.Set(src, rec) // bump up expiration
 		}
 	} else {
@@ -199,7 +154,7 @@ func (mgw *MapGw) get_src_ipref(src uint32) IpRefRec {
 			cli.gw_ip,
 			ref,
 			mgw.oid,
-			mgw.cur_mark[mgw.oid] + MAPPER_REC_TMOUT,
+			mgw.cur_mark[mgw.oid] + MAPPER_TMOUT,
 		})
 		mgw.our_ipref.Set(src, iprefrec)
 
@@ -450,9 +405,6 @@ func (mtun *MapTun) set_new_mark(pb *PktBuf) int {
 }
 
 // -- Variables ----------------------------------------------------------------
-
-var marker Mark
-var owners Owners
 
 var map_gw MapGw   // exclusively owned by fwd_to_gw
 var map_tun MapTun // exclusively owned by fwd_to_tun
