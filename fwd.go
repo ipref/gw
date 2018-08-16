@@ -179,11 +179,11 @@ func (pb *PktBuf) fill_payload() {
 
 func (pb *PktBuf) fill(proto int) {
 
-	if len(pb.pkt) < int(cli.gw_mtu+TUNHDR) {
-		log.fatal("packet buffer too short: %v, needs %v", len(pb.pkt), cli.gw_mtu+TUNHDR)
+	if len(pb.pkt) < int(cli.gw_mtu) {
+		log.fatal("packet buffer too short: %v, needs %v", len(pb.pkt), cli.gw_mtu)
 	}
 
-	pb.data = OPTLEN + TUNHDR
+	pb.data = OPTLEN - TUNHDR
 	pb.tail = pb.data
 	pb.fill_iphdr()
 

@@ -199,7 +199,7 @@ func pkt_buffers() {
 			select {
 			case pb = <-retbuf:
 			default:
-				pb = &PktBuf{pkt: make([]byte, cli.gw_mtu+TUNHDR, cli.gw_mtu+TUNHDR)}
+				pb = &PktBuf{pkt: make([]byte, cli.gw_mtu, cli.gw_mtu)}
 				allocated += 1
 				log.info("pkt: new PktBuf allocated, total(%v)", allocated)
 			}
