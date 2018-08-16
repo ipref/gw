@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	golog "log"
+	"os"
 	"runtime"
 	"strings"
 )
@@ -37,10 +38,12 @@ func (l *Log) set(level uint, stamps bool) {
 
 func (l *Log) fatal(msg string, params ...interface{}) {
 
-	if l.level <= FATAL {
-		golog.Printf("FAT  "+msg, params...)
-		goexit <- "fatal"
+	golog.Printf("FAT  "+msg, params...)
+	select {
+	case goexit <- "fatal":
 		select {}
+	default: // if goexit not ready, just exit
+		os.Exit(1)
 	}
 }
 

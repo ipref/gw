@@ -82,7 +82,11 @@ func parse_cli() {
 
 	gw := net.ParseIP(cli.gw)
 	if gw == nil {
-		log.fatal("invalid gateway IP address: %v", cli.gw)
+		if len(cli.gw) == 0 {
+			log.fatal("missing gateway IP address")
+		} else {
+			log.fatal("invalid gateway IP address: %v", cli.gw)
+		}
 	}
 
 	if !gw.IsGlobalUnicast() {
