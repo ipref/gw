@@ -48,6 +48,16 @@ const ( // TMR commands
 	V1_PURGE_EXPIRED = iota + 1
 )
 
+const (
+	ICMP       = 1
+	TCP        = 6
+	UDP        = 17
+	IPREF_PORT = 1045
+	OPTLEN     = uint(8 + 4 + 4 + 16 + 16) // udphdr + encap + opt + ref + ref
+	TUNHDR     = uint(4)
+	PKTQLEN    = 2
+)
+
 type IcmpReq struct { // params for icmp requests
 	thype byte // we want 'type' but it's a reserved keyword
 	code  byte
