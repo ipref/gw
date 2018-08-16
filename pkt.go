@@ -52,6 +52,8 @@ const (
 	ICMP             = 1
 	TCP              = 6
 	UDP              = 17
+	ECHO             = 7
+	DISCARD          = 9
 	IPREF_PORT       = 1045
 	IPREF_OPT        = 0x9E // C(1) + CLS(0) + OptNum(30) (rfc3692 EXP 30)
 	IPREF_OPT64_LEN  = 4 + 8 + 8
@@ -80,7 +82,7 @@ const (
 	ENCAP_PROTO = 1
 	ENCAP_HOPS  = 2
 	ENCAP_RSVD  = 3
-	// ipref option offsets
+	// opt offsets
 	OPT_OPT     = 0
 	OPT_LEN     = 1
 	OPT_RSVD    = 2
