@@ -46,6 +46,25 @@ is no locking. Updates to the maps are performed by the forwardes when prompted
 by DNS watchers or timers.
 */
 
+/* Soft state
+
+IPREF maintains soft state describing status of peer gateways. In the meadow
+implementation of IPREF, where local network has only one gateway, soft state
+is implemented as a simple map:
+
+	their_gw -> state
+
+In this design, there are two copies of the map, each exclusively owned by
+their forwarders. The relation between the two maps is asymmetric. The map
+is created by the fwd_to_tun forwarder. This forwarder creates new entries,
+updates and removes entries as appropriate. It then informs the other forwarder
+of changes made. The other forwarder only reads entries from the map.
+
+The entries in the map exists for as long as gateway's related host entries
+exist. When all host entries, related to the gatway, are removed then the
+gateway's soft state is also removed.
+*/
+
 type Ref struct {
 	h uint64
 	l uint64
@@ -82,6 +101,23 @@ type IpRec struct {
 	mark uint32
 }
 
+type SoftRec struct {
+	gw   uint32
+	port uint16
+	mtu  uint16
+	ttl  byte
+	hops byte
+}
+
+func (sft *SoftRec) init(gw uint32) {
+
+	sft.gw = gw
+	sft.port = IPREF_PORT
+	sft.mtu = uint16(cli.gw_mtu)
+	sft.ttl = 1
+	sft.hops = 1
+}
+
 func ref_cmp(a, b interface{}) int {
 
 	if a.(Ref).h < b.(Ref).h {
@@ -115,6 +151,17 @@ type MapGw struct {
 	our_ipref   *b.Tree  // map[uint32]IpRefRec		our_ip -> (our_gw,   our_ref)
 	oid         uint32   // must be the same for both mgw and mtun
 	cur_mark    []uint32 // current mark per oid
+	soft        map[uint32]SoftRec
+}
+
+func (mgw *MapGw) init(oid uint32) {
+
+	mgw.oid = owners.new_oid("mgw")
+	mgw.their_ipref = b.TreeNew(b.Cmp(addr_cmp))
+	mgw.our_ipref = b.TreeNew(b.Cmp(addr_cmp))
+	mgw.oid = oid
+	mgw.cur_mark = make([]uint32, 2)
+	mgw.soft = make(map[uint32]SoftRec)
 }
 
 func (mgw *MapGw) get_dst_ipref(dst uint32) IpRefRec {
@@ -184,15 +231,6 @@ func (mgw *MapGw) get_src_ipref(src uint32) IpRefRec {
 	}
 	return iprefrec.(IpRefRec)
 
-}
-
-func (mgw *MapGw) init(oid uint32) {
-
-	mgw.oid = owners.new_oid("mgw")
-	mgw.their_ipref = b.TreeNew(b.Cmp(addr_cmp))
-	mgw.our_ipref = b.TreeNew(b.Cmp(addr_cmp))
-	mgw.oid = oid
-	mgw.cur_mark = make([]uint32, 2)
 }
 
 func (mgw *MapGw) set_cur_mark(oid, mark uint32) {
@@ -295,6 +333,7 @@ type MapTun struct {
 	our_ea   *b.Tree  // map[uint32]map[Ref]IpRec		their_gw -> their_ref -> our_ea
 	oid      uint32   // must be the same for both mgw and mtun
 	cur_mark []uint32 // current mark per oid
+	soft     map[uint32]SoftRec
 }
 
 func (mtun *MapTun) init(oid uint32) {
@@ -303,6 +342,7 @@ func (mtun *MapTun) init(oid uint32) {
 	mtun.our_ea = b.TreeNew(b.Cmp(addr_cmp))
 	mtun.oid = oid
 	mtun.cur_mark = make([]uint32, 2)
+	mtun.soft = make(map[uint32]SoftRec)
 }
 
 func (mtun *MapTun) set_cur_mark(oid, mark uint32) {

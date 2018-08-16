@@ -24,15 +24,6 @@ import (
                ╰──────────╯     ┗━━━━━━━━━━━━┛     ╰──────────╯
 */
 
-const (
-	ICMP    = 1
-	TCP     = 6
-	UDP     = 17
-	OPTLEN  = uint(8 + 4 + 4 + 16 + 16) // udphdr + encap + opt + ref + ref
-	TUNHDR  = uint(4)
-	PKTQLEN = 2
-)
-
 var be = binary.BigEndian
 
 /* PktBuf helper functions */
@@ -213,12 +204,48 @@ func insert_ipref_option(pb *PktBuf) int {
 		log.debug("insert opt: pkt is a fragment, dropping")
 		return DROP
 	}
-	/*
-		src := be.Uint32(pkt[pb.iphdr+12:pb.iphdr+16])
-		dst := be.Uint32(pkt[pb.iphdr+16:pb.iphdr+20])
 
-		map_gw.
-	*/
+	src := be.Uint32(pkt[pb.iphdr+12 : pb.iphdr+16])
+	dst := be.Uint32(pkt[pb.iphdr+16 : pb.iphdr+20])
+
+	iprefdst := map_gw.get_dst_ipref(dst)
+	if iprefdst.ip == 0 {
+		pb.icmp.thype = ICMP_DEST_UNREACH
+		pb.icmp.code = ICMP_NET_UNREACH
+		pb.icmp.mtu = 0
+		icmpreq <- pb
+		return STOLEN
+	}
+
+	iprefsrc := map_gw.get_src_ipref(src)
+
+	// get soft state
+
+	soft, ok := map_gw.soft[iprefdst.ip]
+	if !ok {
+		soft.init(iprefdst.ip) // missing soft state, use defaults
+	}
+
+	// insert option
+
+	if pb.iphdr < OPTLEN {
+		log.fatal("insert opt: no space for ipref option") // paranoia
+	}
+
+	iphdrlen := uint(pb.iphdrlen())
+
+	if iprefsrc.ref.h == 0 && iprefdst.ref.h == 0 {
+		pb.data = pb.iphdr - OPTLEN + 16 // both refs 64 bit
+	} else {
+		pb.data = pb.iphdr - OPTLEN // at least one 128 bit ref
+	}
+
+	copy(pkt[pb.data:pb.data+iphdrlen], pkt[pb.iphdr:pb.iphdr+iphdrlen])
+
+	// adjust layer 4 headers
+
+	// adjust ip header
+
 	return ACCEPT
 }
 
