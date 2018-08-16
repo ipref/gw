@@ -49,13 +49,45 @@ const ( // TMR commands
 )
 
 const (
-	ICMP       = 1
-	TCP        = 6
-	UDP        = 17
-	IPREF_PORT = 1045
-	OPTLEN     = uint(8 + 4 + 4 + 16 + 16) // udphdr + encap + opt + ref + ref
-	TUNHDR     = uint(4)
-	PKTQLEN    = 2
+	ICMP             = 1
+	TCP              = 6
+	UDP              = 17
+	IPREF_PORT       = 1045
+	IPREF_OPT        = 0x9E // C(1) + CLS(0) + OptNum(30) (rfc3692 EXP 30)
+	IPREF_OPT64_LEN  = 4 + 8 + 8
+	IPREF_OPT128_LEN = 4 + 16 + 16
+	OPTLEN           = uint(8 + 4 + 4 + 16 + 16) // udphdr + encap + opt + ref + ref
+	TUNHDR           = uint(4)
+	PKTQLEN          = 2
+	// IP header offests
+	IP_VER   = 0
+	IP_DSCP  = 1
+	IP_LEN   = 2
+	IP_ID    = 4
+	IP_FRAG  = 6
+	IP_TTL   = 8
+	IP_PROTO = 9
+	IP_CSUM  = 10
+	IP_SRC   = 12
+	IP_DST   = 16
+	// UDP offsets
+	UDP_SPORT = 0
+	UDP_DPORT = 2
+	UDP_LEN   = 4
+	UDP_CSUM  = 6
+	// encap offsets
+	ENCAP_TTL   = 0
+	ENCAP_PROTO = 1
+	ENCAP_HOPS  = 2
+	ENCAP_RSVD  = 3
+	// ipref option offsets
+	OPT_OPT     = 0
+	OPT_LEN     = 1
+	OPT_RSVD    = 2
+	OPT_SREF64  = 4
+	OPT_SREF128 = 4
+	OPT_DREF64  = 12
+	OPT_DREF128 = 20
 )
 
 type IcmpReq struct { // params for icmp requests

@@ -200,13 +200,13 @@ func insert_ipref_option(pb *PktBuf) int {
 
 	pkt := pb.pkt
 
-	if (be.Uint16(pkt[pb.iphdr+6:pb.iphdr+8]) & 0x1fff) != 0 {
+	if (be.Uint16(pkt[pb.iphdr+IP_FRAG:pb.iphdr+IP_FRAG+2]) & 0x1fff) != 0 {
 		log.debug("insert opt: pkt is a fragment, dropping")
 		return DROP
 	}
 
-	src := be.Uint32(pkt[pb.iphdr+12 : pb.iphdr+16])
-	dst := be.Uint32(pkt[pb.iphdr+16 : pb.iphdr+20])
+	src := be.Uint32(pkt[pb.iphdr+IP_SRC : pb.iphdr+IP_SRC+4])
+	dst := be.Uint32(pkt[pb.iphdr+IP_DST : pb.iphdr+IP_DST+4])
 
 	iprefdst := map_gw.get_dst_ipref(dst)
 	if iprefdst.ip == 0 {
@@ -233,18 +233,52 @@ func insert_ipref_option(pb *PktBuf) int {
 	}
 
 	iphdrlen := uint(pb.iphdrlen())
+	optlen := byte(0)
 
 	if iprefsrc.ref.h == 0 && iprefdst.ref.h == 0 {
 		pb.data = pb.iphdr - OPTLEN + 16 // both refs 64 bit
+		optlen = IPREF_OPT64_LEN
 	} else {
 		pb.data = pb.iphdr - OPTLEN // at least one 128 bit ref
+		optlen = IPREF_OPT128_LEN
 	}
 
 	copy(pkt[pb.data:pb.data+iphdrlen], pkt[pb.iphdr:pb.iphdr+iphdrlen])
+	pb.set_iphdr()
+
+	udp := pb.iphdr + iphdrlen
+	be.PutUint16(pkt[udp+UDP_SPORT:udp+UDP_SPORT+2], soft.port)
+	be.PutUint16(pkt[udp+UDP_DPORT:udp+UDP_DPORT+2], IPREF_PORT)
+	be.PutUint16(pkt[udp+UDP_LEN:udp+UDP_LEN+2], uint16(pb.tail-udp))
+	be.PutUint16(pkt[udp+UDP_CSUM:udp+UDP_CSUM+2], 0)
+
+	encap := udp + 8
+	pkt[encap+ENCAP_TTL] = pkt[pb.iphdr+8]
+	pkt[encap+ENCAP_PROTO] = pkt[pb.iphdr+IP_PROTO]
+	pkt[encap+ENCAP_HOPS] = soft.hops
+	pkt[encap+ENCAP_RSVD] = 0
+
+	opt := encap + 4
+	pkt[opt+OPT_OPT] = IPREF_OPT
+	pkt[opt+OPT_LEN] = optlen
+	if optlen == IPREF_OPT64_LEN {
+		be.PutUint64(pkt[opt+OPT_SREF64:opt+OPT_SREF64+8], iprefsrc.ref.l)
+		be.PutUint64(pkt[opt+OPT_DREF64:opt+OPT_DREF64+8], iprefdst.ref.l)
+	} else {
+		be.PutUint64(pkt[opt+OPT_SREF128:opt+OPT_SREF128+8], iprefsrc.ref.h)
+		be.PutUint64(pkt[opt+OPT_SREF128+8:opt+OPT_SREF128+16], iprefsrc.ref.l)
+		be.PutUint64(pkt[opt+OPT_DREF128:opt+OPT_DREF128+8], iprefdst.ref.h)
+		be.PutUint64(pkt[opt+OPT_DREF128+8:opt+OPT_DREF128+16], iprefdst.ref.l)
+	}
 
 	// adjust layer 4 headers
 
 	// adjust ip header
+
+	be.PutUint16(pkt[pb.iphdr+IP_LEN:pb.iphdr+IP_LEN+2], uint16(pb.len()))
+	pkt[pb.iphdr+IP_PROTO] = UDP
+	be.PutUint32(pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_SRC+4], iprefsrc.ip)
+	be.PutUint32(pkt[pb.iphdr+IP_DST:pb.iphdr+IP_DST+4], iprefdst.ip)
 
 	return ACCEPT
 }
