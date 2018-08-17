@@ -289,7 +289,8 @@ func insert_ipref_option(pb *PktBuf) int {
 	// insert option
 
 	if pb.iphdr < OPTLEN {
-		log.fatal("insert opt: no space for ipref option") // paranoia
+		log.err("insert opt: no space for ipref option, dropping")
+		return DROP
 	}
 
 	iphdrlen := uint(pb.iphdrlen())
