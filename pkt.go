@@ -139,9 +139,6 @@ func (pb *PktBuf) len() int {
 
 func (pb *PktBuf) set_arechdr() {
 
-	if pb.pkt[pb.data] != 0x10+V1_PKT_AREC || pb.len() < 16 {
-		log.fatal("pkt: unexpected invalid adress record packet")
-	}
 	pb.arechdr = pb.data
 }
 
