@@ -3,6 +3,7 @@
 package main
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -30,7 +31,11 @@ func (o *Owners) name(oid uint32) string {
 		name = o.oids[oid]
 	}
 	o.mtx.Unlock()
-	return name
+	ix := strings.LastIndex(name, "/")
+	if ix < 0 {
+		return name
+	}
+	return name[ix+1:]
 }
 
 func (o *Owners) new_oid(name string) uint32 {
