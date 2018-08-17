@@ -36,9 +36,13 @@ func (pb *PktBuf) pp_pkt() string {
 
 	var ss string
 
-	pkt := pb.pkt[pb.data:pb.tail]
+	pkt := pb.pkt[pb.data:]
 
-	if pkt[0]&0xf0 == 0x40 { // ip packet
+	if len(pkt) == 0 { //
+
+		ss = fmt.Sprintf("PKT  null  pktlen(%v)", pb.len())
+
+	} else if pkt[0]&0xf0 == 0x40 { // ip packet
 
 		ss = fmt.Sprintf("IP(%v)  %v  %v  len(%v)  pktlen(%v)",
 			pkt[pb.data+IP_PROTO],
