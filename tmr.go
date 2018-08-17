@@ -23,6 +23,16 @@ func (o *Owners) init() {
 	o.oids[0] = "none"
 }
 
+func (o *Owners) name(oid uint32) string {
+	name := "unknown"
+	o.mtx.Lock()
+	if int(oid) < len(o.oids) {
+		name = o.oids[oid]
+	}
+	o.mtx.Unlock()
+	return name
+}
+
 func (o *Owners) new_oid(name string) uint32 {
 
 	if len(name) == 0 {

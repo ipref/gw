@@ -28,6 +28,62 @@ var be = binary.BigEndian
 
 /* PktBuf helper functions */
 
+func (pb *PktBuf) pp_pkt() string {
+
+	// IP(17)  192.168.84.97  192.168.84.98  len(60)  pktlen(60)
+	// V1(AREC)  SET_MARK(1)  mapper(1)  mark(12342)  pktlen(68)
+	// PKT 0532ab04 pktlen(18)
+
+	var ss string
+
+	pkt := pb.pkt[pb.data:pb.tail]
+
+	if pkt[0]&0xf0 == 0x40 { // ip packet
+
+		ss = fmt.Sprintf("IP(%v)  %v  %v  len(%v)  pktlen(%v)",
+			pkt[pb.data+IP_PROTO],
+			net.IP(pkt[pb.data+IP_SRC:pb.data+IP_SRC+4]),
+			net.IP(pkt[pb.data+IP_DST:pb.data+IP_DST+4]),
+			be.Uint16(pkt[pb.data+IP_LEN:pb.data+IP_LEN+2]),
+			pb.len())
+
+	} else if pkt[0]&0xf0 == 0x10 { // v1 packet
+
+		thype := pkt[0] & 0x0f
+		switch thype {
+		case V1_PKT_AREC:
+			ss = fmt.Sprintf("V1(AREC)")
+		case V1_PKT_TMR:
+			ss = fmt.Sprintf("V1(TMR)")
+		default:
+			ss = fmt.Sprintf("V1(%v)", thype)
+		}
+
+		cmd := pkt[V1_CMD]
+		switch cmd {
+		case V1_SET_AREC:
+			ss += fmt.Sprintf("  SET_AREC(%v)", cmd)
+		case V1_SET_MARK:
+			ss += fmt.Sprintf("  SET_MARK(%v)", cmd)
+		default:
+			ss += fmt.Sprintf("  cmd(%v)", cmd)
+		}
+
+		oid := be.Uint32(pkt[V1_OID : V1_OID+4])
+		mark := be.Uint32(pkt[V1_MARK : V1_MARK+4])
+		ss += fmt.Sprintf("  %v(%v)  mark(%v)  pktlen(%v)",
+			owners.name(oid), oid, mark, pb.len())
+
+	} else { // unknown packet
+
+		ss = fmt.Sprintf("PKT  %08x  pktlen(%v)",
+			be.Uint32(pkt[0:4]),
+			pb.len())
+	}
+
+	return ss
+}
+
 func (pb *PktBuf) pp_raw(pfx string) {
 
 	// RAW  45 00 00 74 2e 52 40 00 40 11 d0 b6 0a fb 1b 6f c0 a8 54 5e 04 15 04 15 00 ..
@@ -292,6 +348,10 @@ func fwd_to_gw() {
 
 	for pb := range recv_tun {
 
+		if cli.debug["fwd"] || cli.debug["all"] {
+			log.debug("fwd_to_gw  in: %v", pb.pp_pkt())
+		}
+
 		verdict := DROP
 
 		switch {
@@ -333,6 +393,10 @@ func fwd_to_gw() {
 func fwd_to_tun() {
 
 	for pb := range recv_gw {
+
+		if cli.debug["fwd"] || cli.debug["all"] {
+			log.debug("fwd_to_tun in: %v", pb.pp_pkt())
+		}
 
 		verdict := DROP
 
