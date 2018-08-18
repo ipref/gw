@@ -364,6 +364,12 @@ func install_hosts_records(oid uint32, arecs map[IP32]AddrRec) {
 
 				if rec.ref.isZero() {
 
+					// TODO: this is no good, it should check if a record already exists, as
+					//       it stands, it will keep re-allocating on any change to the file
+					//
+					// The best approach would be to publish the allocations to a dynamic DNS
+					// server, then convey records from the server to the mapper.
+
 					ref := <-random_dns_ref
 					rec.ref = ref
 					log.info("dns watcher: allocated dns ref: %v %v %v %v",
