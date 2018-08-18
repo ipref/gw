@@ -455,11 +455,14 @@ func (mtun *MapTun) set_new_mark(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.arechdr:pb.tail]
 	if len(pkt) != V1_HDR_LEN || pkt[V1_CMD] != V1_SET_MARK {
-		log.err("mtun: invalid SET_MARK packet, dropping")
+		// pb.pkt[pb.data:] is at least MIN_PKT_LEN but pkt may be zero length
+		log.err("mtun: invalid SET_MARK packet: PKT %08x data/tail(%v/%v), dropping",
+			be.Uint32(pb.pkt[pb.data:pb.data+4]), pb.data, pb.tail)
 		return DROP
 	}
 	oid := be.Uint32(pkt[V1_OID : V1_OID+4])
 	mark := be.Uint32(pkt[V1_MARK : V1_MARK+4])
+	log.debug("mtun: set mark %v(%v): %v", owners.name(oid), oid, mark)
 	mtun.set_cur_mark(oid, mark)
 
 	return DROP
