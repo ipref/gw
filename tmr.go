@@ -41,13 +41,14 @@ func (o *Owners) name(oid uint32) string {
 func (o *Owners) new_oid(name string) uint32 {
 
 	if len(name) == 0 {
-		log.fatal("mapper: missing owner name")
+		log.fatal("owners: missing owner name")
 	}
 
 	o.mtx.Lock()
 	oid := uint32(len(o.oids))
 	o.oids = append(o.oids, name)
 	o.mtx.Unlock()
+	log.debug("owners: new oid: %v(%v)", name, oid)
 	return oid
 }
 
