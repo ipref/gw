@@ -36,13 +36,13 @@ func (pb *PktBuf) pp_pkt() string {
 
 	var ss string
 
-	pkt := pb.pkt[pb.data:]
+	pkt := pb.pkt[pb.data:] // note: for debug it's from data to end (not from data to tail)
 
-	if len(pkt) == 0 { //
+	if len(pkt) < MIN_PKT_LEN { // data too far into the buffer
 
-		ss = fmt.Sprintf("PKT  null  data/tail(%v/%v)", pb.data, pb.tail)
+		ss = fmt.Sprintf("PKT  short  data/tail(%v/%v)", pb.data, pb.tail)
 
-	} else if pkt[0]&0xf0 == 0x40 { // ip packet
+	} else if pkt[0]&0xf0 == 0x40 && len(pkt) >= 20 { // ip packet
 
 		ss = fmt.Sprintf("IP(%v)  %v  %v  len(%v)  data/tail(%v/%v)",
 			pkt[pb.data+IP_PROTO],
@@ -51,7 +51,7 @@ func (pb *PktBuf) pp_pkt() string {
 			be.Uint16(pkt[pb.data+IP_LEN:pb.data+IP_LEN+2]),
 			pb.data, pb.tail)
 
-	} else if pkt[0]&0xf0 == 0x10 { // v1 packet
+	} else if pkt[0]&0xf0 == 0x10 && len(pkt) >= V1_HDR_LEN { // v1 packet
 
 		thype := pkt[0] & 0x0f
 		switch thype {
@@ -78,7 +78,7 @@ func (pb *PktBuf) pp_pkt() string {
 		ss += fmt.Sprintf("  %v(%v)  mark(%v)  data/tail(%v/%v)",
 			owners.name(oid), oid, mark, pb.data, pb.tail)
 
-	} else { // unknown packet
+	} else { // unknown or invalid packet
 
 		ss = fmt.Sprintf("PKT  %08x  data/tail(%v/%v)", be.Uint32(pkt[0:4]), pb.data, pb.tail)
 	}
@@ -404,6 +404,10 @@ func fwd_to_tun() {
 		verdict := DROP
 
 		switch {
+
+		case len(pb.pkt)-int(pb.data) < MIN_PKT_LEN:
+
+			log.err("fwd_to_tun in: short packet data/end(%v/%v), dropping", pb.data, len(pb.pkt))
 
 		case pb.pkt[pb.data]&0xf0 == 0x40:
 
