@@ -30,9 +30,9 @@ var be = binary.BigEndian
 
 func (pb *PktBuf) pp_pkt() string {
 
-	// IP(17)  192.168.84.97  192.168.84.98  len(60)  pktlen(60)
-	// V1(AREC)  SET_MARK(1)  mapper(1)  mark(12342)  pktlen(68)
-	// PKT 0532ab04 pktlen(18)
+	// IP(17)  192.168.84.97  192.168.84.98  len(60)  data/tail(0/60)
+	// V1(AREC)  SET_MARK(1)  mapper(1)  mark(12342)  data/tail(12/68)
+	// PKT 0532ab04 data/tail(18/20)
 
 	var ss string
 
@@ -40,16 +40,16 @@ func (pb *PktBuf) pp_pkt() string {
 
 	if len(pkt) == 0 { //
 
-		ss = fmt.Sprintf("PKT  null  pktlen(%v)", pb.len())
+		ss = fmt.Sprintf("PKT  null  data/tail(%v/%v)", pb.data, pb.tail)
 
 	} else if pkt[0]&0xf0 == 0x40 { // ip packet
 
-		ss = fmt.Sprintf("IP(%v)  %v  %v  len(%v)  pktlen(%v)",
+		ss = fmt.Sprintf("IP(%v)  %v  %v  len(%v)  data/tail(%v/%v)",
 			pkt[pb.data+IP_PROTO],
 			net.IP(pkt[pb.data+IP_SRC:pb.data+IP_SRC+4]),
 			net.IP(pkt[pb.data+IP_DST:pb.data+IP_DST+4]),
 			be.Uint16(pkt[pb.data+IP_LEN:pb.data+IP_LEN+2]),
-			pb.len())
+			pb.data, pb.tail)
 
 	} else if pkt[0]&0xf0 == 0x10 { // v1 packet
 
@@ -75,14 +75,12 @@ func (pb *PktBuf) pp_pkt() string {
 
 		oid := be.Uint32(pkt[V1_OID : V1_OID+4])
 		mark := be.Uint32(pkt[V1_MARK : V1_MARK+4])
-		ss += fmt.Sprintf("  %v(%v)  mark(%v)  pktlen(%v)",
-			owners.name(oid), oid, mark, pb.len())
+		ss += fmt.Sprintf("  %v(%v)  mark(%v)  data/tail(%v/%v)",
+			owners.name(oid), oid, mark, pb.data, pb.tail)
 
 	} else { // unknown packet
 
-		ss = fmt.Sprintf("PKT  %08x  pktlen(%v)",
-			be.Uint32(pkt[0:4]),
-			pb.len())
+		ss = fmt.Sprintf("PKT  %08x  data/tail(%v/%v)", be.Uint32(pkt[0:4]), pb.data, pb.tail)
 	}
 
 	return ss
@@ -265,8 +263,8 @@ func insert_ipref_option(pb *PktBuf) int {
 		return DROP
 	}
 
-	src := be.Uint32(pkt[pb.iphdr+IP_SRC : pb.iphdr+IP_SRC+4])
-	dst := be.Uint32(pkt[pb.iphdr+IP_DST : pb.iphdr+IP_DST+4])
+	src := IP32(be.Uint32(pkt[pb.iphdr+IP_SRC : pb.iphdr+IP_SRC+4]))
+	dst := IP32(be.Uint32(pkt[pb.iphdr+IP_DST : pb.iphdr+IP_DST+4]))
 
 	iprefdst := map_gw.get_dst_ipref(dst)
 	if iprefdst.ip == 0 {
@@ -338,8 +336,8 @@ func insert_ipref_option(pb *PktBuf) int {
 
 	be.PutUint16(pkt[pb.iphdr+IP_LEN:pb.iphdr+IP_LEN+2], uint16(pb.len()))
 	pkt[pb.iphdr+IP_PROTO] = UDP
-	be.PutUint32(pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_SRC+4], iprefsrc.ip)
-	be.PutUint32(pkt[pb.iphdr+IP_DST:pb.iphdr+IP_DST+4], iprefdst.ip)
+	be.PutUint32(pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_SRC+4], uint32(iprefsrc.ip))
+	be.PutUint32(pkt[pb.iphdr+IP_DST:pb.iphdr+IP_DST+4], uint32(iprefdst.ip))
 
 	return ACCEPT
 }

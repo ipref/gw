@@ -118,9 +118,9 @@ func parse_ref(sss string) (Ref, error) {
 }
 
 // parse file formatted as /etc/hosts
-func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
+func parse_hosts_file(fname string, input io.Reader) map[IP32]AddrRec {
 
-	arecs := make(map[uint32]AddrRec) // use map to detect duplicate entries
+	arecs := make(map[IP32]AddrRec) // use map to detect duplicate entries
 	line_scanner := bufio.NewScanner(input)
 	lno := 0
 
@@ -208,7 +208,7 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 				log.err("dns watcher: %v(%v): non-unicast gw: %v", fname, lno, gwtoks[1])
 				continue
 			}
-			arec.gw = be.Uint32(gw)
+			arec.gw = IP32(be.Uint32(gw))
 		}
 
 		// parse ref
@@ -252,7 +252,7 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 		if arec.gw != 0 {
 			gw := []byte{0, 0, 0, 0}
 			len := sb.Len()
-			be.PutUint32(gw, arec.gw)
+			be.PutUint32(gw, uint32(arec.gw))
 			sb.WriteString(net.IP(gw).String())
 			for ii := sb.Len(); ii < len+16; ii++ {
 				sb.WriteString(" ")
@@ -269,7 +269,7 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 
 			// for pub entries, both gw and the reference are optional
 
-			arec.ip = be.Uint32(addr)
+			arec.ip = IP32(be.Uint32(addr))
 			arecs[arec.ip] = arec
 
 			log.debug("dns watcher: %v %3d  pub  %v", fname, lno, sb.String())
@@ -288,7 +288,7 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 				continue
 			}
 
-			arec.ea = be.Uint32(addr)
+			arec.ea = IP32(be.Uint32(addr))
 			arecs[arec.ea] = arec
 			log.debug("dns watcher: %v %3d  ext  %v", fname, lno, sb.String())
 		}
@@ -297,7 +297,7 @@ func parse_hosts_file(fname string, input io.Reader) map[uint32]AddrRec {
 	return arecs
 }
 
-func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
+func install_hosts_records(oid uint32, arecs map[IP32]AddrRec) {
 
 	// get mark for new keys
 
@@ -305,7 +305,7 @@ func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
 
 	// send new address records (if any, could be 0)
 
-	keys := make([]uint32, 0, len(arecs))
+	keys := make([]IP32, 0, len(arecs))
 	for key, _ := range arecs {
 		keys = append(keys, key)
 	}
@@ -322,7 +322,7 @@ func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
 		pb.write_v1_header(V1_PKT_AREC, V1_SET_AREC, oid, mark)
 
 		pkt := pb.pkt
-		off := pb.arechdr + V1_HDRLEN
+		off := pb.arechdr + V1_HDR_LEN
 
 		if off > uint(len(pkt)-4-V1_AREC_LEN) {
 			log.fatal("dns watcher: not enough space for an address record") // paranoia
@@ -351,8 +351,8 @@ func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
 			if rec.ea != 0 && rec.ip == 0 {
 
 				if rec.gw == 0 || rec.ref.isZero() {
-					log.err("dns watcher: invalid ea address record: %08x %08x %08x %v, ignoring",
-						rec.ea, rec.ip, rec.gw, rec.ref.String())
+					log.err("dns watcher: invalid ea address record: %v %v %v %v, ignoring",
+						rec.ea, rec.ip, rec.gw, &rec.ref)
 					goto skip_record
 				}
 
@@ -366,43 +366,43 @@ func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
 
 					ref := <-random_dns_ref
 					rec.ref = ref
-					log.info("dns watcher: allocated dns ref: %08x %08x %08x %v",
-						rec.ea, rec.ip, rec.gw, rec.ref.String())
+					log.info("dns watcher: allocated dns ref: %v %v %v %v",
+						rec.ea, rec.ip, rec.gw, &rec.ref)
 				}
 
 				if rec.gw == 0 || rec.ref.isZero() {
-					log.err("dns watcher: invalid ip address record: %08x %08x %08x %v, ignoring",
-						rec.ea, rec.ip, rec.gw, rec.ref.String())
+					log.err("dns watcher: invalid ip address record: %v %v %v %v, ignoring",
+						rec.ea, rec.ip, rec.gw, &rec.ref)
 					goto skip_record
 				}
 
 			} else {
-				log.err("dns watcher: invalid address record: %08x %08x %08x %v, ignoring",
-					rec.ea, rec.ip, rec.gw, rec.ref.String())
+				log.err("dns watcher: invalid address record: %v %v %v %v, ignoring",
+					rec.ea, rec.ip, rec.gw, &rec.ref)
 				goto skip_record
 			}
 
 			// make sure second byte rule is met
 
 			if rec.ea != 0 && ((rec.ea>>8)&0xFF) >= SECOND_BYTE {
-				log.err("dns watcher: address record second byte violation(ea): %08x %08x %08x %v, ignoring",
-					rec.ea, rec.ip, rec.gw, rec.ref.String())
+				log.err("dns watcher: address record second byte violation(ea): %v %v %v %v, ignoring",
+					rec.ea, rec.ip, rec.gw, &rec.ref)
 				goto skip_record
 			}
 
 			if rec.ip != 0 && ((rec.ref.l>>8)&0xFF) >= SECOND_BYTE {
-				log.err("dns watcher: address record second byte violation(ref): %08x %08x %08x %v, ignoring",
-					rec.ea, rec.ip, rec.gw, rec.ref.String())
+				log.err("dns watcher: address record second byte violation(ref): %%v %v %v %v, ignoring",
+					rec.ea, rec.ip, rec.gw, &rec.ref)
 				goto skip_record
 			}
 
 			// pack it up
 
-			be.PutUint32(pkt[off+0:off+4], rec.ea)
-			be.PutUint32(pkt[off+4:off+8], rec.ip)
-			be.PutUint32(pkt[off+8:off+12], rec.gw)
-			be.PutUint64(pkt[off+12:off+20], rec.ref.h)
-			be.PutUint64(pkt[off+20:off+28], rec.ref.l)
+			be.PutUint32(pkt[off+V1_EA:off+V1_EA+4], uint32(rec.ea))
+			be.PutUint32(pkt[off+V1_IP:off+V1_IP+4], uint32(rec.ip))
+			be.PutUint32(pkt[off+V1_GW:off+V1_GW+4], uint32(rec.gw))
+			be.PutUint64(pkt[off+V1_REFH:off+V1_REFH+8], rec.ref.h)
+			be.PutUint64(pkt[off+V1_REFL:off+V1_REFL+8], rec.ref.l)
 
 			off += V1_AREC_LEN
 			numitems++
@@ -419,7 +419,7 @@ func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
 
 		if numitems > 0 {
 
-			be.PutUint16(pkt[cmd+2:cmd+4], uint16(numitems))
+			be.PutUint16(pkt[cmd+V1_NUM_ITEMS:cmd+V1_NUM_ITEMS+2], uint16(numitems))
 			pb.tail = off
 
 			pbb.copy_from(pb)
@@ -446,6 +446,7 @@ func install_hosts_records(oid uint32, arecs map[uint32]AddrRec) {
 
 	pb.set_arechdr()
 	pb.write_v1_header(V1_PKT_AREC, V1_SET_MARK, oid, mark)
+	pb.tail = pb.arechdr + V1_HDR_LEN
 	pbb.copy_from(pb)
 
 	recv_tun <- pb

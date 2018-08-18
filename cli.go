@@ -21,9 +21,9 @@ var cli struct {
 	dns_path   string
 	// derived
 	debug     map[string]bool
-	ea_ip     uint32
-	ea_mask   uint32
-	gw_ip     uint32
+	ea_ip     IP32
+	ea_mask   IP32
+	gw_ip     IP32
 	gw_mtu    uint
 	log_level uint
 }
@@ -92,7 +92,7 @@ func parse_cli() {
 	if !gw.IsGlobalUnicast() {
 		log.fatal("gateway IP address is not a valid unicast address: %v", cli.gw)
 	}
-	cli.gw_ip = be.Uint32(gw.To4())
+	cli.gw_ip = IP32(be.Uint32(gw.To4()))
 
 	// parse ea net
 
@@ -110,8 +110,8 @@ func parse_cli() {
 		log.fatal("invalid encode-net mask: %v", cli.ea)
 	}
 
-	cli.ea_ip = be.Uint32(ipnet.IP.To4())
-	cli.ea_mask = be.Uint32(net.IP(ipnet.Mask).To4())
+	cli.ea_ip = IP32(be.Uint32(ipnet.IP.To4()))
+	cli.ea_mask = IP32(be.Uint32(net.IP(ipnet.Mask).To4()))
 
 	// deduce mtu
 

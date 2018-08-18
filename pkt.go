@@ -6,24 +6,30 @@ const (
 	MAXBUF = 10
 )
 
-const ( // packet handling verdicts
+const ( // V1 constants
 
-	ACCEPT = iota + 1
-	DROP
-	STOLEN
+	V1_HDR_LEN      = 16
+	V1_AREC_HDR_LEN = 4
+	V1_AREC_LEN     = 4 + 4 + 4 + 8 + 8 // ea + ip + gw + ref.h + ref.l
 )
 
-const ( // internal packet constants (Ipv1)
-
-	V1_HDRLEN   = 16
+const (
+	// V1 header offsets
 	V1_CMD      = 1
 	V1_SRCQ     = 2
 	V1_DSTQ     = 3
 	V1_OID      = 4
 	V1_MARK     = 8
 	V1_RESERVED = 12
-
-	V1_AREC_LEN = 4 + 4 + 4 + 8 + 8 // ea + ip + gw + ref.h + ref.l
+	// V1 address record header offsets
+	V1_ITEM_TYPE = 1
+	V1_NUM_ITEMS = 2
+	// V1 address record offsets
+	V1_EA   = 0
+	V1_IP   = 4
+	V1_GW   = 8
+	V1_REFH = 12
+	V1_REFL = 20
 )
 
 const ( // data item types
@@ -46,6 +52,13 @@ const ( // AREC commands
 const ( // TMR commands
 
 	V1_PURGE_EXPIRED = iota + 1
+)
+
+const ( // packet handling verdicts
+
+	ACCEPT = iota + 1
+	DROP
+	STOLEN
 )
 
 const (
@@ -162,7 +175,7 @@ func (pb *PktBuf) write_v1_header(thype, cmd byte, oid, mark uint32) {
 	pkt := pb.pkt
 	off := pb.arechdr
 
-	if (len(pkt) - int(off)) < V1_HDRLEN {
+	if (len(pkt) - int(off)) < V1_HDR_LEN {
 		log.fatal("pkt: not enough space for v1 header")
 	}
 

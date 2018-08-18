@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"github.com/cznic/b"
+	"net"
 )
 
 /* Data organization
@@ -65,6 +66,14 @@ exist. When all host entries, related to the gatway, are removed then the
 gateway's soft state is also removed.
 */
 
+type IP32 uint32
+
+func (ip IP32) String() string {
+	addr := []byte{0, 0, 0, 0}
+	be.PutUint32(addr, uint32(ip))
+	return net.IP(addr).String()
+}
+
 type Ref struct {
 	h uint64
 	l uint64
@@ -82,34 +91,34 @@ func (ref *Ref) String() string {
 }
 
 type AddrRec struct {
-	ea  uint32
-	ip  uint32
-	gw  uint32
+	ea  IP32
+	ip  IP32
+	gw  IP32
 	ref Ref
 }
 
 type IpRefRec struct {
-	ip   uint32
+	ip   IP32
 	ref  Ref
 	oid  uint32 // owner id
 	mark uint32 // time offset or revision (which could be time offset, too)
 }
 
 type IpRec struct {
-	ip   uint32
+	ip   IP32
 	oid  uint32
 	mark uint32
 }
 
 type SoftRec struct {
-	gw   uint32
+	gw   IP32
 	port uint16
 	mtu  uint16
 	ttl  byte
 	hops byte
 }
 
-func (sft *SoftRec) init(gw uint32) {
+func (sft *SoftRec) init(gw IP32) {
 
 	sft.gw = gw
 	sft.port = IPREF_PORT
@@ -135,9 +144,9 @@ func ref_cmp(a, b interface{}) int {
 
 func addr_cmp(a, b interface{}) int {
 
-	if a.(uint32) < b.(uint32) {
+	if a.(IP32) < b.(IP32) {
 		return -1
-	} else if a.(uint32) > b.(uint32) {
+	} else if a.(IP32) > b.(IP32) {
 		return 1
 	} else {
 		return 0
@@ -151,7 +160,7 @@ type MapGw struct {
 	our_ipref   *b.Tree  // map[uint32]IpRefRec		our_ip -> (our_gw,   our_ref)
 	oid         uint32   // must be the same for both mgw and mtun
 	cur_mark    []uint32 // current mark per oid
-	soft        map[uint32]SoftRec
+	soft        map[IP32]SoftRec
 }
 
 func (mgw *MapGw) init(oid uint32) {
@@ -161,10 +170,10 @@ func (mgw *MapGw) init(oid uint32) {
 	mgw.our_ipref = b.TreeNew(b.Cmp(addr_cmp))
 	mgw.oid = oid
 	mgw.cur_mark = make([]uint32, 2)
-	mgw.soft = make(map[uint32]SoftRec)
+	mgw.soft = make(map[IP32]SoftRec)
 }
 
-func (mgw *MapGw) get_dst_ipref(dst uint32) IpRefRec {
+func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 
 	iprefrec, ok := mgw.their_ipref.Get(dst)
 
@@ -182,7 +191,7 @@ func (mgw *MapGw) get_dst_ipref(dst uint32) IpRefRec {
 	return iprefrec.(IpRefRec)
 }
 
-func (mgw *MapGw) get_src_ipref(src uint32) IpRefRec {
+func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 
 	iprefrec, ok := mgw.our_ipref.Get(src)
 	if ok {
@@ -208,21 +217,21 @@ func (mgw *MapGw) get_src_ipref(src uint32) IpRefRec {
 		// tell mtun about it
 
 		pb := <-getbuf
-		if uint(len(pb.pkt))-pb.data < V1_HDRLEN+4+V1_AREC_LEN {
+		if uint(len(pb.pkt))-pb.data < V1_HDR_LEN+4+V1_AREC_LEN {
 			log.fatal("mgw: not enough space for an address record") // paranoia
 		}
 		pb.set_arechdr()
 		pb.write_v1_header(V1_PKT_AREC, V1_SET_AREC, mgw.oid, iprefrec.(IpRefRec).mark)
 
 		pkt := pb.pkt
-		off := pb.arechdr + V1_HDRLEN
+		off := pb.arechdr + V1_HDR_LEN
 		pkt[0] = 0
 		pkt[1] = V1_SET_AREC
 		be.PutUint32(pkt[off+2:off+4], 1)
 		off += 4
 		be.PutUint32(pkt[off+0:off+4], 0)
-		be.PutUint32(pkt[off+4:off+8], src)
-		be.PutUint32(pkt[off+8:off+12], cli.gw_ip)
+		be.PutUint32(pkt[off+4:off+8], uint32(src))
+		be.PutUint32(pkt[off+8:off+12], uint32(cli.gw_ip))
 		be.PutUint64(pkt[off+12:off+20], ref.h)
 		be.PutUint64(pkt[off+20:off+28], ref.l)
 		pb.tail = off + V1_AREC_LEN
@@ -246,7 +255,11 @@ func (mgw *MapGw) set_cur_mark(oid, mark uint32) {
 
 func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 
-	pkt := pb.pkt
+	pkt := pb.pkt[pb.arechdr:pb.tail]
+	if len(pkt) < V1_HDR_LEN+4+V1_AREC_LEN {
+		log.err("mgw: SET_AREC packet too short, dropping")
+		return DROP
+	}
 	oid := be.Uint32(pkt[pb.arechdr+V1_OID : pb.arechdr+V1_OID+4])
 	mark := be.Uint32(pkt[pb.arechdr+V1_MARK : pb.arechdr+V1_MARK+4])
 
@@ -273,9 +286,9 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 		for ii := 0; ii < int(num_items); ii, off = ii+1, off+V1_AREC_LEN {
 
 			var ref Ref
-			ea := be.Uint32(pkt[off+0 : off+4])
-			ip := be.Uint32(pkt[off+4 : off+8])
-			gw := be.Uint32(pkt[off+8 : off+12])
+			ea := IP32(be.Uint32(pkt[off+0 : off+4]))
+			ip := IP32(be.Uint32(pkt[off+4 : off+8]))
+			gw := IP32(be.Uint32(pkt[off+8 : off+12]))
 			ref.h = be.Uint64(pkt[off+12 : off+20])
 			ref.l = be.Uint64(pkt[off+10 : off+28])
 
@@ -286,7 +299,7 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 			if ea != 0 && ip == 0 {
 
 				if pkt[off+2] >= SECOND_BYTE {
-					log.err("mgw: second byte rule violation, %08x %08x %08x %v", ea, ip, gw, ref)
+					log.err("mgw: second byte rule violation(ea), %v %v %v %v", ea, ip, gw, &ref)
 					continue
 				}
 
@@ -295,14 +308,14 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 			} else if ea == 0 && ip != 0 {
 
 				if pkt[off+26] >= SECOND_BYTE {
-					log.err("mgw: second byte rule violation, %08x %08x %08x %v", ea, ip, gw, ref)
+					log.err("mgw: second byte rule violation(ref), %v %v %v %v", ea, ip, gw, &ref)
 					continue
 				}
 
 				mgw.our_ipref.Set(ip, IpRefRec{gw, ref, oid, mark})
 
 			} else {
-				log.fatal("mgw: unexpected invalid address record ea: %08x ip: %08x", ea, ip)
+				log.fatal("mgw: invalid address record, %v %v %v %v", ea, ip, gw, &ref)
 			}
 		}
 
@@ -314,9 +327,13 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 
 func (mgw *MapGw) set_new_mark(pb *PktBuf) int {
 
-	pkt := pb.pkt
-	oid := be.Uint32(pkt[pb.arechdr+V1_OID : pb.arechdr+V1_OID+4])
-	mark := be.Uint32(pkt[pb.arechdr+V1_MARK : pb.arechdr+V1_MARK+4])
+	pkt := pb.pkt[pb.arechdr:pb.tail]
+	if len(pkt) != V1_HDR_LEN {
+		log.err("mgw: SET_MARK packet too short, dropping")
+		return DROP
+	}
+	oid := be.Uint32(pkt[V1_OID : V1_OID+4])
+	mark := be.Uint32(pkt[V1_MARK : V1_MARK+4])
 	mgw.set_cur_mark(oid, mark)
 
 	return DROP
@@ -333,7 +350,7 @@ type MapTun struct {
 	our_ea   *b.Tree  // map[uint32]map[Ref]IpRec		their_gw -> their_ref -> our_ea
 	oid      uint32   // must be the same for both mgw and mtun
 	cur_mark []uint32 // current mark per oid
-	soft     map[uint32]SoftRec
+	soft     map[IP32]SoftRec
 }
 
 func (mtun *MapTun) init(oid uint32) {
@@ -342,7 +359,7 @@ func (mtun *MapTun) init(oid uint32) {
 	mtun.our_ea = b.TreeNew(b.Cmp(addr_cmp))
 	mtun.oid = oid
 	mtun.cur_mark = make([]uint32, 2)
-	mtun.soft = make(map[uint32]SoftRec)
+	mtun.soft = make(map[IP32]SoftRec)
 }
 
 func (mtun *MapTun) set_cur_mark(oid, mark uint32) {
@@ -358,87 +375,91 @@ func (mtun *MapTun) set_cur_mark(oid, mark uint32) {
 
 func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
-	pkt := pb.pkt
-	oid := be.Uint32(pkt[pb.arechdr+V1_OID : pb.arechdr+V1_OID+4])
-	mark := be.Uint32(pkt[pb.arechdr+V1_MARK : pb.arechdr+V1_MARK+4])
-
-	switch pkt[pb.arechdr+V1_CMD] {
-	case V1_SET_AREC:
-
-		if pb.len() < 16+4+V1_AREC_LEN {
-			log.fatal("mtun: address records packet unexpectedly too short")
-		}
-
-		off := int(pb.arechdr + 16)
-
-		if pkt[off+1] != V1_AREC {
-			log.fatal("mtun: unexpected item type: %v", pkt[off+1])
-		}
-		num_items := be.Uint16(pkt[off+2 : off+4])
-
-		off += 4
-
-		if num_items == 0 || int(num_items*V1_AREC_LEN) != (pb.len()-off) {
-			log.fatal("mtun: mismatch between number (%v) of items and packet length (%v)", num_items, pb.len())
-		}
-
-		for ii := 0; ii < int(num_items); ii, off = ii+1, off+V1_AREC_LEN {
-
-			var ref Ref
-			ea := be.Uint32(pkt[off+0 : off+4])
-			ip := be.Uint32(pkt[off+4 : off+8])
-			gw := be.Uint32(pkt[off+8 : off+12])
-			ref.h = be.Uint64(pkt[off+12 : off+20])
-			ref.l = be.Uint64(pkt[off+10 : off+28])
-
-			if gw == 0 || ref.isZero() {
-				log.fatal("mtun: unexpected null gw + ref")
-			}
-
-			if ea != 0 && ip == 0 {
-
-				if pkt[off+2] >= SECOND_BYTE {
-					log.err("mtun: second byte rule violation, %08x %08x %08x %v", ea, ip, gw, ref)
-					continue
-				}
-
-				their_refs, ok := mtun.our_ea.Get(gw)
-				if !ok {
-					their_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
-					mtun.our_ea.Set(gw, their_refs)
-				}
-				their_refs.(*b.Tree).Set(ref, IpRec{ea, oid, mark})
-
-			} else if ea == 0 && ip != 0 {
-
-				if pkt[off+26] >= SECOND_BYTE {
-					log.err("mtun: second byte rule violation, %08x %08x %08x %v", ea, ip, gw, ref)
-					continue
-				}
-
-				our_refs, ok := mtun.our_ip.Get(gw)
-				if !ok {
-					our_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
-					mtun.our_ip.Set(gw, our_refs)
-				}
-				our_refs.(*b.Tree).Set(ref, IpRec{ip, oid, mark})
-
-			} else {
-				log.fatal("mtun: unexpected invalid address record ea: %08x ip: %08x", ea, ip)
-			}
-		}
-
-	default:
-		log.fatal("mtun: unexpected address records command: %v", pkt[pb.arechdr+V1_CMD])
+	pkt := pb.pkt[pb.arechdr:pb.tail]
+	if len(pkt) < V1_HDR_LEN+4+V1_AREC_LEN || pkt[V1_CMD] != V1_SET_AREC {
+		log.err("mtun: invalid SET_AREC packet, dropping")
+		return DROP
 	}
+	oid := be.Uint32(pkt[V1_OID : V1_OID+4])
+	mark := be.Uint32(pkt[V1_MARK : V1_MARK+4])
+
+	off := int(V1_HDR_LEN)
+
+	if pkt[off+V1_ITEM_TYPE] != V1_AREC {
+		log.err("mtun: unexpected item type: %v, dropping", pkt[off+V1_ITEM_TYPE])
+		return DROP
+	}
+	num_items := be.Uint16(pkt[off+V1_NUM_ITEMS : off+V1_NUM_ITEMS+2])
+
+	off += V1_AREC_HDR_LEN
+
+	if num_items == 0 || int(num_items*V1_AREC_LEN) != (pb.len()-off) {
+		log.err("mtun: mismatch between number of items (%v) and packet length (%v), dropping",
+			num_items, pb.len())
+		return DROP
+	}
+
+	for ii := 0; ii < int(num_items); ii, off = ii+1, off+V1_AREC_LEN {
+
+		var ref Ref
+		ea := IP32(be.Uint32(pkt[off+V1_EA : off+V1_EA+4]))
+		ip := IP32(be.Uint32(pkt[off+V1_IP : off+V1_IP+4]))
+		gw := IP32(be.Uint32(pkt[off+V1_GW : off+V1_GW+4]))
+		ref.h = be.Uint64(pkt[off+V1_REFH : off+V1_REFH+8])
+		ref.l = be.Uint64(pkt[off+V1_REFL : off+V1_REFL+8])
+
+		if gw == 0 || ref.isZero() {
+			log.err("mtun: unexpected null gw + ref, dropping item")
+			continue
+		}
+
+		if ea != 0 && ip == 0 {
+
+			if pkt[off+V1_EA+2] >= SECOND_BYTE {
+				log.err("mtun: second byte rule violation(ea), %v %v %v %v, dropping item", ea, ip, gw, &ref)
+				continue
+			}
+
+			their_refs, ok := mtun.our_ea.Get(gw)
+			if !ok {
+				their_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
+				mtun.our_ea.Set(gw, their_refs)
+			}
+			log.debug("mtun: set their_refs  %v  ->  %v  ->  %v", gw, &ref, ea)
+			their_refs.(*b.Tree).Set(ref, IpRec{ea, oid, mark})
+
+		} else if ea == 0 && ip != 0 {
+
+			if pkt[off+V1_REFL+6] >= SECOND_BYTE {
+				log.err("mtun: second byte rule violation(ref), %v %v %v %v, dropping item", ea, ip, gw, &ref)
+				continue
+			}
+
+			our_refs, ok := mtun.our_ip.Get(gw)
+			if !ok {
+				our_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
+				mtun.our_ip.Set(gw, our_refs)
+			}
+			log.debug("mtun: set our_refs  %v  ->  %v  ->  %v", gw, &ref, ip)
+			our_refs.(*b.Tree).Set(ref, IpRec{ip, oid, mark})
+
+		} else {
+			log.fatal("mtun: invalid address record, %v %v %v %v, dropping item", ea, ip, gw, &ref)
+		}
+	}
+
 	return DROP
 }
 
 func (mtun *MapTun) set_new_mark(pb *PktBuf) int {
 
-	pkt := pb.pkt
-	oid := be.Uint32(pkt[pb.arechdr+V1_OID : pb.arechdr+V1_OID+4])
-	mark := be.Uint32(pkt[pb.arechdr+V1_MARK : pb.arechdr+V1_MARK+4])
+	pkt := pb.pkt[pb.arechdr:pb.tail]
+	if len(pkt) != V1_HDR_LEN || pkt[V1_CMD] != V1_SET_MARK {
+		log.err("mtun: invalid SET_MARK packet, dropping")
+		return DROP
+	}
+	oid := be.Uint32(pkt[V1_OID : V1_OID+4])
+	mark := be.Uint32(pkt[V1_MARK : V1_MARK+4])
 	mtun.set_cur_mark(oid, mark)
 
 	return DROP
