@@ -15,6 +15,7 @@ const ( // V1 constants
 
 const (
 	// V1 header offsets
+	V1_VER      = 0
 	V1_CMD      = 1
 	V1_SRCQ     = 2
 	V1_DSTQ     = 3

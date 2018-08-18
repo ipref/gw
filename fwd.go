@@ -42,18 +42,18 @@ func (pb *PktBuf) pp_pkt() string {
 
 		ss = fmt.Sprintf("PKT  short  data/tail(%v/%v)", pb.data, pb.tail)
 
-	} else if pkt[0]&0xf0 == 0x40 && len(pkt) >= 20 { // ip packet
+	} else if pkt[IP_VER]&0xf0 == 0x40 && len(pkt) >= 20 { // ip packet
 
 		ss = fmt.Sprintf("IP(%v)  %v  %v  len(%v)  data/tail(%v/%v)",
-			pkt[pb.data+IP_PROTO],
-			net.IP(pkt[pb.data+IP_SRC:pb.data+IP_SRC+4]),
-			net.IP(pkt[pb.data+IP_DST:pb.data+IP_DST+4]),
-			be.Uint16(pkt[pb.data+IP_LEN:pb.data+IP_LEN+2]),
+			pkt[IP_PROTO],
+			net.IP(pkt[IP_SRC:IP_SRC+4]),
+			net.IP(pkt[IP_DST:IP_DST+4]),
+			be.Uint16(pkt[IP_LEN:IP_LEN+2]),
 			pb.data, pb.tail)
 
-	} else if pkt[0]&0xf0 == 0x10 && len(pkt) >= V1_HDR_LEN { // v1 packet
+	} else if pkt[V1_VER]&0xf0 == 0x10 && len(pkt) >= V1_HDR_LEN { // v1 packet
 
-		thype := pkt[0] & 0x0f
+		thype := pkt[V1_VER] & 0x0f
 		switch thype {
 		case V1_PKT_AREC:
 			ss = fmt.Sprintf("V1(AREC)")
@@ -115,7 +115,7 @@ func (pb *PktBuf) pp_net(pfx string) {
 	var sb strings.Builder
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
-	if (len(pkt) < 20) || (pkt[0]&0xf0 != 0x40) || (len(pkt) < int((pkt[0]&0xf)*4)) {
+	if (len(pkt) < 20) || (pkt[IP_VER]&0xf0 != 0x40) || (len(pkt) < int((pkt[IP_VER]&0xf)*4)) {
 		sb.WriteString(pfx)
 		sb.WriteString("NON-IP ")
 		if len(pkt) >= 2 {
@@ -127,7 +127,7 @@ func (pb *PktBuf) pp_net(pfx string) {
 
 	sb.WriteString(pfx)
 
-	switch pkt[9] {
+	switch pkt[IP_PROTO] {
 	case TCP:
 		sb.WriteString("IP[tcp] ")
 	case UDP:
@@ -135,18 +135,18 @@ func (pb *PktBuf) pp_net(pfx string) {
 	case ICMP:
 		sb.WriteString("IP[ICMP] ")
 	default:
-		sb.WriteString(fmt.Sprintf("IP[%v]", pkt[9]))
+		sb.WriteString(fmt.Sprintf("IP[%v]", pkt[IP_PROTO]))
 	}
-	sb.WriteString(hex.EncodeToString(pkt[:2]))
+	sb.WriteString(hex.EncodeToString(pkt[IP_VER : IP_VER+2]))
 	sb.WriteString("  ")
-	sb.WriteString(net.IP(pkt[12:16]).String())
+	sb.WriteString(net.IP(pkt[IP_SRC : IP_SRC+4]).String())
 	sb.WriteString("  ")
-	sb.WriteString(net.IP(pkt[16:20]).String())
-	sb.WriteString(fmt.Sprintf("  len(%v)", be.Uint16(pkt[2:4])))
-	sb.WriteString(fmt.Sprintf(" id(%v)", be.Uint16(pkt[4:6])))
-	sb.WriteString(fmt.Sprintf(" ttl(%v)", pkt[8]))
-	sb.WriteString(fmt.Sprintf(" frag:%04x", be.Uint16(pkt[6:8])))
-	sb.WriteString(fmt.Sprintf(" csum:%04x", be.Uint16(pkt[10:12])))
+	sb.WriteString(net.IP(pkt[IP_DST : IP_DST+4]).String())
+	sb.WriteString(fmt.Sprintf("  len(%v)", be.Uint16(pkt[IP_LEN:IP_LEN+2])))
+	sb.WriteString(fmt.Sprintf(" id(%v)", be.Uint16(pkt[IP_ID:IP_ID+2])))
+	sb.WriteString(fmt.Sprintf(" ttl(%v)", pkt[IP_TTL]))
+	sb.WriteString(fmt.Sprintf(" frag:%04x", be.Uint16(pkt[IP_FRAG:IP_FRAG+2])))
+	sb.WriteString(fmt.Sprintf(" csum:%04x", be.Uint16(pkt[IP_CSUM:IP_CSUM+2])))
 
 	log.trace(sb.String())
 }
@@ -159,11 +159,11 @@ func (pb *PktBuf) pp_tran(pfx string) {
 	}
 
 	var sb strings.Builder
-	off := (pkt[0] & 0xf) * 4
+	off := (pkt[IP_VER] & 0xf) * 4
 
 	sb.WriteString(pfx)
 
-	switch pkt[9] {
+	switch pkt[IP_PROTO] {
 	case TCP:
 	case UDP:
 
@@ -173,10 +173,10 @@ func (pb *PktBuf) pp_tran(pfx string) {
 			return
 		}
 		sb.WriteString("UDP")
-		sb.WriteString(fmt.Sprintf("  %v", be.Uint16(pkt[off+0:off+2])))
-		sb.WriteString(fmt.Sprintf("  %v", be.Uint16(pkt[off+2:off+4])))
-		sb.WriteString(fmt.Sprintf("  len(%v)", be.Uint16(pkt[off+4:off+6])))
-		sb.WriteString(fmt.Sprintf(" csum:%04x", be.Uint16(pkt[off+6:off+8])))
+		sb.WriteString(fmt.Sprintf("  %v", be.Uint16(pkt[off+UDP_SPORT:off+UDP_SPORT+2])))
+		sb.WriteString(fmt.Sprintf("  %v", be.Uint16(pkt[off+UDP_DPORT:off+UDP_DPORT+2])))
+		sb.WriteString(fmt.Sprintf("  len(%v)", be.Uint16(pkt[off+UDP_LEN:off+UDP_LEN+2])))
+		sb.WriteString(fmt.Sprintf(" csum:%04x", be.Uint16(pkt[off+UDP_CSUM:off+UDP_CSUM+2])))
 
 	case ICMP:
 	default:
@@ -191,15 +191,22 @@ func (pb *PktBuf) fill_iphdr() {
 	pb.iphdr = pb.tail
 	pb.tail += 20
 
-	be.PutUint16(pb.pkt[pb.iphdr+0:pb.iphdr+2], 0x4500)
-	be.PutUint16(pb.pkt[pb.iphdr+2:pb.iphdr+4], uint16(pb.tail-pb.iphdr)) // pktlen
-	be.PutUint16(pb.pkt[pb.iphdr+4:pb.iphdr+6], 0x0001)                   // id
-	be.PutUint16(pb.pkt[pb.iphdr+6:pb.iphdr+8], 0x4000)                   // DF + fragment offset
-	pb.pkt[pb.iphdr+8] = 64                                               // ttl
-	pb.pkt[pb.iphdr+9] = 0                                                // protocol
-	be.PutUint16(pb.pkt[pb.iphdr+10:pb.iphdr+12], 0x0000)                 // hdr csum
-	copy(pb.pkt[pb.iphdr+12:pb.iphdr+16], []byte{192, 168, 73, 127})      // src taro-7
-	copy(pb.pkt[pb.iphdr+16:pb.iphdr+20], []byte{10, 254, 22, 202})       // dst tikopia-8
+	if len(pb.pkt[pb.iphdr:]) < pb.len() {
+		log.fatal("fill iphdr: not enough space for IP header")
+	}
+
+	pkt := pb.pkt[pb.iphdr:]
+
+	pkt[IP_VER] = 0x45
+	pkt[IP_DSCP] = 0
+	be.PutUint16(pkt[IP_LEN:IP_LEN+2], uint16(pb.tail-pb.iphdr))
+	be.PutUint16(pkt[IP_ID:IP_ID+2], 0x0001)
+	be.PutUint16(pkt[IP_FRAG:IP_FRAG+2], 0x4000) // DF + fragment offset
+	pkt[IP_TTL] = 64
+	pkt[IP_PROTO] = 0
+	be.PutUint16(pkt[IP_CSUM:IP_CSUM+2], 0x0000)          // hdr csum
+	copy(pkt[IP_SRC:IP_SRC+4], []byte{192, 168, 73, 127}) // src taro-7
+	copy(pkt[IP_DST:IP_DST+4], []byte{10, 254, 22, 202})  // dst tikopia-8
 }
 
 func (pb *PktBuf) fill_udphdr() {
@@ -207,14 +214,20 @@ func (pb *PktBuf) fill_udphdr() {
 	pb.udphdr = pb.tail
 	pb.tail += 8
 
-	pb.pkt[pb.iphdr+9] = UDP
+	if len(pb.pkt[pb.iphdr:]) < pb.len() {
+		log.fatal("fill udphdr: not enough space for UDP header")
+	}
 
-	be.PutUint16(pb.pkt[pb.udphdr+0:pb.udphdr+2], 44123)                     // src port
-	be.PutUint16(pb.pkt[pb.udphdr+2:pb.udphdr+4], 7)                         // dst port (echo)
-	be.PutUint16(pb.pkt[pb.udphdr+4:pb.udphdr+6], uint16(pb.tail-pb.udphdr)) // datalen
-	be.PutUint16(pb.pkt[pb.udphdr+6:pb.udphdr+8], 0x0000)                    // udp csum
+	pkt := pb.pkt[pb.udphdr:]
 
-	be.PutUint16(pb.pkt[pb.iphdr+2:pb.iphdr+4], uint16(pb.tail-pb.iphdr)) // pktlen
+	pb.pkt[pb.iphdr+IP_PROTO] = UDP
+
+	be.PutUint16(pkt[UDP_SPORT:UDP_SPORT+2], 44123)
+	be.PutUint16(pkt[UDP_DPORT:UDP_DPORT+2], ECHO)
+	be.PutUint16(pkt[UDP_LEN:UDP_LEN+2], uint16(pb.tail-pb.udphdr))
+	be.PutUint16(pkt[UDP_CSUM:UDP_CSUM+2], 0x0000) // udp csum
+
+	be.PutUint16(pb.pkt[pb.iphdr+IP_LEN:pb.iphdr+IP_LEN+2], uint16(pb.tail-pb.iphdr)) // pktlen
 }
 
 func (pb *PktBuf) fill_payload() {
@@ -223,16 +236,20 @@ func (pb *PktBuf) fill_payload() {
 	beg := pb.tail
 	pb.tail += 64
 
+	if len(pb.pkt[pb.iphdr:]) < pb.len() {
+		log.fatal("fill payload: not enough space for payload")
+	}
+
 	for ii := beg; ii < pb.tail; ii++ {
 		pb.pkt[ii] = bb
 		bb++
 	}
 
-	switch pb.pkt[pb.iphdr+9] {
+	switch pb.pkt[pb.iphdr+IP_PROTO] {
 	case UDP:
-		be.PutUint16(pb.pkt[pb.udphdr+4:pb.udphdr+6], uint16(pb.tail-pb.udphdr)) // datalen
+		be.PutUint16(pb.pkt[pb.udphdr+UDP_LEN:pb.udphdr+UDP_LEN+2], uint16(pb.tail-pb.udphdr)) // udp datalen
 	}
-	be.PutUint16(pb.pkt[pb.iphdr+2:pb.iphdr+4], uint16(pb.tail-pb.iphdr)) // pktlen
+	be.PutUint16(pb.pkt[pb.iphdr+IP_LEN:pb.iphdr+IP_LEN+2], uint16(pb.tail-pb.iphdr)) // pktlen
 }
 
 func (pb *PktBuf) fill(proto int) {
@@ -251,6 +268,10 @@ func (pb *PktBuf) fill(proto int) {
 		pb.fill_udphdr()
 		pb.fill_payload()
 	case ICMP:
+	}
+
+	if cli.debug["fwd"] || cli.debug["all"] {
+		log.debug("fill: %v", pb.pp_pkt())
 	}
 }
 
