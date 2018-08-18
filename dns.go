@@ -451,9 +451,6 @@ func install_hosts_records(oid uint32, arecs map[IP32]AddrRec) {
 
 	recv_tun <- pb
 	recv_gw <- pbb
-
-	retbuf <- pb
-	retbuf <- pbb
 }
 
 func parse_hosts(path string, timer *time.Timer) {
