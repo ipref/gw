@@ -3,7 +3,6 @@
 package main
 
 import (
-	"net"
 	"time"
 )
 
@@ -14,10 +13,10 @@ func tun_sender() {
 
 	for pb := range send_tun {
 
-		log.debug("tun: pkt to send to tun interface  IP(%v)  %v  %v  len(%v)",
-			pb.pkt[pb.data+IP_PROTO], net.IP(pb.pkt[pb.data+IP_SRC:pb.data+IP_SRC+4]),
-			net.IP(pb.pkt[pb.data+IP_DST:pb.data+IP_DST+4]),
-			be.Uint16(pb.pkt[pb.data+IP_LEN:pb.data+IP_LEN+2]))
+		if cli.debug["tun"] || cli.debug["all"] {
+			log.debug("tun out: %v", pb.pp_pkt())
+		}
+
 		if log.level <= TRACE {
 			pb.pp_net("tun out: ")
 		}
@@ -32,10 +31,26 @@ func tun_receiver() {
 
 	time.Sleep(1879 * time.Microsecond)
 
-	log.debug("tun: pkt received from tun interface  IP(%v)  %v  %v  len(%v)",
-		pb.pkt[pb.data+IP_PROTO], net.IP(pb.pkt[pb.data+IP_SRC:pb.data+IP_SRC+4]),
-		net.IP(pb.pkt[pb.data+IP_DST:pb.data+IP_DST+4]),
-		be.Uint16(pb.pkt[pb.data+IP_LEN:pb.data+IP_LEN+2]))
+	if len(pb.pkt)-int(pb.data) < int(MIN_PKT_LEN+TUN_HDR_LEN) {
+
+		log.err("tun in:  short packet data/end(%v/%v), dropping", pb.data, len(pb.pkt))
+		retbuf <- pb
+		return
+	}
+
+	if (be.Uint16(pb.pkt[pb.data+TUN_FLAGS:pb.data+TUN_FLAGS+2])&TUN_IFF_TUN) == 0 ||
+		be.Uint16(pb.pkt[pb.data+TUN_PROTO:pb.data+TUN_PROTO+2]) != TUN_IPv4 {
+
+		log.err("tun in:  not an IPv4 TUN packet: %08x, dropping", pb.pkt[pb.data:pb.data+4])
+		retbuf <- pb
+	}
+
+	pb.data += TUN_HDR_LEN
+
+	if cli.debug["tun"] || cli.debug["all"] {
+		log.debug("tun in:  %v", pb.pp_pkt())
+	}
+
 	if log.level <= TRACE {
 		pb.pp_net("tun in:  ")
 		pb.pp_tran("tun in:  ")

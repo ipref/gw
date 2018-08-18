@@ -186,6 +186,20 @@ func (pb *PktBuf) pp_tran(pfx string) {
 	log.trace(sb.String())
 }
 
+func (pb *PktBuf) fill_tunhdr() {
+
+	tunhdr := pb.tail
+	pb.tail += TUN_HDR_LEN
+
+	if len(pb.pkt[tunhdr:]) < pb.len() {
+		log.fatal("fill tunhdr: not enough space for TUN header")
+	}
+
+	pkt := pb.pkt[tunhdr:]
+
+	be.PutUint16(pkt[TUN_FLAGS:TUN_FLAGS+2], TUN_IFF_TUN)
+	be.PutUint16(pkt[TUN_PROTO:TUN_PROTO+2], TUN_IPv4)
+}
 func (pb *PktBuf) fill_iphdr() {
 
 	pb.iphdr = pb.tail
@@ -258,8 +272,9 @@ func (pb *PktBuf) fill(proto int) {
 		log.fatal("packet buffer too short: %v, needs %v", len(pb.pkt), cli.gw_mtu)
 	}
 
-	pb.data = OPTLEN - TUNHDR
+	pb.data = OPTLEN - TUN_HDR_LEN
 	pb.tail = pb.data
+	pb.fill_tunhdr()
 	pb.fill_iphdr()
 
 	switch proto {
@@ -269,13 +284,13 @@ func (pb *PktBuf) fill(proto int) {
 		pb.fill_payload()
 	case ICMP:
 	}
-
-	if cli.debug["fwd"] || cli.debug["all"] {
-		log.debug("fill: %v", pb.pp_pkt())
-	}
 }
 
 func insert_ipref_option(pb *PktBuf) int {
+
+	if cli.debug["fwd"] || cli.debug["all"] {
+		log.debug("insert opt: %v", pb.pp_pkt())
+	}
 
 	pkt := pb.pkt
 
@@ -364,7 +379,11 @@ func insert_ipref_option(pb *PktBuf) int {
 }
 
 func remove_ipref_option(pb *PktBuf) int {
-	log.debug("remove opt")
+
+	if cli.debug["fwd"] || cli.debug["all"] {
+		log.debug("remove opt: %v", pb.pp_pkt())
+	}
+
 	return ACCEPT
 }
 

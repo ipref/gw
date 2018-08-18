@@ -74,8 +74,13 @@ const (
 	IPREF_OPT64_LEN  = 4 + 8 + 8
 	IPREF_OPT128_LEN = 4 + 16 + 16
 	OPTLEN           = uint(8 + 4 + 4 + 16 + 16) // udphdr + encap + opt + ref + ref
-	TUNHDR           = uint(4)
+	TUN_HDR_LEN      = uint(4)
+	TUN_IFF_TUN      = uint16(0x0001)
+	TUN_IPv4         = uint16(0x0800)
 	PKTQLEN          = 2
+	// TUN header offsets
+	TUN_FLAGS = 0
+	TUN_PROTO = 2
 	// IP header offests
 	IP_VER   = 0
 	IP_DSCP  = 1
