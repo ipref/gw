@@ -22,6 +22,7 @@ listed in /etc/hosts.
 const (
 	GENQLEN     = 2
 	SECOND_BYTE = 100
+	MIN_REF     = 256 // low ref values are reserved
 )
 
 const (
@@ -110,8 +111,8 @@ func gen_dns_refs() {
 		low[6] = uint8(low[6]) % 100
 		ref.l = be.Uint64(low)
 		_, ok := allocated[ref]
-		if ok {
-			continue // already allocated
+		if ok || (ref.h == 0 && ref.l < MIN_REF) {
+			continue // already allocated or too low
 		}
 		allocated[ref] = true
 
