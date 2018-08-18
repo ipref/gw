@@ -62,6 +62,7 @@ const ( // packet handling verdicts
 )
 
 const (
+	MIN_PKT_LEN      = V1_HDR_LEN
 	ICMP             = 1
 	TCP              = 6
 	UDP              = 17
@@ -211,7 +212,7 @@ func pkt_buffers() {
 			default:
 				pb = &PktBuf{pkt: make([]byte, cli.gw_mtu, cli.gw_mtu)}
 				allocated += 1
-				log.info("pkt: new PktBuf allocated, total(%v)", allocated)
+				log.debug("pkt: new PktBuf allocated, total(%v)", allocated)
 			}
 		} else {
 			pb = <-retbuf
