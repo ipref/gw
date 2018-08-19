@@ -236,24 +236,32 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 		// tell mtun about it
 
 		pb := <-getbuf
-		if uint(len(pb.pkt))-pb.data < V1_HDR_LEN+4+V1_AREC_LEN {
+
+		if len(pb.pkt)-pb.data < V1_HDR_LEN+4+V1_AREC_LEN {
 			log.fatal("mgw: not enough space for an address record") // paranoia
 		}
-		pb.set_arechdr()
+
+		pb.set_v1hdr()
 		pb.write_v1_header(V1_PKT_AREC, V1_SET_AREC, mgw.oid, iprefrec.(IpRefRec).mark)
 
-		pkt := pb.pkt
-		off := pb.arechdr + V1_HDR_LEN
-		pkt[0] = 0
-		pkt[1] = V1_SET_AREC
-		be.PutUint32(pkt[off+2:off+4], 1)
-		off += 4
-		be.PutUint32(pkt[off+0:off+4], 0)
-		be.PutUint32(pkt[off+4:off+8], uint32(src))
-		be.PutUint32(pkt[off+8:off+12], uint32(cli.gw_ip))
-		be.PutUint64(pkt[off+12:off+20], ref.h)
-		be.PutUint64(pkt[off+20:off+28], ref.l)
-		pb.tail = off + V1_AREC_LEN
+		pkt := pb.pkt[pb.v1hdr:]
+		pkt[V1_VER] = 0
+		pkt[V1_CMD] = V1_SET_AREC
+		off := V1_HDR_LEN
+
+		pkt[off+V1_AREC_HDR_RSVD] = 0
+		pkt[off+V1_AREC_HDR_ITEM_TYPE] = V1_PKT_AREC
+		be.PutUint16(pkt[off+V1_AREC_HDR_NUM_ITEMS:off+V1_AREC_HDR_NUM_ITEMS+2], 1)
+		off += V1_AREC_HDR_LEN
+
+		be.PutUint32(pkt[off+V1_EA:off+V1_EA+4], 0)
+		be.PutUint32(pkt[off+V1_IP:off+V1_IP+4], uint32(src))
+		be.PutUint32(pkt[off+V1_GW:off+V1_GW+4], uint32(cli.gw_ip))
+		be.PutUint64(pkt[off+V1_REFH:off+V1_REFH+8], ref.h)
+		be.PutUint64(pkt[off+V1_REFL:off+V1_REFL+8], ref.l)
+		off += V1_AREC_LEN
+
+		pb.tail = off
 
 		<-recv_gw
 	}
@@ -274,81 +282,75 @@ func (mgw *MapGw) set_cur_mark(oid, mark uint32) {
 
 func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.arechdr:pb.tail]
-	if len(pkt) < V1_HDR_LEN+4+V1_AREC_LEN {
+	pkt := pb.pkt[pb.v1hdr:pb.tail]
+	if len(pkt) < V1_HDR_LEN+V1_AREC_HDR_LEN+V1_AREC_LEN {
 		log.err("mgw: SET_AREC packet too short, dropping")
 		return DROP
 	}
-	oid := be.Uint32(pkt[pb.arechdr+V1_OID : pb.arechdr+V1_OID+4])
-	mark := be.Uint32(pkt[pb.arechdr+V1_MARK : pb.arechdr+V1_MARK+4])
+	oid := be.Uint32(pkt[V1_OID : V1_OID+4])
+	mark := be.Uint32(pkt[V1_MARK : V1_MARK+4])
 
-	switch pkt[pb.arechdr+V1_CMD] {
-	case V1_SET_AREC:
+	off := V1_HDR_LEN
 
-		if pb.len() < 16+4+V1_AREC_LEN {
-			log.fatal("mgw: address records packet unexpectedly too short")
-		}
-
-		off := int(pb.arechdr + 16)
-
-		if pkt[off+1] != V1_AREC {
-			log.fatal("mgw: unexpected item type: %v", pkt[off+1])
-		}
-		num_items := be.Uint16(pkt[off+2 : off+4])
-
-		off += 4
-
-		if num_items == 0 || int(num_items*V1_AREC_LEN) != (pb.len()-off) {
-			log.fatal("mgw: mismatch between number (%v) of items and packet length (%v)", num_items, pb.len())
-		}
-
-		for ii := 0; ii < int(num_items); ii, off = ii+1, off+V1_AREC_LEN {
-
-			var ref Ref
-			ea := IP32(be.Uint32(pkt[off+0 : off+4]))
-			ip := IP32(be.Uint32(pkt[off+4 : off+8]))
-			gw := IP32(be.Uint32(pkt[off+8 : off+12]))
-			ref.h = be.Uint64(pkt[off+12 : off+20])
-			ref.l = be.Uint64(pkt[off+10 : off+28])
-
-			if gw == 0 || ref.isZero() {
-				log.fatal("mgw: unexpected null gw + ref")
-			}
-
-			if ea != 0 && ip == 0 {
-
-				if pkt[off+2] >= SECOND_BYTE {
-					log.err("mgw: second byte rule violation(ea), %v %v %v %v", ea, ip, gw, &ref)
-					continue
-				}
-
-				mgw.their_ipref.Set(ea, IpRefRec{gw, ref, oid, mark})
-
-			} else if ea == 0 && ip != 0 {
-
-				if pkt[off+26] >= SECOND_BYTE {
-					log.err("mgw: second byte rule violation(ref), %v %v %v %v", ea, ip, gw, &ref)
-					continue
-				}
-
-				mgw.our_ipref.Set(ip, IpRefRec{gw, ref, oid, mark})
-
-			} else {
-				log.fatal("mgw: invalid address record, %v %v %v %v", ea, ip, gw, &ref)
-			}
-		}
-
-	default:
-		log.fatal("mgw: unexpected address records command: %v", pkt[pb.arechdr+V1_CMD])
+	if pkt[off+V1_AREC_HDR_ITEM_TYPE] != V1_AREC {
+		log.fatal("mgw: unexpected item type: %v", pkt[off+V1_AREC_HDR_ITEM_TYPE])
 	}
+	num_items := int(be.Uint16(pkt[off+V1_AREC_HDR_NUM_ITEMS : off+V1_AREC_HDR_NUM_ITEMS+2]))
+
+	off += V1_AREC_HDR_LEN
+
+	if num_items == 0 || int(num_items*V1_AREC_LEN) != (pb.len()-off) {
+		log.fatal("mgw: mismatch between number (%v) of items and packet length (%v)", num_items, pb.len())
+	}
+
+	for ii := 0; ii < num_items; ii, off = ii+1, off+V1_AREC_LEN {
+
+		var ref Ref
+		ea := IP32(be.Uint32(pkt[off+V1_EA : off+V1_EA+4]))
+		ip := IP32(be.Uint32(pkt[off+V1_IP : off+V1_IP+4]))
+		gw := IP32(be.Uint32(pkt[off+V1_GW : off+V1_GW+4]))
+		ref.h = be.Uint64(pkt[off+V1_REFH : off+V1_REFH+8])
+		ref.l = be.Uint64(pkt[off+V1_REFL : off+V1_REFL+8])
+
+		if gw == 0 || ref.isZero() {
+			log.err("mgw: unexpected null gw + ref, %v %v %v %v, dropping record", ea, ip, gw, &ref)
+			continue
+		}
+
+		if ea != 0 && ip == 0 {
+
+			if pkt[off+V1_EA+2] >= SECOND_BYTE {
+				log.err("mgw: second byte rule violation(ea), %v %v %v %v, dropping record", ea, ip, gw, &ref)
+				continue
+			}
+
+			log.debug("mgw: set their_ipref  %v  ->  %v + %v", ea, gw, &ref)
+			mgw.their_ipref.Set(ea, IpRefRec{gw, ref, oid, mark})
+
+		} else if ea == 0 && ip != 0 {
+
+			if pkt[off+V1_REFL+6] >= SECOND_BYTE {
+				log.err("mgw: second byte rule violation(ref), %v %v %v %v, dropping record", ea, ip, gw, &ref)
+				continue
+			}
+
+			log.debug("mgw: set our_ipref  %v  ->  %v + %v", ip, gw, &ref)
+			mgw.our_ipref.Set(ip, IpRefRec{gw, ref, oid, mark})
+
+		} else {
+			log.err("mgw: invalid address record, %v %v %v %v, dropping record", ea, ip, gw, &ref)
+		}
+	}
+
 	return DROP
 }
 
 func (mgw *MapGw) set_new_mark(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.arechdr:pb.tail]
-	if len(pkt) != V1_HDR_LEN {
-		log.err("mgw: SET_MARK packet too short, dropping")
+	pkt := pb.pkt[pb.v1hdr:pb.tail]
+	if len(pkt) != V1_HDR_LEN || pkt[V1_CMD] != V1_SET_MARK {
+		log.err("mgw: invalid SET_MARK packet: PKT %08x data/tail(%v/%v), dropping",
+			be.Uint32(pb.pkt[pb.data:pb.data+4]), pb.data, pb.tail)
 		return DROP
 	}
 	oid := be.Uint32(pkt[V1_OID : V1_OID+4])
@@ -394,31 +396,31 @@ func (mtun *MapTun) set_cur_mark(oid, mark uint32) {
 
 func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.arechdr:pb.tail]
-	if len(pkt) < V1_HDR_LEN+4+V1_AREC_LEN || pkt[V1_CMD] != V1_SET_AREC {
+	pkt := pb.pkt[pb.v1hdr:pb.tail]
+	if len(pkt) < V1_HDR_LEN+V1_AREC_HDR_LEN+V1_AREC_LEN || pkt[V1_CMD] != V1_SET_AREC {
 		log.err("mtun: invalid SET_AREC packet, dropping")
 		return DROP
 	}
 	oid := be.Uint32(pkt[V1_OID : V1_OID+4])
 	mark := be.Uint32(pkt[V1_MARK : V1_MARK+4])
 
-	off := int(V1_HDR_LEN)
+	off := V1_HDR_LEN
 
-	if pkt[off+V1_ITEM_TYPE] != V1_AREC {
-		log.err("mtun: unexpected item type: %v, dropping", pkt[off+V1_ITEM_TYPE])
+	if pkt[off+V1_AREC_HDR_ITEM_TYPE] != V1_AREC {
+		log.err("mtun: unexpected item type: %v, dropping", pkt[off+V1_AREC_HDR_ITEM_TYPE])
 		return DROP
 	}
-	num_items := be.Uint16(pkt[off+V1_NUM_ITEMS : off+V1_NUM_ITEMS+2])
+	num_items := int(be.Uint16(pkt[off+V1_AREC_HDR_NUM_ITEMS : off+V1_AREC_HDR_NUM_ITEMS+2]))
 
 	off += V1_AREC_HDR_LEN
 
-	if num_items == 0 || int(num_items*V1_AREC_LEN) != (pb.len()-off) {
+	if num_items == 0 || num_items*V1_AREC_LEN != (pb.len()-off) {
 		log.err("mtun: mismatch between number of items (%v) and packet length (%v), dropping",
 			num_items, pb.len())
 		return DROP
 	}
 
-	for ii := 0; ii < int(num_items); ii, off = ii+1, off+V1_AREC_LEN {
+	for ii := 0; ii < num_items; ii, off = ii+1, off+V1_AREC_LEN {
 
 		var ref Ref
 		ea := IP32(be.Uint32(pkt[off+V1_EA : off+V1_EA+4]))
@@ -428,14 +430,14 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 		ref.l = be.Uint64(pkt[off+V1_REFL : off+V1_REFL+8])
 
 		if gw == 0 || ref.isZero() {
-			log.err("mtun: unexpected null gw + ref, dropping item")
+			log.err("mtun: unexpected null gw + ref, %v %v %v %v, dropping record", ea, ip, gw, &ref)
 			continue
 		}
 
 		if ea != 0 && ip == 0 {
 
 			if pkt[off+V1_EA+2] >= SECOND_BYTE {
-				log.err("mtun: second byte rule violation(ea), %v %v %v %v, dropping item", ea, ip, gw, &ref)
+				log.err("mtun: second byte rule violation(ea), %v %v %v %v, dropping record", ea, ip, gw, &ref)
 				continue
 			}
 
@@ -450,7 +452,7 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 		} else if ea == 0 && ip != 0 {
 
 			if pkt[off+V1_REFL+6] >= SECOND_BYTE {
-				log.err("mtun: second byte rule violation(ref), %v %v %v %v, dropping item", ea, ip, gw, &ref)
+				log.err("mtun: second byte rule violation(ref), %v %v %v %v, dropping record", ea, ip, gw, &ref)
 				continue
 			}
 
@@ -463,7 +465,7 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 			our_refs.(*b.Tree).Set(ref, IpRec{ip, oid, mark})
 
 		} else {
-			log.fatal("mtun: invalid address record, %v %v %v %v, dropping item", ea, ip, gw, &ref)
+			log.err("mtun: invalid address record, %v %v %v %v, dropping record", ea, ip, gw, &ref)
 		}
 	}
 
@@ -472,9 +474,8 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
 func (mtun *MapTun) set_new_mark(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.arechdr:pb.tail]
+	pkt := pb.pkt[pb.v1hdr:pb.tail]
 	if len(pkt) != V1_HDR_LEN || pkt[V1_CMD] != V1_SET_MARK {
-		// pb.pkt[pb.data:] is at least MIN_PKT_LEN but pkt may be zero length
 		log.err("mtun: invalid SET_MARK packet: PKT %08x data/tail(%v/%v), dropping",
 			be.Uint32(pb.pkt[pb.data:pb.data+4]), pb.data, pb.tail)
 		return DROP

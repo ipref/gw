@@ -41,7 +41,7 @@ func ip_proto(proto byte) string {
 	return fmt.Sprintf("%v", proto)
 }
 
-func (pb *PktBuf) reflen(iphdr uint) (reflen int) {
+func (pb *PktBuf) reflen(iphdr int) (reflen int) {
 
 	pkt := pb.pkt[iphdr:]
 
@@ -49,19 +49,19 @@ func (pb *PktBuf) reflen(iphdr uint) (reflen int) {
 		return // pkt way too short
 	}
 
-	udp := uint((pkt[IP_VER] & 0xf) * 4)
+	udp := int(pkt[IP_VER]&0xf) * 4
 	encap := udp + 8
 	opt := encap + 4
 
 	if pkt[IP_VER]&0xf0 == 0x40 &&
-		len(pkt) >= int(opt+4) &&
+		len(pkt) >= opt+4 &&
 		pkt[IP_PROTO] == UDP &&
 		(be.Uint16(pkt[udp+UDP_SPORT:udp+UDP_SPORT+2]) == IPREF_PORT || be.Uint16(pkt[udp+UDP_DPORT:udp+UDP_DPORT+2]) == IPREF_PORT) &&
 		pkt[opt+OPT_OPT] == IPREF_OPT {
 
 		reflen = int(pkt[opt+OPT_LEN])
 
-		if (reflen != IPREF_OPT128_LEN && reflen != IPREF_OPT64_LEN) || len(pkt) < int(opt)+reflen {
+		if (reflen != IPREF_OPT128_LEN && reflen != IPREF_OPT64_LEN) || len(pkt) < opt+reflen {
 			reflen = 0 // not a valid ipref packet after all
 		}
 	}
@@ -95,7 +95,7 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 		var sref Ref
 		var dref Ref
 
-		udp := uint((pkt[IP_VER] & 0xf) * 4)
+		udp := int(pkt[IP_VER]&0xf) * 4
 		encap := udp + 8
 		opt := encap + 4
 
@@ -207,7 +207,7 @@ func (pb *PktBuf) pp_net(pfx string) {
 
 	// Non-IP
 
-	if (len(pkt) < 20) || (pkt[IP_VER]&0xf0 != 0x40) || (len(pkt) < int((pkt[IP_VER]&0xf)*4)) {
+	if (len(pkt) < 20) || (pkt[IP_VER]&0xf0 != 0x40) || (len(pkt) < int(pkt[IP_VER]&0xf)*4) {
 		log.trace(pfx + pb.pp_pkt())
 		return
 	}
@@ -221,7 +221,7 @@ func (pb *PktBuf) pp_net(pfx string) {
 		var sref Ref
 		var dref Ref
 
-		udp := uint((pkt[IP_VER] & 0xf) * 4)
+		udp := int(pkt[IP_VER]&0xf) * 4
 		encap := udp + 8
 		opt := encap + 4
 
@@ -271,11 +271,11 @@ func (pb *PktBuf) pp_tran(pfx string) {
 
 	// Non-IP
 
-	if (len(pkt) < 20) || (pkt[IP_VER]&0xf0 != 0x40) || (len(pkt) < int((pkt[IP_VER]&0xf)*4)) {
+	if (len(pkt) < 20) || (pkt[IP_VER]&0xf0 != 0x40) || (len(pkt) < int(pkt[IP_VER]&0xf)*4) {
 		return
 	}
 
-	l4 := int((pkt[IP_VER] & 0xf) * 4)
+	l4 := int(pkt[IP_VER]&0xf) * 4
 	reflen := pb.reflen(pb.iphdr)
 	if reflen != 0 {
 		l4 += 8 + 4 + reflen
@@ -340,20 +340,20 @@ func (pb *PktBuf) fill_iphdr() {
 
 func (pb *PktBuf) fill_udphdr() {
 
-	pb.udphdr = pb.tail
+	pb.l4hdr = pb.tail
 	pb.tail += 8
 
 	if len(pb.pkt[pb.iphdr:]) < pb.len() {
 		log.fatal("fill udphdr: not enough space for UDP header")
 	}
 
-	pkt := pb.pkt[pb.udphdr:]
+	pkt := pb.pkt[pb.l4hdr:]
 
 	pb.pkt[pb.iphdr+IP_PROTO] = UDP
 
 	be.PutUint16(pkt[UDP_SPORT:UDP_SPORT+2], 44123)
 	be.PutUint16(pkt[UDP_DPORT:UDP_DPORT+2], ECHO)
-	be.PutUint16(pkt[UDP_LEN:UDP_LEN+2], uint16(pb.tail-pb.udphdr))
+	be.PutUint16(pkt[UDP_LEN:UDP_LEN+2], uint16(pb.tail-pb.l4hdr))
 	be.PutUint16(pkt[UDP_CSUM:UDP_CSUM+2], 0x0000) // udp csum
 
 	be.PutUint16(pb.pkt[pb.iphdr+IP_LEN:pb.iphdr+IP_LEN+2], uint16(pb.tail-pb.iphdr)) // pktlen
@@ -376,7 +376,7 @@ func (pb *PktBuf) fill_payload() {
 
 	switch pb.pkt[pb.iphdr+IP_PROTO] {
 	case UDP:
-		be.PutUint16(pb.pkt[pb.udphdr+UDP_LEN:pb.udphdr+UDP_LEN+2], uint16(pb.tail-pb.udphdr)) // udp datalen
+		be.PutUint16(pb.pkt[pb.l4hdr+UDP_LEN:pb.l4hdr+UDP_LEN+2], uint16(pb.tail-pb.l4hdr)) // udp datalen
 	}
 	be.PutUint16(pb.pkt[pb.iphdr+IP_LEN:pb.iphdr+IP_LEN+2], uint16(pb.tail-pb.iphdr)) // pktlen
 }
@@ -442,7 +442,7 @@ func insert_ipref_option(pb *PktBuf) int {
 		return DROP
 	}
 
-	iphdrlen := uint(pb.iphdrlen())
+	iphdrlen := pb.iphdr_len()
 	optlen := byte(0)
 
 	if iprefsrc.ref.h == 0 && iprefdst.ref.h == 0 {
@@ -524,14 +524,14 @@ func fwd_to_gw() {
 
 		case pb.pkt[pb.data] == 0x10+V1_PKT_AREC:
 
-			pb.set_arechdr()
-			switch pb.pkt[pb.arechdr+V1_CMD] {
+			pb.set_v1hdr()
+			switch pb.pkt[pb.v1hdr+V1_CMD] {
 			case V1_SET_AREC:
 				verdict = map_gw.set_new_address_records(pb)
 			case V1_SET_MARK:
 				verdict = map_gw.set_new_mark(pb)
 			default:
-				log.err("fwd_to_gw: unknown address records command: %v, ignoring", pb.pkt[pb.arechdr+V1_CMD])
+				log.err("fwd_to_gw: unknown address records command: %v, ignoring", pb.pkt[pb.v1hdr+V1_CMD])
 			}
 
 		case pb.pkt[pb.data] == 0x10+V1_PKT_TMR:
@@ -560,7 +560,7 @@ func fwd_to_tun() {
 
 		switch {
 
-		case len(pb.pkt)-int(pb.data) < MIN_PKT_LEN:
+		case len(pb.pkt)-pb.data < MIN_PKT_LEN:
 
 			log.err("fwd_to_tun in: short packet data/end(%v/%v), dropping", pb.data, len(pb.pkt))
 
@@ -573,14 +573,14 @@ func fwd_to_tun() {
 
 		case pb.pkt[pb.data] == 0x10+V1_PKT_AREC:
 
-			pb.set_arechdr()
-			switch pb.pkt[pb.arechdr+V1_CMD] {
+			pb.set_v1hdr()
+			switch pb.pkt[pb.v1hdr+V1_CMD] {
 			case V1_SET_AREC:
 				verdict = map_tun.set_new_address_records(pb)
 			case V1_SET_MARK:
 				verdict = map_tun.set_new_mark(pb)
 			default:
-				log.err("fwd_to_tun: unknown address records command: %v, ignoring", pb.pkt[pb.arechdr+V1_CMD])
+				log.err("fwd_to_tun: unknown address records command: %v, ignoring", pb.pkt[pb.v1hdr+V1_CMD])
 			}
 
 		case pb.pkt[pb.data] == 0x10+V1_PKT_TMR:

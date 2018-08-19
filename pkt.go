@@ -23,8 +23,9 @@ const (
 	V1_MARK     = 8
 	V1_RESERVED = 12
 	// V1 address record header offsets
-	V1_ITEM_TYPE = 1
-	V1_NUM_ITEMS = 2
+	V1_AREC_HDR_RSVD      = 0
+	V1_AREC_HDR_ITEM_TYPE = 1
+	V1_AREC_HDR_NUM_ITEMS = 2
 	// V1 address record offsets
 	V1_EA   = 0
 	V1_IP   = 4
@@ -73,8 +74,8 @@ const (
 	IPREF_OPT        = 0x9E // C(1) + CLS(0) + OptNum(30) (rfc3692 EXP 30)
 	IPREF_OPT64_LEN  = 4 + 8 + 8
 	IPREF_OPT128_LEN = 4 + 16 + 16
-	OPTLEN           = uint(8 + 4 + 4 + 16 + 16) // udphdr + encap + opt + ref + ref
-	TUN_HDR_LEN      = uint(4)
+	OPTLEN           = 8 + 4 + 4 + 16 + 16 // udphdr + encap + opt + ref + ref
+	TUN_HDR_LEN      = 4
 	TUN_IFF_TUN      = uint16(0x0001)
 	TUN_IPv4         = uint16(0x0800)
 	PKTQLEN          = 2
@@ -118,16 +119,23 @@ type IcmpReq struct { // params for icmp requests
 	mtu   uint16
 }
 type PktBuf struct {
-	pkt     []byte
-	data    uint
-	tail    uint
-	iphdr   uint
-	udphdr  uint
-	tcphdr  uint
-	icmphdr uint
-	arechdr uint
-	tmrhdr  uint
-	icmp    IcmpReq
+	pkt   []byte
+	data  int
+	tail  int
+	iphdr int
+	l4hdr int
+	v1hdr int
+	icmp  IcmpReq
+}
+
+func (pb *PktBuf) clear() {
+
+	pb.data = 0
+	pb.tail = 0
+	pb.iphdr = 0
+	pb.l4hdr = 0
+	pb.v1hdr = 0
+	pb.icmp = IcmpReq{0, 0, 0}
 }
 
 func (pb *PktBuf) copy_from(pbo *PktBuf) {
@@ -139,60 +147,54 @@ func (pb *PktBuf) copy_from(pbo *PktBuf) {
 	pb.data = pbo.data
 	pb.tail = pbo.tail
 	pb.iphdr = pbo.iphdr
-	pb.udphdr = pbo.udphdr
-	pb.tcphdr = pbo.tcphdr
-	pb.icmphdr = pbo.icmphdr
-	pb.arechdr = pbo.arechdr
-	pb.tmrhdr = pbo.tmrhdr
+	pb.l4hdr = pbo.l4hdr
+	pb.v1hdr = pbo.v1hdr
 	pb.icmp = pbo.icmp
 
 	copy(pb.pkt[pb.data:pb.tail], pbo.pkt[pb.data:pb.tail])
 }
 
-func (pb *PktBuf) iphdrlen() int {
+func (pb *PktBuf) set_iphdr() int {
+
+	pb.iphdr = pb.data
+	return pb.iphdr
+}
+
+func (pb *PktBuf) iphdr_len() int {
 	return int((pb.pkt[pb.iphdr] & 0x0f) * 4)
+}
+
+func (pb *PktBuf) set_l4hdr() int {
+
+	pb.l4hdr = pb.iphdr + pb.iphdr_len()
+	return pb.l4hdr
 }
 
 func (pb *PktBuf) len() int {
 	return int(pb.tail - pb.data)
 }
 
-func (pb *PktBuf) set_arechdr() {
+func (pb *PktBuf) set_v1hdr() int {
 
-	pb.arechdr = pb.data
-}
-
-func (pb *PktBuf) set_iphdr() {
-
-	pb.iphdr = pb.data
-}
-
-func (pb *PktBuf) set_tcphdr() {
-
-	pb.tcphdr = pb.iphdr + uint(pb.iphdrlen())
-}
-
-func (pb *PktBuf) set_udphdr() {
-
-	pb.udphdr = pb.iphdr + uint(pb.iphdrlen())
+	pb.v1hdr = pb.data
+	return pb.v1hdr
 }
 
 func (pb *PktBuf) write_v1_header(thype, cmd byte, oid, mark uint32) {
 
-	pkt := pb.pkt
-	off := pb.arechdr
+	pkt := pb.pkt[pb.v1hdr:]
 
-	if (len(pkt) - int(off)) < V1_HDR_LEN {
+	if len(pkt) < V1_HDR_LEN {
 		log.fatal("pkt: not enough space for v1 header")
 	}
 
-	pkt[off+0] = 0x10 + thype
-	pkt[off+V1_CMD] = cmd
-	pkt[off+V1_SRCQ] = 0
-	pkt[off+V1_DSTQ] = 0
-	be.PutUint32(pkt[off+V1_OID:off+V1_OID+4], oid)
-	be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], mark)
-	be.PutUint32(pkt[off+V1_RESERVED:off+V1_RESERVED+4], 0)
+	pkt[V1_VER] = 0x10 + thype
+	pkt[V1_CMD] = cmd
+	pkt[V1_SRCQ] = 0
+	pkt[V1_DSTQ] = 0
+	be.PutUint32(pkt[V1_OID:V1_OID+4], oid)
+	be.PutUint32(pkt[V1_MARK:V1_MARK+4], mark)
+	be.PutUint32(pkt[V1_RESERVED:V1_RESERVED+4], 0)
 }
 
 var getbuf chan (*PktBuf)
@@ -205,6 +207,7 @@ a packet into it.  We try to get it from the retbuf but if not availale we
 allocate a new one but no more than MAXBUF in total. If we exceed this
 limit and no packets in retbuf, we wait until one is returned.
 */
+
 func pkt_buffers() {
 
 	var pb *PktBuf
@@ -230,12 +233,7 @@ func pkt_buffers() {
 			pb = <-retbuf
 		}
 
-		pb.data = 0
-		pb.tail = 0
-		pb.iphdr = 0
-		pb.arechdr = 0
-		pb.tmrhdr = 0
-
+		pb.clear()
 		getbuf <- pb
 	}
 }
