@@ -5,7 +5,9 @@ package main
 import (
 	"fmt"
 	"github.com/cznic/b"
+	"math/bits"
 	"net"
+	"strings"
 )
 
 /* Data organization
@@ -83,11 +85,28 @@ func (ref *Ref) isZero() bool {
 	return ref.h == 0 && ref.l == 0
 }
 
+// print ref as dash separated hex quads: 2f-4883-0005-2a1b
 func (ref *Ref) String() string {
-	if ref.h == 0 {
-		return fmt.Sprintf("%x", ref.l)
+
+	var sb strings.Builder
+
+	var writequads = func(word uint64) {
+		for ii := 0; ii < 4; ii++ {
+			word = bits.RotateLeft64(word, 16)
+			if sb.Len() == 0 {
+				if quad := word & 0xffff; quad != 0 {
+					sb.WriteString(fmt.Sprintf("%x", quad))
+				}
+			} else {
+				sb.WriteString(fmt.Sprintf("-%04x", word&0xffff))
+			}
+		}
 	}
-	return fmt.Sprintf("%x-%016x", ref.h, ref.l)
+
+	writequads(ref.h)
+	writequads(ref.l)
+
+	return sb.String()
 }
 
 type AddrRec struct {
