@@ -219,6 +219,12 @@ func pkt_buffers() {
 				pb = &PktBuf{pkt: make([]byte, cli.gw_mtu, cli.gw_mtu)}
 				allocated += 1
 				log.debug("pkt: new PktBuf allocated, total(%v)", allocated)
+				if allocated == MAXBUF*80/100 {
+					log.info("pkt: close to reaching limit of buffer allocation: %v of %v", allocated, MAXBUF)
+				}
+				if allocated == MAXBUF {
+					log.info("pkt: reached limit of buffer allocation: %v of %v", allocated, MAXBUF)
+				}
 			}
 		} else {
 			pb = <-retbuf
