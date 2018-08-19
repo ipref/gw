@@ -28,42 +28,118 @@ var be = binary.BigEndian
 
 /* PktBuf helper functions */
 
-func (pb *PktBuf) pp_pkt() string {
+func ip_proto(proto byte) string {
 
-	// IP(17)  192.168.84.97  192.168.84.98  len(60)  data/tail(0/60)
+	switch proto {
+	case TCP:
+		return "tcp"
+	case UDP:
+		return "udp"
+	case ICMP:
+		return "icmp"
+	}
+	return fmt.Sprintf("%v", proto)
+}
+
+func (pb *PktBuf) reflen(iphdr uint) (reflen int) {
+
+	pkt := pb.pkt[iphdr:]
+
+	if len(pkt) < 20 {
+		return // pkt way too short
+	}
+
+	udp := uint((pkt[IP_VER] & 0xf) * 4)
+	encap := udp + 8
+	opt := encap + 4
+
+	if pkt[IP_VER]&0xf0 == 0x40 &&
+		len(pkt) >= int(opt+4) &&
+		pkt[IP_PROTO] == UDP &&
+		(be.Uint16(pkt[udp+UDP_SPORT:udp+UDP_SPORT+2]) == IPREF_PORT || be.Uint16(pkt[udp+UDP_DPORT:udp+UDP_DPORT+2]) == IPREF_PORT) &&
+		pkt[opt+OPT_OPT] == IPREF_OPT {
+
+		reflen = int(pkt[opt+OPT_LEN])
+
+		if (reflen != IPREF_OPT128_LEN && reflen != IPREF_OPT64_LEN) || len(pkt) < int(opt)+reflen {
+			reflen = 0 // not a valid ipref packet after all
+		}
+	}
+
+	return
+}
+
+func (pb *PktBuf) pp_pkt() (ss string) {
+
+	// IP(udp)  192.168.84.97  192.168.84.98  len(60)  data/tail(0/60)
+	// IPREF(udp)  192.168.84.97 + 8af2819566  192.168.84.98 + 31fba013c  len(60) data/tail(48/158)
 	// V1(AREC)  SET_MARK(1)  mapper(1)  mark(12342)  data/tail(12/68)
 	// PKT 0532ab04 data/tail(18/20)
 
-	var ss string
-
 	pkt := pb.pkt[pb.data:] // note: for debug it's from data to end (not from data to tail)
 
-	if len(pkt) < MIN_PKT_LEN { // data too far into the buffer
+	// data too far into the buffer
+
+	if len(pkt) < MIN_PKT_LEN {
 
 		ss = fmt.Sprintf("PKT  short  data/tail(%v/%v)", pb.data, pb.tail)
+		return
+	}
 
-	} else if pkt[IP_VER]&0xf0 == 0x40 && len(pkt) >= 20 { // ip packet
+	reflen := pb.reflen(pb.data)
 
-		proto := ""
-		switch pkt[IP_PROTO] {
-		case TCP:
-			proto = "tcp"
-		case UDP:
-			proto = "udp"
-		case ICMP:
-			proto = "icmp"
-		default:
-			proto = fmt.Sprintf("%v", pkt[IP_PROTO])
+	// IPREF packet
+
+	if reflen != 0 {
+
+		var sref Ref
+		var dref Ref
+
+		udp := uint((pkt[IP_VER] & 0xf) * 4)
+		encap := udp + 8
+		opt := encap + 4
+
+		if reflen == IPREF_OPT128_LEN {
+			sref.h = be.Uint64(pkt[opt+OPT_SREF128 : opt+OPT_SREF128+8])
+			sref.l = be.Uint64(pkt[opt+OPT_SREF128+8 : opt+OPT_SREF128+8+8])
+			dref.h = be.Uint64(pkt[opt+OPT_DREF128 : opt+OPT_DREF128+8])
+			dref.l = be.Uint64(pkt[opt+OPT_DREF128+8 : opt+OPT_DREF128+8+8])
+		} else if reflen == IPREF_OPT64_LEN {
+			sref.h = 0
+			sref.l = be.Uint64(pkt[opt+OPT_SREF64 : opt+OPT_SREF64+8])
+			dref.h = 0
+			dref.l = be.Uint64(pkt[opt+OPT_DREF64 : opt+OPT_DREF64+8])
 		}
 
+		ss = fmt.Sprintf("IPREF(%v)  %v + %v  %v + %v  len(%v)  data/tail(%v/%v)",
+			ip_proto(pkt[encap+ENCAP_PROTO]),
+			net.IP(pkt[IP_SRC:IP_SRC+4]),
+			&sref,
+			net.IP(pkt[IP_DST:IP_DST+4]),
+			&dref,
+			be.Uint16(pkt[IP_LEN:IP_LEN+2]),
+			pb.data, pb.tail)
+
+		return
+	}
+
+	// IP packet
+
+	if pkt[IP_VER]&0xf0 == 0x40 && len(pkt) >= 20 {
+
 		ss = fmt.Sprintf("IP(%v)  %v  %v  len(%v)  data/tail(%v/%v)",
-			proto,
+			ip_proto(pkt[IP_PROTO]),
 			net.IP(pkt[IP_SRC:IP_SRC+4]),
 			net.IP(pkt[IP_DST:IP_DST+4]),
 			be.Uint16(pkt[IP_LEN:IP_LEN+2]),
 			pb.data, pb.tail)
 
-	} else if pkt[V1_VER]&0xf0 == 0x10 && len(pkt) >= V1_HDR_LEN { // v1 packet
+		return
+	}
+
+	// V1 packet
+
+	if pkt[V1_VER]&0xf0 == 0x10 && len(pkt) >= V1_HDR_LEN {
 
 		thype := pkt[V1_VER] & 0x0f
 		switch thype {
@@ -90,12 +166,14 @@ func (pb *PktBuf) pp_pkt() string {
 		ss += fmt.Sprintf("  %v(%v)  mark(%v)  data/tail(%v/%v)",
 			owners.name(oid), oid, mark, pb.data, pb.tail)
 
-	} else { // unknown or invalid packet
-
-		ss = fmt.Sprintf("PKT  %08x  data/tail(%v/%v)", be.Uint32(pkt[0:4]), pb.data, pb.tail)
+		return
 	}
 
-	return ss
+	// unknown or invalid packet
+
+	ss = fmt.Sprintf("PKT  %08x  data/tail(%v/%v)", be.Uint32(pkt[0:4]), pb.data, pb.tail)
+
+	return
 }
 
 func (pb *PktBuf) pp_raw(pfx string) {
@@ -122,58 +200,86 @@ func (pb *PktBuf) pp_raw(pfx string) {
 
 func (pb *PktBuf) pp_net(pfx string) {
 
-	// IP[udp] 4500  192.168.84.93  10.254.22.202  len(64) id(1) ttl(64) frag:4000 csum:0000
-
-	var sb strings.Builder
+	// IP(udp) 4500  192.168.84.93  10.254.22.202  len(64) id(1) ttl(64) csum:0000
+	// IPREF(udp) 4500  192.168.84.93 + 8af2819566  10.254.22.202 + 31fba013c  len(64) id(1) ttl(64) csum:0000
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
+
+	// Non-IP
+
 	if (len(pkt) < 20) || (pkt[IP_VER]&0xf0 != 0x40) || (len(pkt) < int((pkt[IP_VER]&0xf)*4)) {
-		sb.WriteString(pfx)
-		sb.WriteString("NON-IP ")
-		if len(pkt) >= 2 {
-			sb.WriteString(hex.EncodeToString(pkt[:2]))
-		}
-		log.trace(sb.String())
+		log.trace(pfx + pb.pp_pkt())
 		return
 	}
 
-	sb.WriteString(pfx)
+	reflen := pb.reflen(pb.iphdr)
 
-	switch pkt[IP_PROTO] {
-	case TCP:
-		sb.WriteString("IP[tcp] ")
-	case UDP:
-		sb.WriteString("IP[udp] ")
-	case ICMP:
-		sb.WriteString("IP[icmp] ")
-	default:
-		sb.WriteString(fmt.Sprintf("IP[%v]", pkt[IP_PROTO]))
+	// IPREF
+
+	if reflen == IPREF_OPT128_LEN || reflen == IPREF_OPT64_LEN {
+
+		var sref Ref
+		var dref Ref
+
+		udp := uint((pkt[IP_VER] & 0xf) * 4)
+		encap := udp + 8
+		opt := encap + 4
+
+		if reflen == IPREF_OPT128_LEN {
+			sref.h = be.Uint64(pkt[opt+OPT_SREF128 : opt+OPT_SREF128+8])
+			sref.l = be.Uint64(pkt[opt+OPT_SREF128+8 : opt+OPT_SREF128+8+8])
+			dref.h = be.Uint64(pkt[opt+OPT_DREF128 : opt+OPT_DREF128+8])
+			dref.l = be.Uint64(pkt[opt+OPT_DREF128+8 : opt+OPT_DREF128+8+8])
+		} else if reflen == IPREF_OPT64_LEN {
+			sref.h = 0
+			sref.l = be.Uint64(pkt[opt+OPT_SREF64 : opt+OPT_SREF64+8])
+			dref.h = 0
+			dref.l = be.Uint64(pkt[opt+OPT_DREF64 : opt+OPT_DREF64+8])
+		}
+
+		log.trace("%vIPREF(%v)  %v + %v  %v + %v  len(%v) id(%v) ttl(%v) csum: %04x",
+			pfx,
+			ip_proto(pkt[encap+ENCAP_PROTO]),
+			IP32(be.Uint32(pkt[IP_SRC:IP_SRC+4])),
+			&sref,
+			IP32(be.Uint32(pkt[IP_DST:IP_DST+4])),
+			&dref,
+			be.Uint16(pkt[IP_LEN:IP_LEN+2]),
+			be.Uint16(pkt[IP_ID:IP_ID+2]),
+			pkt[IP_TTL],
+			be.Uint16(pkt[IP_CSUM:IP_CSUM+2]))
+
+		return
 	}
-	sb.WriteString(hex.EncodeToString(pkt[IP_VER : IP_VER+2]))
-	sb.WriteString("  ")
-	sb.WriteString(net.IP(pkt[IP_SRC : IP_SRC+4]).String())
-	sb.WriteString("  ")
-	sb.WriteString(net.IP(pkt[IP_DST : IP_DST+4]).String())
-	sb.WriteString(fmt.Sprintf("  len(%v)", be.Uint16(pkt[IP_LEN:IP_LEN+2])))
-	sb.WriteString(fmt.Sprintf(" id(%v)", be.Uint16(pkt[IP_ID:IP_ID+2])))
-	sb.WriteString(fmt.Sprintf(" ttl(%v)", pkt[IP_TTL]))
-	sb.WriteString(fmt.Sprintf(" frag:%04x", be.Uint16(pkt[IP_FRAG:IP_FRAG+2])))
-	sb.WriteString(fmt.Sprintf(" csum:%04x", be.Uint16(pkt[IP_CSUM:IP_CSUM+2])))
 
-	log.trace(sb.String())
+	// IP
+
+	log.trace("%vIP(%v)  %v  %v  len(%v) id(%v) ttl(%v) csum: %04x",
+		pfx,
+		ip_proto(pkt[IP_PROTO]),
+		IP32(be.Uint32(pkt[IP_SRC:IP_SRC+4])),
+		IP32(be.Uint32(pkt[IP_DST:IP_DST+4])),
+		be.Uint16(pkt[IP_LEN:IP_LEN+2]),
+		be.Uint16(pkt[IP_ID:IP_ID+2]),
+		pkt[IP_TTL],
+		be.Uint16(pkt[IP_CSUM:IP_CSUM+2]))
 }
 
 func (pb *PktBuf) pp_tran(pfx string) {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
-	if len(pkt) < 20 {
+
+	// Non-IP
+
+	if (len(pkt) < 20) || (pkt[IP_VER]&0xf0 != 0x40) || (len(pkt) < int((pkt[IP_VER]&0xf)*4)) {
 		return
 	}
 
-	var sb strings.Builder
-	off := (pkt[IP_VER] & 0xf) * 4
-
-	sb.WriteString(pfx)
+	l4 := int((pkt[IP_VER] & 0xf) * 4)
+	reflen := pb.reflen(pb.iphdr)
+	if reflen != 0 {
+		l4 += 8 + 4 + reflen
+	}
 
 	switch pkt[IP_PROTO] {
 	case TCP:
@@ -181,21 +287,18 @@ func (pb *PktBuf) pp_tran(pfx string) {
 
 		// UDP  1045  1045  len(96) csum 0
 
-		if len(pkt) < int(off+8) {
+		if len(pkt) < l4+8 {
 			return
 		}
-		sb.WriteString("UDP")
-		sb.WriteString(fmt.Sprintf("  %v", be.Uint16(pkt[off+UDP_SPORT:off+UDP_SPORT+2])))
-		sb.WriteString(fmt.Sprintf("  %v", be.Uint16(pkt[off+UDP_DPORT:off+UDP_DPORT+2])))
-		sb.WriteString(fmt.Sprintf("  len(%v)", be.Uint16(pkt[off+UDP_LEN:off+UDP_LEN+2])))
-		sb.WriteString(fmt.Sprintf(" csum:%04x", be.Uint16(pkt[off+UDP_CSUM:off+UDP_CSUM+2])))
+		log.trace("%vUDP  %v  %v  len(%v) csum: %04x",
+			pfx,
+			be.Uint16(pkt[l4+UDP_SPORT:l4+UDP_SPORT+2]),
+			be.Uint16(pkt[l4+UDP_DPORT:l4+UDP_DPORT+2]),
+			be.Uint16(pkt[l4+UDP_LEN:l4+UDP_LEN+2]),
+			be.Uint16(pkt[l4+UDP_CSUM:l4+UDP_CSUM+2]))
 
 	case ICMP:
-	default:
-		return
 	}
-
-	log.trace(sb.String())
 }
 
 func (pb *PktBuf) fill_tunhdr() {
