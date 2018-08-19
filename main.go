@@ -51,6 +51,7 @@ func main() {
 	send_tun = make(chan *PktBuf, PKTQLEN)
 	recv_gw = make(chan *PktBuf, PKTQLEN)
 	send_gw = make(chan *PktBuf, PKTQLEN)
+	echo = make(chan *PktBuf, PKTQLEN) // for development only
 
 	go gen_dns_refs()
 	go gen_mapper_refs()
