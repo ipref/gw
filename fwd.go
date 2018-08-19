@@ -44,8 +44,20 @@ func (pb *PktBuf) pp_pkt() string {
 
 	} else if pkt[IP_VER]&0xf0 == 0x40 && len(pkt) >= 20 { // ip packet
 
+		proto := ""
+		switch pkt[IP_PROTO] {
+		case TCP:
+			proto = "tcp"
+		case UDP:
+			proto = "udp"
+		case ICMP:
+			proto = "icmp"
+		default:
+			proto = fmt.Sprintf("%v", pkt[IP_PROTO])
+		}
+
 		ss = fmt.Sprintf("IP(%v)  %v  %v  len(%v)  data/tail(%v/%v)",
-			pkt[IP_PROTO],
+			proto,
 			net.IP(pkt[IP_SRC:IP_SRC+4]),
 			net.IP(pkt[IP_DST:IP_DST+4]),
 			be.Uint16(pkt[IP_LEN:IP_LEN+2]),
@@ -133,7 +145,7 @@ func (pb *PktBuf) pp_net(pfx string) {
 	case UDP:
 		sb.WriteString("IP[udp] ")
 	case ICMP:
-		sb.WriteString("IP[ICMP] ")
+		sb.WriteString("IP[icmp] ")
 	default:
 		sb.WriteString(fmt.Sprintf("IP[%v]", pkt[IP_PROTO]))
 	}
