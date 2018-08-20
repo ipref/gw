@@ -316,19 +316,15 @@ func install_hosts_records(oid uint32, arecs map[IP32]AddrRec) {
 		pb := <-getbuf
 		pbb := <-getbuf
 
-		// header
+		// v1 header
 
 		pb.set_v1hdr()
-		pb.write_v1_header(V1_PKT_AREC, V1_SET_AREC, oid, mark)
+		pb.write_v1_header(V1_SIG, V1_SET_AREC, oid, mark)
 
 		pkt := pb.pkt[pb.v1hdr:]
 		off := V1_HDR_LEN
 
-		if len(pkt) < off+V1_AREC_HDR_LEN+V1_AREC_LEN {
-			log.fatal("dns watcher: not enough space for address records") // paranoia
-		}
-
-		// cmd
+		// arec header
 
 		cmd := off
 		pkt[cmd+V1_AREC_HDR_RSVD] = 0
@@ -337,7 +333,7 @@ func install_hosts_records(oid uint32, arecs map[IP32]AddrRec) {
 		numitems := 0
 		off += V1_AREC_HDR_LEN
 
-		// items
+		// arec records
 
 		for off <= len(pkt)-V1_AREC_LEN {
 
@@ -451,7 +447,7 @@ func install_hosts_records(oid uint32, arecs map[IP32]AddrRec) {
 	pbb := <-getbuf
 
 	pb.set_v1hdr()
-	pb.write_v1_header(V1_PKT_AREC, V1_SET_MARK, oid, mark)
+	pb.write_v1_header(V1_SIG, V1_SET_MARK, oid, mark)
 	pb.tail = pb.v1hdr + V1_HDR_LEN
 	pbb.copy_from(pb)
 

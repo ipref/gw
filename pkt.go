@@ -6,15 +6,14 @@ const (
 	MAXBUF = 10
 )
 
-const ( // V1 constants
+const ( // v1 constants
 
+	V1_SIG          = 0x11 // v1 signature
 	V1_HDR_LEN      = 16
 	V1_AREC_HDR_LEN = 4
-	V1_AREC_LEN     = 4 + 4 + 4 + 8 + 8 // ea + ip + gw + ref.h + ref.l
-)
-
-const (
-	// V1 header offsets
+	V1_AREC_LEN     = 4 + 4 + 4 + 8 + 8     // ea + ip + gw + ref.h + ref.l
+	V1_SOFT_LEN     = 4 + 2 + 2 + 1 + 1 + 2 // gw + mtu + port + ttl + hops + rsvd
+	// v1 header offsets
 	V1_VER      = 0
 	V1_CMD      = 1
 	V1_SRCQ     = 2
@@ -22,38 +21,36 @@ const (
 	V1_OID      = 4
 	V1_MARK     = 8
 	V1_RESERVED = 12
-	// V1 address record header offsets
+	// v1 set address record header offsets
 	V1_AREC_HDR_RSVD      = 0
 	V1_AREC_HDR_ITEM_TYPE = 1
 	V1_AREC_HDR_NUM_ITEMS = 2
-	// V1 address record offsets
+	// v1 set address record offsets
 	V1_EA   = 0
 	V1_IP   = 4
 	V1_GW   = 8
 	V1_REFH = 12
 	V1_REFL = 20
+	// v1 set soft offsets
+	V1_SOFT_GW   = 0
+	V1_SOFT_MTU  = 4
+	V1_SOFT_PORT = 6
+	V1_SOFT_TTL  = 8
+	V1_SOFT_HOPS = 9
+	V1_SOFT_RSVD = 10
 )
 
-const ( // data item types
+const ( // set address record data types
 
 	V1_AREC = iota + 1
 )
 
-const ( // internal packet types
-
-	V1_PKT_AREC = iota + 1
-	V1_PKT_TMR
-)
-
-const ( // AREC commands
+const ( // v1 commands
 
 	V1_SET_AREC = iota + 1
 	V1_SET_MARK
-)
-
-const ( // TMR commands
-
-	V1_PURGE_EXPIRED = iota + 1
+	V1_SET_SOFT
+	V1_PURGE_EXPIRED
 )
 
 const ( // packet handling verdicts
@@ -174,13 +171,41 @@ func (pb *PktBuf) len() int {
 	return int(pb.tail - pb.data)
 }
 
+func (pb *PktBuf) reflen(iphdr int) (reflen int) {
+
+	pkt := pb.pkt[iphdr:]
+
+	if len(pkt) < 20 {
+		return // pkt way too short
+	}
+
+	udp := int(pkt[IP_VER]&0xf) * 4
+	encap := udp + 8
+	opt := encap + 4
+
+	if pkt[IP_VER]&0xf0 == 0x40 &&
+		len(pkt) >= opt+4 &&
+		pkt[IP_PROTO] == UDP &&
+		(be.Uint16(pkt[udp+UDP_SPORT:udp+UDP_SPORT+2]) == IPREF_PORT || be.Uint16(pkt[udp+UDP_DPORT:udp+UDP_DPORT+2]) == IPREF_PORT) &&
+		pkt[opt+OPT_OPT] == IPREF_OPT {
+
+		reflen = int(pkt[opt+OPT_LEN])
+
+		if (reflen != IPREF_OPT128_LEN && reflen != IPREF_OPT64_LEN) || len(pkt) < opt+reflen {
+			reflen = 0 // not a valid ipref packet after all
+		}
+	}
+
+	return
+}
+
 func (pb *PktBuf) set_v1hdr() int {
 
 	pb.v1hdr = pb.data
 	return pb.v1hdr
 }
 
-func (pb *PktBuf) write_v1_header(thype, cmd byte, oid, mark uint32) {
+func (pb *PktBuf) write_v1_header(sig, cmd byte, oid, mark uint32) {
 
 	pkt := pb.pkt[pb.v1hdr:]
 
@@ -188,7 +213,7 @@ func (pb *PktBuf) write_v1_header(thype, cmd byte, oid, mark uint32) {
 		log.fatal("pkt: not enough space for v1 header")
 	}
 
-	pkt[V1_VER] = 0x10 + thype
+	pkt[V1_VER] = sig
 	pkt[V1_CMD] = cmd
 	pkt[V1_SRCQ] = 0
 	pkt[V1_DSTQ] = 0

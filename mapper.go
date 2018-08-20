@@ -197,6 +197,17 @@ func (mgw *MapGw) init(oid uint32) {
 	mgw.soft = make(map[IP32]SoftRec)
 }
 
+func (mgw *MapGw) set_cur_mark(oid, mark uint32) {
+
+	if oid == 0 || mark == 0 {
+		log.fatal("mgw: unexpected invalid oid(%v) or mark(%v)", oid, mark)
+	}
+	if oid >= uint32(len(mgw.cur_mark)) {
+		mgw.cur_mark = append(mgw.cur_mark, make([]uint32, oid-uint32(len(mgw.cur_mark))+1)...)
+	}
+	mgw.cur_mark[oid] = mark
+}
+
 func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 
 	iprefrec, ok := mgw.their_ipref.Get(dst)
@@ -247,7 +258,7 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 		}
 
 		pb.set_v1hdr()
-		pb.write_v1_header(V1_PKT_AREC, V1_SET_AREC, mgw.oid, iprefrec.(IpRefRec).mark)
+		pb.write_v1_header(V1_SIG, V1_SET_AREC, mgw.oid, iprefrec.(IpRefRec).mark)
 
 		pkt := pb.pkt[pb.v1hdr:]
 		pkt[V1_VER] = 0
@@ -255,7 +266,7 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 		off := V1_HDR_LEN
 
 		pkt[off+V1_AREC_HDR_RSVD] = 0
-		pkt[off+V1_AREC_HDR_ITEM_TYPE] = V1_PKT_AREC
+		pkt[off+V1_AREC_HDR_ITEM_TYPE] = V1_AREC
 		be.PutUint16(pkt[off+V1_AREC_HDR_NUM_ITEMS:off+V1_AREC_HDR_NUM_ITEMS+2], 1)
 		off += V1_AREC_HDR_LEN
 
@@ -272,17 +283,6 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 	}
 	return iprefrec.(IpRefRec)
 
-}
-
-func (mgw *MapGw) set_cur_mark(oid, mark uint32) {
-
-	if oid == 0 || mark == 0 {
-		log.fatal("mgw: unexpected invalid oid(%v) or mark(%v)", oid, mark)
-	}
-	if oid >= uint32(len(mgw.cur_mark)) {
-		mgw.cur_mark = append(mgw.cur_mark, make([]uint32, oid-uint32(len(mgw.cur_mark))+1)...)
-	}
-	mgw.cur_mark[oid] = mark
 }
 
 func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
@@ -399,6 +399,18 @@ func (mtun *MapTun) set_cur_mark(oid, mark uint32) {
 		mtun.cur_mark = append(mtun.cur_mark, make([]uint32, oid-uint32(len(mtun.cur_mark))+1)...)
 	}
 	mtun.cur_mark[oid] = mark
+}
+
+func (mtun *MapTun) get_dst_ip(gw IP32, ref Ref) IP32 {
+
+	var ip IP32
+	return ip
+}
+
+func (mtun *MapTun) get_src_ea(gw IP32, ref Ref) IP32 {
+
+	var ea IP32
+	return ea
 }
 
 func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
