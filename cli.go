@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-var cli struct {
+var cli struct { // no locks, once setup in cli, never modified thereafter
 	debuglist  string
 	trace      bool
 	stamps     bool

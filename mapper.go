@@ -172,6 +172,11 @@ func addr_cmp(a, b interface{}) int {
 	}
 }
 
+// -- Variables ----------------------------------------------------------------
+
+var map_gw MapGw   // exclusively owned by fwd_to_gw
+var map_tun MapTun // exclusively owned by fwd_to_tun
+
 // -- MapGw --------------------------------------------------------------------
 
 type MapGw struct {
@@ -293,14 +298,16 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 	off := V1_HDR_LEN
 
 	if pkt[off+V1_AREC_HDR_ITEM_TYPE] != V1_AREC {
-		log.fatal("mgw: unexpected item type: %v", pkt[off+V1_AREC_HDR_ITEM_TYPE])
+		log.err("mgw: unexpected item type: %v, dropping", pkt[off+V1_AREC_HDR_ITEM_TYPE])
+		return DROP
 	}
 	num_items := int(be.Uint16(pkt[off+V1_AREC_HDR_NUM_ITEMS : off+V1_AREC_HDR_NUM_ITEMS+2]))
 
 	off += V1_AREC_HDR_LEN
 
 	if num_items == 0 || int(num_items*V1_AREC_LEN) != (pb.len()-off) {
-		log.fatal("mgw: mismatch between number (%v) of items and packet length (%v)", num_items, pb.len())
+		log.err("mgw: mismatch between number of items (%v) and packet length (%v), dropping",
+			num_items, pb.len())
 	}
 
 	for ii := 0; ii < num_items; ii, off = ii+1, off+V1_AREC_LEN {
@@ -397,8 +404,8 @@ func (mtun *MapTun) set_cur_mark(oid, mark uint32) {
 func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.v1hdr:pb.tail]
-	if len(pkt) < V1_HDR_LEN+V1_AREC_HDR_LEN+V1_AREC_LEN || pkt[V1_CMD] != V1_SET_AREC {
-		log.err("mtun: invalid SET_AREC packet, dropping")
+	if len(pkt) < V1_HDR_LEN+V1_AREC_HDR_LEN+V1_AREC_LEN {
+		log.err("mtun: SET_AREC packet too short, dropping")
 		return DROP
 	}
 	oid := be.Uint32(pkt[V1_OID : V1_OID+4])
@@ -487,10 +494,5 @@ func (mtun *MapTun) set_new_mark(pb *PktBuf) int {
 
 	return DROP
 }
-
-// -- Variables ----------------------------------------------------------------
-
-var map_gw MapGw   // exclusively owned by fwd_to_gw
-var map_tun MapTun // exclusively owned by fwd_to_tun
 
 // -- Mapper helpers -----------------------------------------------------------

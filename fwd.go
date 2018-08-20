@@ -315,6 +315,7 @@ func (pb *PktBuf) fill_tunhdr() {
 	be.PutUint16(pkt[TUN_FLAGS:TUN_FLAGS+2], TUN_IFF_TUN)
 	be.PutUint16(pkt[TUN_PROTO:TUN_PROTO+2], TUN_IPv4)
 }
+
 func (pb *PktBuf) fill_iphdr() {
 
 	pb.iphdr = pb.tail
@@ -403,14 +404,10 @@ func (pb *PktBuf) fill(proto int) {
 
 func insert_ipref_option(pb *PktBuf) int {
 
-	if cli.debug["fwd"] || cli.debug["all"] {
-		log.debug("insert opt: %v", pb.pp_pkt())
-	}
-
 	pkt := pb.pkt
 
 	if (be.Uint16(pkt[pb.iphdr+IP_FRAG:pb.iphdr+IP_FRAG+2]) & 0x1fff) != 0 {
-		log.debug("insert opt: pkt is a fragment, dropping")
+		log.debug("inserting opt: pkt is a fragment, dropping")
 		return DROP
 	}
 
@@ -438,7 +435,7 @@ func insert_ipref_option(pb *PktBuf) int {
 	// insert option
 
 	if pb.iphdr < OPTLEN {
-		log.err("insert opt: no space for ipref option, dropping")
+		log.err("inserting opt: no space for ipref option, dropping")
 		return DROP
 	}
 
@@ -490,13 +487,17 @@ func insert_ipref_option(pb *PktBuf) int {
 	be.PutUint32(pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_SRC+4], uint32(iprefsrc.ip))
 	be.PutUint32(pkt[pb.iphdr+IP_DST:pb.iphdr+IP_DST+4], uint32(iprefdst.ip))
 
+	if cli.debug["fwd"] || cli.debug["all"] {
+		log.debug("inserting opt: %v", pb.pp_pkt())
+	}
+
 	return ACCEPT
 }
 
 func remove_ipref_option(pb *PktBuf) int {
 
 	if cli.debug["fwd"] || cli.debug["all"] {
-		log.debug("remove opt: %v", pb.pp_pkt())
+		log.debug("removing opt:  %v", pb.pp_pkt())
 	}
 
 	return ACCEPT
