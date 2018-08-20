@@ -106,12 +106,13 @@ func parse_cli() {
 	}
 
 	ones, bits := ipnet.Mask.Size()
-	if ones == 0 || ones == 32 || bits != 32 {
+	if ones == 0 || ones > 16 || bits != 32 { // needs full second to last byte for allocation
 		log.fatal("invalid encode-net mask: %v", cli.ea)
 	}
 
 	cli.ea_ip = IP32(be.Uint32(ipnet.IP.To4()))
 	cli.ea_mask = IP32(be.Uint32(net.IP(ipnet.Mask).To4()))
+	cli.ea_ip &= cli.ea_mask
 
 	// deduce mtu
 

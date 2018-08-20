@@ -90,10 +90,11 @@ var owners Owners
 var random_dns_ref chan Ref
 var random_mapper_ref chan Ref
 
+var random_dns_ea chan IP32
+var random_mapper_ea chan IP32
+
 // generate random refs with second to last byte < SECOND_BYTE
 func gen_dns_refs() {
-
-	random_dns_ref = make(chan Ref, GENQLEN)
 
 	allocated := make(map[Ref]bool)
 
@@ -108,11 +109,14 @@ func gen_dns_refs() {
 			log.fatal("gen_dns_refs: cannot get random number")
 		}
 
-		low[6] = uint8(low[6]) % 100
+		low[6] %= 100
 		ref.l = be.Uint64(low)
+		if ref.h == 0 && ref.l < MIN_REF {
+			continue // restricted value, try another
+		}
 		_, ok := allocated[ref]
-		if ok || (ref.h == 0 && ref.l < MIN_REF) {
-			continue // already allocated or too low
+		if ok {
+			continue // already allocated
 		}
 		allocated[ref] = true
 
@@ -122,8 +126,6 @@ func gen_dns_refs() {
 
 // generate random refs with second to last byte >= SECOND_BYTE
 func gen_mapper_refs() {
-
-	random_mapper_ref := make(chan Ref, GENQLEN)
 
 	allocated := make(map[Ref]bool)
 
@@ -138,7 +140,8 @@ func gen_mapper_refs() {
 			log.fatal("gen_mapper_refs: cannot get random number")
 		}
 
-		low[6] = uint8(low[6])%156 + 100
+		low[6] %= 156
+		low[6] += 100
 		ref.l = be.Uint64(low)
 		_, ok := allocated[ref]
 		if ok {
@@ -150,8 +153,74 @@ func gen_mapper_refs() {
 	}
 }
 
-//var random_dns_ea chan uint32
-//var random_mapper_ea chan uint32
+// generate random eas with second to last byte < SECOND_BYTE
+func gen_dns_eas() {
+
+	allocated := make(map[IP32]bool)
+
+	var err error
+	var ea IP32
+	bcast := 0xffffffff &^ cli.ea_mask
+	ea_bytes := make([]byte, 4)
+
+	for {
+
+		_, err = rand.Read(ea_bytes)
+		if err != nil {
+			log.fatal("gen_dns_eas: cannot get random number")
+		}
+
+		ea_bytes[2] %= 100
+		ea = IP32(be.Uint32(ea_bytes))
+		ea &^= cli.ea_mask
+		if ea == 0 || ea == bcast {
+			continue // zero address or broadcast address, try another
+		}
+		ea |= cli.ea_ip
+		_, ok := allocated[ea]
+		if ok {
+			continue // already allocated
+		}
+		allocated[ea] = true
+
+		random_dns_ea <- ea
+	}
+}
+
+// generate random eas with second to last byte >= SECOND_BYTE
+func gen_mapper_eas() {
+
+	allocated := make(map[IP32]bool)
+
+	var err error
+	var ea IP32
+	bcast := 0xffffffff &^ cli.ea_mask
+	ea_bytes := make([]byte, 4)
+
+	for {
+
+		_, err = rand.Read(ea_bytes)
+		if err != nil {
+			log.fatal("gen_mapper_eas: cannot get random number")
+		}
+
+		ea_bytes[2] %= 156
+		ea_bytes[2] += 100
+		ea = IP32(be.Uint32(ea_bytes))
+		ea &^= cli.ea_mask
+		if ea == 0 || ea == bcast {
+			continue // zero address or broadcast address, try another
+		}
+		ea |= cli.ea_ip
+		_, ok := allocated[ea]
+		if ok {
+			continue // already allocated
+		}
+		allocated[ea] = true
+
+		random_mapper_ea <- ea
+	}
+}
 
 func timer() {
 

@@ -53,8 +53,15 @@ func main() {
 	send_gw = make(chan *PktBuf, PKTQLEN)
 	echo = make(chan *PktBuf, PKTQLEN) // for development only
 
+	random_dns_ref = make(chan Ref, GENQLEN)
+	random_mapper_ref = make(chan Ref, GENQLEN)
+	random_dns_ea = make(chan IP32, GENQLEN)
+	random_mapper_ea = make(chan IP32, GENQLEN)
+
 	go gen_dns_refs()
 	go gen_mapper_refs()
+	go gen_dns_eas()
+	go gen_mapper_eas()
 
 	go pkt_buffers()
 	go dns_watcher()
