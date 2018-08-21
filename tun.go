@@ -19,6 +19,8 @@ func tun_sender() {
 
 		if log.level <= TRACE {
 			pb.pp_net("tun out: ")
+			pb.pp_tran("tun out: ")
+			pb.pp_raw("tun out: ")
 		}
 		retbuf <- pb
 	}

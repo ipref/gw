@@ -41,39 +41,11 @@ func ip_proto(proto byte) string {
 	return fmt.Sprintf("%v", proto)
 }
 
-func (pb *PktBuf) reflen(iphdr int) (reflen int) {
-
-	pkt := pb.pkt[iphdr:]
-
-	if len(pkt) < 20 {
-		return // pkt way too short
-	}
-
-	udp := int(pkt[IP_VER]&0xf) * 4
-	encap := udp + 8
-	opt := encap + 4
-
-	if pkt[IP_VER]&0xf0 == 0x40 &&
-		len(pkt) >= opt+4 &&
-		pkt[IP_PROTO] == UDP &&
-		(be.Uint16(pkt[udp+UDP_SPORT:udp+UDP_SPORT+2]) == IPREF_PORT || be.Uint16(pkt[udp+UDP_DPORT:udp+UDP_DPORT+2]) == IPREF_PORT) &&
-		pkt[opt+OPT_OPT] == IPREF_OPT {
-
-		reflen = int(pkt[opt+OPT_LEN])
-
-		if (reflen != IPREF_OPT128_LEN && reflen != IPREF_OPT64_LEN) || len(pkt) < opt+reflen {
-			reflen = 0 // not a valid ipref packet after all
-		}
-	}
-
-	return
-}
-
 func (pb *PktBuf) pp_pkt() (ss string) {
 
 	// IP(udp)  192.168.84.97  192.168.84.98  len(60)  data/tail(0/60)
 	// IPREF(udp)  192.168.84.97 + 8af2819566  192.168.84.98 + 31fba013c  len(60) data/tail(48/158)
-	// V1(AREC)  SET_MARK(1)  mapper(1)  mark(12342)  data/tail(12/68)
+	// V1 SET_MARK(1)  mapper(1)  mark(12342)  data/tail(12/68)
 	// PKT 0532ab04 data/tail(18/20)
 
 	pkt := pb.pkt[pb.data:] // note: for debug it's from data to end (not from data to tail)
@@ -139,26 +111,22 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 
 	// V1 packet
 
-	if pkt[V1_VER]&0xf0 == 0x10 && len(pkt) >= V1_HDR_LEN {
+	if pkt[V1_VER] == V1_SIG && len(pkt) >= V1_HDR_LEN {
 
-		thype := pkt[V1_VER] & 0x0f
-		switch thype {
-		case V1_PKT_AREC:
-			ss = fmt.Sprintf("V1(AREC)")
-		case V1_PKT_TMR:
-			ss = fmt.Sprintf("V1(TMR)")
-		default:
-			ss = fmt.Sprintf("V1(%v)", thype)
-		}
+		ss = "V1"
 
 		cmd := pkt[V1_CMD]
 		switch cmd {
 		case V1_SET_AREC:
-			ss += fmt.Sprintf("  SET_AREC(%v)", cmd)
+			ss += fmt.Sprintf(" SET_AREC(%v)", cmd)
 		case V1_SET_MARK:
-			ss += fmt.Sprintf("  SET_MARK(%v)", cmd)
+			ss += fmt.Sprintf(" SET_MARK(%v)", cmd)
+		case V1_SET_SOFT:
+			ss += fmt.Sprintf(" SET_SOFT(%v)", cmd)
+		case V1_PURGE_EXPIRED:
+			ss += fmt.Sprintf(" PURGE_EXPIRED(%v)", cmd)
 		default:
-			ss += fmt.Sprintf("  cmd(%v)", cmd)
+			ss += fmt.Sprintf(" cmd(%v)", cmd)
 		}
 
 		oid := be.Uint32(pkt[V1_OID : V1_OID+4])
@@ -494,7 +462,125 @@ func insert_ipref_option(pb *PktBuf) int {
 	return ACCEPT
 }
 
+// send soft record to the fwd_to_gw forwarder
+func send_soft_rec(soft SoftRec) {
+
+	pb := <-getbuf
+
+	pb.set_v1hdr()
+	pb.write_v1_header(V1_SIG, V1_SET_SOFT, 0, 0)
+
+	pkt := pb.pkt[pb.v1hdr:]
+	off := V1_HDR_LEN
+
+	be.PutUint32(pkt[off+V1_SOFT_GW:off+V1_SOFT_GW+4], uint32(soft.gw))
+	be.PutUint16(pkt[off+V1_SOFT_MTU:off+V1_SOFT_MTU+2], soft.mtu)
+	be.PutUint16(pkt[off+V1_SOFT_PORT:off+V1_SOFT_PORT+2], soft.port)
+	pkt[off+V1_SOFT_TTL] = soft.ttl
+	pkt[off+V1_SOFT_HOPS] = soft.hops
+	be.PutUint16(pkt[off+V1_SOFT_RSVD:off+V1_SOFT_RSVD+2], 0)
+
+	pb.tail = pb.v1hdr + V1_HDR_LEN + V1_SOFT_LEN
+
+	recv_tun <- pb
+}
+
 func remove_ipref_option(pb *PktBuf) int {
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+	reflen := pb.reflen(pb.iphdr)
+
+	if reflen == 0 {
+		log.err("removing opt:  not an ipref packet, dropping")
+		return DROP
+	}
+
+	// map addresses
+
+	var sref Ref
+	var dref Ref
+
+	udp := pb.iphdr_len()
+	encap := udp + 8
+	opt := encap + 4
+
+	src := IP32(be.Uint32(pkt[IP_SRC : IP_SRC+4]))
+	dst := IP32(be.Uint32(pkt[IP_DST : IP_DST+4]))
+
+	if reflen == IPREF_OPT128_LEN {
+		sref.h = be.Uint64(pkt[opt+OPT_SREF128 : opt+OPT_SREF128+8])
+		sref.l = be.Uint64(pkt[opt+OPT_SREF128+8 : opt+OPT_SREF128+8+8])
+		dref.h = be.Uint64(pkt[opt+OPT_DREF128 : opt+OPT_DREF128+8])
+		dref.l = be.Uint64(pkt[opt+OPT_DREF128+8 : opt+OPT_DREF128+8+8])
+	} else if reflen == IPREF_OPT64_LEN {
+		sref.h = 0
+		sref.l = be.Uint64(pkt[opt+OPT_SREF64 : opt+OPT_SREF64+8])
+		dref.h = 0
+		dref.l = be.Uint64(pkt[opt+OPT_DREF64 : opt+OPT_DREF64+8])
+	}
+
+	dst_ip := map_tun.get_dst_ip(dst, dref)
+	if dst_ip == 0 {
+		log.err("removing opt:  unknown local destination  %v + %v  %v + %v, dropping",
+			src, &sref, dst, &dref)
+		return DROP // drop silently
+	}
+
+	src_ea := map_tun.get_src_ea(src, sref)
+	if src == 0 {
+		log.err("removing opt:  unknown src ipref address  %v + %v  %v + %v, dropping",
+			src, &sref, dst, &dref)
+		return DROP // couldn't assign ea for some reason
+	}
+
+	// update soft state and tell the other forwarder if changed
+
+	soft, ok := map_tun.soft[src]
+	if !ok {
+		soft.init(src)
+		soft.port = 0 // force change
+	}
+
+	if soft.gw != src {
+		log.err("removing opt:  soft record gw %v does match src %v, resetting", soft.gw, src)
+		soft.init(src)
+		soft.port = 0 // force change
+	}
+
+	if soft.ttl != pkt[encap+ENCAP_HOPS] ||
+		soft.hops != pkt[encap+ENCAP_TTL] ||
+		soft.port != be.Uint16(pkt[udp+UDP_SPORT:udp+UDP_SPORT+2]) {
+
+		soft.ttl = pkt[encap+ENCAP_HOPS]
+		soft.hops = pkt[encap+ENCAP_TTL]
+		soft.port = be.Uint16(pkt[udp+UDP_SPORT : udp+UDP_SPORT+2])
+
+		map_tun.soft[src] = soft
+
+		// tel mgw about new or changed soft record
+
+		send_soft_rec(soft)
+	}
+
+	// strip option
+
+	hdrlen := pb.iphdr_len()
+	pb.iphdr += 8 + 4 + reflen // udp header + encap + opt
+	copy(pb.pkt[pb.iphdr:pb.iphdr+hdrlen], pb.pkt[pb.data:pb.data+hdrlen])
+	pb.data = pb.iphdr
+
+	pkt = pb.pkt[pb.iphdr:pb.tail]
+
+	// adjust layer 4 headers
+
+	// adjust ip header
+
+	pktlen := be.Uint16(pkt[IP_LEN : IP_LEN+2])
+	pktlen -= 8 + 4 + uint16(reflen)
+
+	be.PutUint16(pkt[IP_LEN:IP_LEN+2], pktlen)
+	be.PutUint32(pkt[IP_SRC:IP_SRC+4], uint32(src_ea))
+	be.PutUint32(pkt[IP_DST:IP_DST+4], uint32(dst_ip))
 
 	if cli.debug["fwd"] || cli.debug["all"] {
 		log.debug("removing opt:  %v", pb.pp_pkt())
@@ -523,7 +609,7 @@ func fwd_to_gw() {
 				send_gw <- pb
 			}
 
-		case pb.pkt[pb.data] == 0x10+V1_PKT_AREC:
+		case pb.pkt[pb.data] == V1_SIG:
 
 			pb.set_v1hdr()
 			switch pb.pkt[pb.v1hdr+V1_CMD] {
@@ -531,13 +617,11 @@ func fwd_to_gw() {
 				verdict = map_gw.set_new_address_records(pb)
 			case V1_SET_MARK:
 				verdict = map_gw.set_new_mark(pb)
+			case V1_SET_SOFT:
+				verdict = map_gw.update_soft(pb)
 			default:
 				log.err("fwd_to_gw: unknown address records command: %v, ignoring", pb.pkt[pb.v1hdr+V1_CMD])
 			}
-
-		case pb.pkt[pb.data] == 0x10+V1_PKT_TMR:
-
-			verdict = map_gw.timer(pb)
 
 		default:
 			log.err("fwd_to_gw: unknown packet type: 0x%02x, dropping", pb.pkt[pb.data])
@@ -572,7 +656,7 @@ func fwd_to_tun() {
 				send_tun <- pb
 			}
 
-		case pb.pkt[pb.data] == 0x10+V1_PKT_AREC:
+		case pb.pkt[pb.data] == V1_SIG:
 
 			pb.set_v1hdr()
 			switch pb.pkt[pb.v1hdr+V1_CMD] {
@@ -583,10 +667,6 @@ func fwd_to_tun() {
 			default:
 				log.err("fwd_to_tun: unknown address records command: %v, ignoring", pb.pkt[pb.v1hdr+V1_CMD])
 			}
-
-		case pb.pkt[pb.data] == 0x10+V1_PKT_TMR:
-
-			//verdict = map_tun.timer(pb)
 
 		default:
 			log.err("fwd_to_tun: unknown packet type: 0x%02x, dropping", pb.pkt[pb.data])

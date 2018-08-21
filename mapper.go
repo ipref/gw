@@ -367,6 +367,34 @@ func (mgw *MapGw) set_new_mark(pb *PktBuf) int {
 	return DROP
 }
 
+func (mgw *MapGw) update_soft(pb *PktBuf) int {
+
+	pkt := pb.pkt[pb.v1hdr:pb.tail]
+	if len(pkt) != V1_HDR_LEN+V1_SOFT_LEN || pkt[V1_CMD] != V1_SET_SOFT {
+		log.err("mgw: invalid SET_SOFT packet: PKT %08x data/tail(%v/%v), dropping",
+			be.Uint32(pb.pkt[pb.data:pb.data+4]), pb.data, pb.tail)
+		return DROP
+	}
+
+	off := V1_HDR_LEN
+
+	var soft SoftRec
+
+	soft.gw = IP32(be.Uint32(pkt[off+V1_SOFT_GW : off+V1_SOFT_GW+4]))
+	soft.port = be.Uint16(pkt[off+V1_SOFT_PORT : off+V1_SOFT_PORT+2])
+	soft.mtu = be.Uint16(pkt[off+V1_SOFT_MTU : off+V1_SOFT_MTU+2])
+	soft.ttl = pkt[off+V1_SOFT_TTL]
+	soft.hops = pkt[off+V1_SOFT_HOPS]
+
+	if soft.port != 0 {
+		mgw.soft[soft.gw] = soft
+	} else {
+		delete(mgw.soft, soft.gw)
+	}
+
+	return DROP
+}
+
 func (mgw *MapGw) timer(pb *PktBuf) int {
 	return DROP
 }
@@ -403,14 +431,37 @@ func (mtun *MapTun) set_cur_mark(oid, mark uint32) {
 
 func (mtun *MapTun) get_dst_ip(gw IP32, ref Ref) IP32 {
 
-	var ip IP32
-	return ip
+	our_refs, ok := mtun.our_ip.Get(gw)
+	if !ok {
+		return 0 // our gateway is not in the map, very weird, probably a bug
+	}
+
+	iprec, ok := our_refs.(*b.Tree).Get(ref)
+	if !ok {
+		return 0 // unknown local host
+	}
+
+	return iprec.(IpRec).ip
 }
 
 func (mtun *MapTun) get_src_ea(gw IP32, ref Ref) IP32 {
 
-	var ea IP32
-	return ea
+	their_refs, ok := mtun.our_ea.Get(gw)
+	if !ok {
+		// looks like we haven't seen this remote gw, allocate a map for it
+		their_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
+		mtun.our_ea.Set(gw, their_refs)
+	}
+
+	iprec, ok := their_refs.(*b.Tree).Get(ref)
+	if !ok {
+		// no ea for this remote host, allocate one
+		ea := <-random_mapper_ea
+		iprec = interface{}(IpRec{ea, mtun.oid, mtun.cur_mark[mtun.oid]})
+		their_refs.(*b.Tree).Set(ref, iprec)
+	}
+
+	return iprec.(IpRec).ip
 }
 
 func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
