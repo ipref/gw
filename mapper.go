@@ -241,6 +241,9 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 		// local host ip does not have a map to ipref, create it
 
 		ref := <-random_mapper_ref
+		if ref.isZero() {
+			return IpRefRec{0, Ref{0, 0}, 0, 0} // cannot get new reference
+		}
 		iprefrec = interface{}(IpRefRec{
 			cli.gw_ip,
 			ref,
@@ -457,6 +460,9 @@ func (mtun *MapTun) get_src_ea(gw IP32, ref Ref) IP32 {
 	if !ok {
 		// no ea for this remote host, allocate one
 		ea := <-random_mapper_ea
+		if ea == 0 {
+			return ea // cannot get new ea
+		}
 		iprec = interface{}(IpRec{ea, mtun.oid, mtun.cur_mark[mtun.oid]})
 		their_refs.(*b.Tree).Set(ref, iprec)
 	}

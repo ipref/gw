@@ -367,6 +367,11 @@ func install_hosts_records(oid uint32, arecs map[IP32]AddrRec) {
 					// server, then convey records from the server to the mapper.
 
 					ref := <-random_dns_ref
+					if ref.isZero() {
+						log.err("dns watcher: cannot get generated reference: %v %v %v %v, ignoring",
+							rec.ea, rec.ip, rec.gw, &rec.ref)
+						goto skip_record
+					}
 					rec.ref = ref
 					log.info("dns watcher: allocated dns ref: %v %v %v %v",
 						rec.ea, rec.ip, rec.gw, &rec.ref)

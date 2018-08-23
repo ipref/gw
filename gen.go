@@ -23,6 +23,7 @@ const (
 	GENQLEN     = 2
 	SECOND_BYTE = 100
 	MIN_REF     = 256 // low ref values are reserved
+	MAXTRIES    = 10  // num of tries to get unique random value before giving up
 )
 
 const (
@@ -41,6 +42,7 @@ func (o *Owners) init() {
 	o.oids[0] = "none"
 }
 
+// return name associated with an oid
 func (o *Owners) name(oid uint32) string {
 	name := "unknown"
 	o.mtx.Lock()
@@ -55,6 +57,7 @@ func (o *Owners) name(oid uint32) string {
 	return name[ix+1:]
 }
 
+// create new oid
 func (o *Owners) new_oid(name string) uint32 {
 
 	if len(name) == 0 {
@@ -96,30 +99,38 @@ var random_mapper_ea chan IP32
 // generate random refs with second to last byte < SECOND_BYTE
 func gen_dns_refs() {
 
+	var ref Ref
+	refzero := Ref{0, 0}
 	allocated := make(map[Ref]bool)
-
+	creep := make([]byte, 16)
 	var err error
-	ref := Ref{0, 0}
-	low := make([]byte, 8)
 
 	for {
+		// clear ref before incrementing ii
+		for ii := 0; ii < MAXTRIES; ii, ref = ii+1, refzero {
 
-		_, err = rand.Read(low)
-		if err != nil {
-			log.fatal("gen_dns_refs: cannot get random number")
-		}
+			_, err = rand.Read(creep[7:])
+			if err != nil {
+				continue // cannot get random number
+			}
 
-		low[6] %= 100
-		ref.l = be.Uint64(low)
-		if ref.h == 0 && ref.l < MIN_REF {
-			continue // restricted value, try another
-		}
-		_, ok := allocated[ref]
-		if ok {
-			continue // already allocated
-		}
-		allocated[ref] = true
+			creep[14] %= SECOND_BYTE
+			creep[7] >>= 4 // make 64 bit refs happen more often
+			ref.h = be.Uint64(creep[:8])
+			ref.l = be.Uint64(creep[8:])
 
+			if ref.h == 0 && ref.l < MIN_REF {
+				continue // reserved ref
+			}
+
+			_, ok := allocated[ref]
+			if ok {
+				continue // already allocated
+			}
+
+			allocated[ref] = true
+			break
+		}
 		random_dns_ref <- ref
 	}
 }
@@ -127,28 +138,39 @@ func gen_dns_refs() {
 // generate random refs with second to last byte >= SECOND_BYTE
 func gen_mapper_refs() {
 
+	var ref Ref
+	refzero := Ref{0, 0}
 	allocated := make(map[Ref]bool)
-
+	creep := make([]byte, 16)
 	var err error
-	ref := Ref{0, 0}
-	low := make([]byte, 8)
 
 	for {
+		// clear ref before incrementing ii
+		for ii := 0; ii < MAXTRIES; ii, ref = ii+1, refzero {
 
-		_, err = rand.Read(low)
-		if err != nil {
-			log.fatal("gen_mapper_refs: cannot get random number")
+			_, err = rand.Read(creep[7:])
+			if err != nil {
+				continue // cannot get random number
+			}
+
+			creep[14] %= 256 - SECOND_BYTE
+			creep[14] += SECOND_BYTE
+			creep[7] >>= 4 // make 64 bit refs happen more often
+			ref.h = be.Uint64(creep[:8])
+			ref.l = be.Uint64(creep[8:])
+
+			if ref.h == 0 && ref.l < MIN_REF {
+				continue // reserved ref
+			}
+
+			_, ok := allocated[ref]
+			if ok {
+				continue // already allocated
+			}
+
+			allocated[ref] = true
+			break
 		}
-
-		low[6] %= 156
-		low[6] += 100
-		ref.l = be.Uint64(low)
-		_, ok := allocated[ref]
-		if ok {
-			continue // already allocated
-		}
-		allocated[ref] = true
-
 		random_mapper_ref <- ref
 	}
 }
@@ -156,33 +178,36 @@ func gen_mapper_refs() {
 // generate random eas with second to last byte < SECOND_BYTE
 func gen_dns_eas() {
 
-	allocated := make(map[IP32]bool)
-
-	var err error
 	var ea IP32
+	allocated := make(map[IP32]bool)
 	bcast := 0xffffffff &^ cli.ea_mask
-	ea_bytes := make([]byte, 4)
+	creep := make([]byte, 4)
+	var err error
 
 	for {
+		// clear ea before incrementing ii
+		for ii := 0; ii < MAXTRIES; ii, ea = ii+1, 0 {
 
-		_, err = rand.Read(ea_bytes)
-		if err != nil {
-			log.fatal("gen_dns_eas: cannot get random number")
-		}
+			_, err = rand.Read(creep[1:])
+			if err != nil {
+				continue // cannot get random number
+			}
 
-		ea_bytes[2] %= 100
-		ea = IP32(be.Uint32(ea_bytes))
-		ea &^= cli.ea_mask
-		if ea == 0 || ea == bcast {
-			continue // zero address or broadcast address, try another
-		}
-		ea |= cli.ea_ip
-		_, ok := allocated[ea]
-		if ok {
-			continue // already allocated
-		}
-		allocated[ea] = true
+			creep[2] %= SECOND_BYTE
+			ea = IP32(be.Uint32(creep))
 
+			ea &^= cli.ea_mask
+			if ea == 0 || ea == bcast {
+				continue // zero address or broadcast address, try another
+			}
+			ea |= cli.ea_ip
+			_, ok := allocated[ea]
+			if ok {
+				continue // already allocated
+			}
+			allocated[ea] = true
+			break
+		}
 		random_dns_ea <- ea
 	}
 }
@@ -190,35 +215,38 @@ func gen_dns_eas() {
 // generate random eas with second to last byte >= SECOND_BYTE
 func gen_mapper_eas() {
 
-	allocated := make(map[IP32]bool)
-
-	var err error
 	var ea IP32
+	allocated := make(map[IP32]bool)
 	bcast := 0xffffffff &^ cli.ea_mask
-	ea_bytes := make([]byte, 4)
+	creep := make([]byte, 4)
+	var err error
 
 	for {
+		// clear ea before incrementing ii
+		for ii := 0; ii < MAXTRIES; ii, ea = ii+1, 0 {
 
-		_, err = rand.Read(ea_bytes)
-		if err != nil {
-			log.fatal("gen_mapper_eas: cannot get random number")
-		}
+			_, err = rand.Read(creep[1:])
+			if err != nil {
+				continue // cannot get random number
+			}
 
-		ea_bytes[2] %= 156
-		ea_bytes[2] += 100
-		ea = IP32(be.Uint32(ea_bytes))
-		ea &^= cli.ea_mask
-		if ea == 0 || ea == bcast {
-			continue // zero address or broadcast address, try another
-		}
-		ea |= cli.ea_ip
-		_, ok := allocated[ea]
-		if ok {
-			continue // already allocated
-		}
-		allocated[ea] = true
+			creep[2] %= 256 - SECOND_BYTE
+			creep[2] += SECOND_BYTE
+			ea = IP32(be.Uint32(creep))
 
-		random_mapper_ea <- ea
+			ea &^= cli.ea_mask
+			if ea == 0 || ea == bcast {
+				continue // zero address or broadcast address, try another
+			}
+			ea |= cli.ea_ip
+			_, ok := allocated[ea]
+			if ok {
+				continue // already allocated
+			}
+			allocated[ea] = true
+			break
+		}
+		random_dns_ea <- ea
 	}
 }
 

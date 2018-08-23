@@ -392,6 +392,10 @@ func insert_ipref_option(pb *PktBuf) int {
 	}
 
 	iprefsrc := map_gw.get_src_ipref(src)
+	if iprefsrc.ip == 0 {
+		log.err("inserting opt: unknown src address: %v %v , dropping", src, dst)
+		return DROP // couldn't get src ipref for some reason
+	}
 
 	// get soft state
 
@@ -527,7 +531,7 @@ func remove_ipref_option(pb *PktBuf) int {
 	}
 
 	src_ea := map_tun.get_src_ea(src, sref)
-	if src == 0 {
+	if src_ea == 0 {
 		log.err("removing opt:  unknown src ipref address  %v + %v  %v + %v, dropping",
 			src, &sref, dst, &dref)
 		return DROP // couldn't assign ea for some reason
