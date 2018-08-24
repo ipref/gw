@@ -3,6 +3,11 @@
 package main
 
 import (
+	"bufio"
+	"crypto/rand"
+	"net"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -61,9 +66,55 @@ func tun_sender() {
 
 func tun_receiver() {
 
-	// Send some packets
+	// Read /etc/hosts file to get some addresses
 
-	for ii := 0; ii < 7; ii++ {
+	us := make([]IP32, 0, 256)
+	them := make([]IP32, 0, 256)
+
+	fd, err := os.Open(cli.hosts_path)
+	if err != nil {
+		log.fatal("tun in:  cannot read %v file", cli.hosts_path)
+	}
+
+	fs := bufio.NewScanner(fd)
+	for fs.Scan() {
+		toks := strings.Fields(fs.Text())
+		if len(toks) == 0 || toks[0][0] == '#' {
+			continue
+		}
+
+		addr := net.ParseIP(toks[0])
+		if addr == nil {
+			continue
+		}
+		addr = addr.To4()
+
+		if addr[0] == 10 {
+			them = append(them, IP32(be.Uint32(addr)))
+		} else {
+			us = append(us, IP32(be.Uint32(addr)))
+		}
+
+	}
+	fd.Close()
+
+	log.debug("tun in:  ip addresses read:")
+	log.debug("tun in:      us %3d", len(us))
+	log.debug("tun in:    them %3d", len(them))
+
+	if len(us) == 0 || len(them) == 0 {
+		log.fatal("tun in:  not enough addresses read")
+	}
+
+	num_pkts := len(them)/20 + 1
+
+	log.debug("tun in:  sending %v packets", num_pkts)
+
+	creep := make([]byte, 4)
+
+	// Send packet from random sources to random destinations
+
+	for ii := 0; ii < num_pkts; ii++ {
 
 		time.Sleep(174879 * time.Microsecond)
 
@@ -85,6 +136,18 @@ func tun_receiver() {
 		}
 
 		pb.data += TUN_HDR_LEN
+
+		// put random src and dst addresses
+
+		_, err = rand.Read(creep)
+		if err != nil {
+			continue // cannot get random number
+		}
+
+		srcix := int(be.Uint16(creep[0:2])) % len(us)
+		dstix := int(be.Uint16(creep[2:4])) % len(them)
+		be.PutUint32(pb.pkt[pb.data+IP_SRC:pb.data+IP_SRC+4], uint32(us[srcix]))
+		be.PutUint32(pb.pkt[pb.data+IP_DST:pb.data+IP_DST+4], uint32(them[dstix]))
 
 		if cli.debug["tun"] || cli.debug["all"] {
 			log.debug("tun in:  %v", pb.pp_pkt())
