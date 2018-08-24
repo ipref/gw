@@ -3,7 +3,7 @@
 package main
 
 const (
-	MAXBUF = 10
+	MAXBUF = 20
 )
 
 const ( // v1 constants

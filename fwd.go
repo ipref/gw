@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 )
 
 /* Packet flow
@@ -304,7 +305,7 @@ func (pb *PktBuf) fill_iphdr() {
 	pkt[IP_PROTO] = 0
 	be.PutUint16(pkt[IP_CSUM:IP_CSUM+2], 0x0000)          // hdr csum
 	copy(pkt[IP_SRC:IP_SRC+4], []byte{192, 168, 73, 127}) // src taro-7
-	copy(pkt[IP_DST:IP_DST+4], []byte{10, 254, 22, 202})  // dst tikopia-8
+	copy(pkt[IP_DST:IP_DST+4], []byte{10, 248, 22, 202})  // dst tikopia-8
 }
 
 func (pb *PktBuf) fill_udphdr() {
@@ -337,6 +338,11 @@ func (pb *PktBuf) fill_payload() {
 	if len(pb.pkt[pb.iphdr:]) < pb.len() {
 		log.fatal("fill payload: not enough space for payload")
 	}
+
+	stamp := uint64(time.Now().UnixNano())
+	be.PutUint64(pb.pkt[beg:beg+8], stamp)
+
+	beg += 8
 
 	for ii := beg; ii < pb.tail; ii++ {
 		pb.pkt[ii] = bb
