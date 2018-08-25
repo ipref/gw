@@ -25,11 +25,6 @@ const (
 	MAXTRIES    = 10  // num of tries to get unique random value before giving up
 )
 
-const (
-	MAPPER_TMOUT   = 1800                          // [s] mapper record timeout
-	MAPPER_REFRESH = MAPPER_TMOUT - MAPPER_TMOUT/4 // [s] when to refresh
-)
-
 type Owners struct {
 	oids []string
 	mtx  sync.Mutex
