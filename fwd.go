@@ -629,6 +629,8 @@ func fwd_to_gw() {
 				verdict = map_gw.set_new_mark(pb)
 			case V1_SET_SOFT:
 				verdict = map_gw.update_soft(pb)
+			case V1_PURGE_EXPIRED:
+				verdict = map_gw.timer(pb)
 			default:
 				log.err("fwd_to_gw: unknown address records command: %v, ignoring", pb.pkt[pb.v1hdr+V1_CMD])
 			}
@@ -674,6 +676,8 @@ func fwd_to_tun() {
 				verdict = map_tun.set_new_address_records(pb)
 			case V1_SET_MARK:
 				verdict = map_tun.set_new_mark(pb)
+			case V1_PURGE_EXPIRED:
+				verdict = map_tun.timer(pb)
 			default:
 				log.err("fwd_to_tun: unknown address records command: %v, ignoring", pb.pkt[pb.v1hdr+V1_CMD])
 			}

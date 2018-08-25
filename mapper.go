@@ -185,6 +185,7 @@ type MapGw struct {
 	oid         uint32   // must be the same for both mgw and mtun
 	cur_mark    []uint32 // current mark per oid
 	soft        map[IP32]SoftRec
+	purge_mark  uint32 // mark for the current purge run
 }
 
 func (mgw *MapGw) init(oid uint32) {
@@ -195,6 +196,7 @@ func (mgw *MapGw) init(oid uint32) {
 	mgw.oid = oid
 	mgw.cur_mark = make([]uint32, 2)
 	mgw.soft = make(map[IP32]SoftRec)
+	mgw.purge_mark = 0
 }
 
 func (mgw *MapGw) set_cur_mark(oid, mark uint32) {
@@ -399,17 +401,28 @@ func (mgw *MapGw) update_soft(pb *PktBuf) int {
 }
 
 func (mgw *MapGw) timer(pb *PktBuf) int {
+
+	mark := be.Uint32(pb.pkt[pb.v1hdr+V1_MARK : pb.v1hdr+V1_MARK+4])
+
+	log.debug("mgw: purge expired: %v", mark)
+
+	if mark == mgw.purge_mark {
+		mgw_timer_done <- true
+	} else {
+		mgw.purge_mark = mark
+	}
 	return DROP
 }
 
 // -- MapTun -------------------------------------------------------------------
 
 type MapTun struct {
-	our_ip   *b.Tree  // map[uint32]map[Ref]IpRec		our_gw   -> our_ref   -> our_ip
-	our_ea   *b.Tree  // map[uint32]map[Ref]IpRec		their_gw -> their_ref -> our_ea
-	oid      uint32   // must be the same for both mgw and mtun
-	cur_mark []uint32 // current mark per oid
-	soft     map[IP32]SoftRec
+	our_ip     *b.Tree  // map[uint32]map[Ref]IpRec		our_gw   -> our_ref   -> our_ip
+	our_ea     *b.Tree  // map[uint32]map[Ref]IpRec		their_gw -> their_ref -> our_ea
+	oid        uint32   // must be the same for both mgw and mtun
+	cur_mark   []uint32 // current mark per oid
+	soft       map[IP32]SoftRec
+	purge_mark uint32 // mark for the current purge run
 }
 
 func (mtun *MapTun) init(oid uint32) {
@@ -419,6 +432,7 @@ func (mtun *MapTun) init(oid uint32) {
 	mtun.oid = oid
 	mtun.cur_mark = make([]uint32, 2)
 	mtun.soft = make(map[IP32]SoftRec)
+	mtun.purge_mark = 0
 }
 
 func (mtun *MapTun) set_cur_mark(oid, mark uint32) {
@@ -561,6 +575,20 @@ func (mtun *MapTun) set_new_mark(pb *PktBuf) int {
 	log.debug("mtun: set mark %v(%v): %v", owners.name(oid), oid, mark)
 	mtun.set_cur_mark(oid, mark)
 
+	return DROP
+}
+
+func (mtun *MapTun) timer(pb *PktBuf) int {
+
+	mark := be.Uint32(pb.pkt[pb.v1hdr+V1_MARK : pb.v1hdr+V1_MARK+4])
+
+	log.debug("mtun: purge expired: %v", mark)
+
+	if mark == mtun.purge_mark {
+		mtun_timer_done <- true
+	} else {
+		mtun.purge_mark = mark
+	}
 	return DROP
 }
 

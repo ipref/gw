@@ -4,6 +4,7 @@ package main
 
 import (
 	"crypto/rand"
+	prng "math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -78,7 +79,18 @@ type Mark struct {
 
 func (m *Mark) init() {
 
-	m.base = time.Now().Add(-time.Second) // make sure marker.now() is always > 0
+	// init prng for non-critical random number use
+
+	creep := make([]byte, 4)
+	_, err := rand.Read(creep)
+	if err != nil {
+		log.fatal("tmr: cannot seed pseudo random number generator")
+	}
+	prng.Seed(int64(be.Uint32(creep)))
+
+	// init marker making sure it's always > 0
+
+	m.base = time.Now().Add(-time.Second)
 }
 
 func (m *Mark) now() uint32 {
@@ -250,11 +262,76 @@ func gen_mapper_eas() {
 	}
 }
 
+// -- timer --------------------------------------------------------------------
+
+const (
+	TIMER_IVL      = 16789 // [ms] avg 17.961 [s]
+	TIMER_FUZZ     = 2345  // [ms]
+	FWD_TIMER_IVL  = 1234  // [ms] avg  1.851 [s]
+	FWD_TIMER_FUZZ = 1234  // [ms]
+)
+
+var mgw_timer_done chan bool
+var mtun_timer_done chan bool
+var timer_wg sync.WaitGroup
+
+func get_timer_packet(mark uint32) *PktBuf {
+
+	pb := <-getbuf
+
+	pb.set_v1hdr()
+	pb.write_v1_header(V1_SIG, V1_PURGE_EXPIRED, 0, mark)
+
+	pb.tail = pb.v1hdr + V1_HDR_LEN
+
+	return pb
+}
+
+func mgw_timer(mark uint32) {
+
+	for {
+		select {
+		case _ = <-mgw_timer_done:
+			timer_wg.Done()
+			return
+		default:
+			pb := get_timer_packet(mark)
+			recv_tun <- pb
+			time.Sleep(time.Duration(FWD_TIMER_IVL+prng.Intn(FWD_TIMER_FUZZ)) * time.Millisecond)
+		}
+	}
+}
+
+func mtun_timer(mark uint32) {
+
+	for {
+		select {
+		case _ = <-mtun_timer_done:
+			timer_wg.Done()
+			return
+		default:
+			pb := get_timer_packet(mark)
+			recv_gw <- pb
+			time.Sleep(time.Duration(FWD_TIMER_IVL+prng.Intn(FWD_TIMER_FUZZ)) * time.Millisecond)
+		}
+	}
+}
+
 func timer() {
 
-	ticker := time.Tick(MAPPER_TICK * time.Millisecond)
+	mgw_timer_done = make(chan bool)
+	mtun_timer_done = make(chan bool)
 
-	for _ = range ticker {
-		// nothing for now
+	for {
+		time.Sleep(time.Duration(TIMER_IVL+prng.Intn(TIMER_FUZZ)) * time.Millisecond)
+
+		mark := marker.now()
+
+		log.debug("tmr: starting purge run, mark: %v", mark)
+		timer_wg.Add(2)
+		go mgw_timer(mark)
+		go mtun_timer(mark)
+		timer_wg.Wait()
+		log.debug("tmr: finished purge run, mark: %v", mark)
 	}
 }
