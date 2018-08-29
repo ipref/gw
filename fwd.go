@@ -124,8 +124,8 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 			ss += fmt.Sprintf(" SET_MARK(%v)", cmd)
 		case V1_SET_SOFT:
 			ss += fmt.Sprintf(" SET_SOFT(%v)", cmd)
-		case V1_PURGE_EXPIRED:
-			ss += fmt.Sprintf(" PURGE_EXPIRED(%v)", cmd)
+		case V1_PURGE:
+			ss += fmt.Sprintf(" PURGE(%v)", cmd)
 		default:
 			ss += fmt.Sprintf(" cmd(%v)", cmd)
 		}
@@ -565,6 +565,9 @@ func remove_ipref_option(pb *PktBuf) int {
 		soft.hops = pkt[encap+ENCAP_TTL]
 		soft.port = be.Uint16(pkt[udp+UDP_SPORT : udp+UDP_SPORT+2])
 
+		log.debug("mtun: update soft %v:%v mtu(%v) ttl/hops %v/%v", soft.gw, soft.port,
+			soft.mtu, soft.ttl, soft.hops)
+
 		map_tun.soft[src] = soft
 
 		// tel mgw about new or changed soft record
@@ -629,7 +632,7 @@ func fwd_to_gw() {
 				verdict = map_gw.set_new_mark(pb)
 			case V1_SET_SOFT:
 				verdict = map_gw.update_soft(pb)
-			case V1_PURGE_EXPIRED:
+			case V1_PURGE:
 				verdict = map_gw.timer(pb)
 			default:
 				log.err("fwd_to_gw: unknown address records command: %v, ignoring", pb.pkt[pb.v1hdr+V1_CMD])
@@ -676,7 +679,7 @@ func fwd_to_tun() {
 				verdict = map_tun.set_new_address_records(pb)
 			case V1_SET_MARK:
 				verdict = map_tun.set_new_mark(pb)
-			case V1_PURGE_EXPIRED:
+			case V1_PURGE:
 				verdict = map_tun.timer(pb)
 			default:
 				log.err("fwd_to_tun: unknown address records command: %v, ignoring", pb.pkt[pb.v1hdr+V1_CMD])

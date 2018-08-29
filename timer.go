@@ -53,7 +53,7 @@ func get_timer_packet(mark uint32) *PktBuf {
 	pb := <-getbuf
 
 	pb.set_v1hdr()
-	pb.write_v1_header(V1_SIG, V1_PURGE_EXPIRED, 0, mark)
+	pb.write_v1_header(V1_SIG, V1_PURGE, 0, mark)
 
 	pb.tail = pb.v1hdr + V1_HDR_LEN
 

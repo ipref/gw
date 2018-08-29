@@ -50,7 +50,7 @@ const ( // v1 commands
 	V1_SET_AREC = iota + 1
 	V1_SET_MARK
 	V1_SET_SOFT
-	V1_PURGE_EXPIRED
+	V1_PURGE
 )
 
 const ( // packet handling verdicts
