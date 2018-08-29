@@ -173,6 +173,29 @@ func addr_cmp(a, b interface{}) int {
 	}
 }
 
+// send soft record to the fwd_to_gw forwarder
+func send_soft_rec(soft SoftRec) {
+
+	pb := <-getbuf
+
+	pb.set_v1hdr()
+	pb.write_v1_header(V1_SIG, V1_SET_SOFT, 0, 0)
+
+	pkt := pb.pkt[pb.v1hdr:]
+	off := V1_HDR_LEN
+
+	be.PutUint32(pkt[off+V1_SOFT_GW:off+V1_SOFT_GW+4], uint32(soft.gw))
+	be.PutUint16(pkt[off+V1_SOFT_MTU:off+V1_SOFT_MTU+2], soft.mtu)
+	be.PutUint16(pkt[off+V1_SOFT_PORT:off+V1_SOFT_PORT+2], soft.port)
+	pkt[off+V1_SOFT_TTL] = soft.ttl
+	pkt[off+V1_SOFT_HOPS] = soft.hops
+	be.PutUint16(pkt[off+V1_SOFT_RSVD:off+V1_SOFT_RSVD+2], 0)
+
+	pb.tail = pb.v1hdr + V1_HDR_LEN + V1_SOFT_LEN
+
+	recv_tun <- pb
+}
+
 // -- mapper variables ---------------------------------------------------------
 
 const (
@@ -434,13 +457,13 @@ func (mgw *MapGw) timer(pb *PktBuf) int {
 	switch mgw.purge.state {
 	case MGW_PURGE_START:
 
-		log.debug("mgw: purge START mark(%v)", mark)
+		//log.debug("mgw: purge START mark(%v)", mark)
 		mgw.purge.state = MGW_PURGE_THEIR_IPREF_SEEK
 		fallthrough
 
 	case MGW_PURGE_THEIR_IPREF_SEEK:
 
-		log.debug("mgw: purge THEIR_IPREF_SEEK mark(%v)", mark)
+		//log.debug("mgw: purge THEIR_IPREF_SEEK mark(%v)", mark)
 		mgw.purge.btree_enu, err = mgw.their_ipref.SeekFirst()
 		if err != nil {
 			log.err("mgw: cannot get enumerator for their_ipref")
@@ -452,7 +475,7 @@ func (mgw *MapGw) timer(pb *PktBuf) int {
 
 	case MGW_PURGE_THEIR_IPREF:
 
-		log.debug("mgw: purge THEIR_IPREF mark(%v)", mark)
+		//log.debug("mgw: purge THEIR_IPREF mark(%v)", mark)
 		num := mgw.their_ipref.Len() / ((MAPPER_TMOUT * 1000) / (FWD_TIMER_IVL + FWD_TIMER_FUZZ/2))
 		if num < MAPPER_PURGE_MIN {
 			num = MAPPER_PURGE_MIN
@@ -489,7 +512,7 @@ func (mgw *MapGw) timer(pb *PktBuf) int {
 
 	case MGW_PURGE_OUR_IPREF_SEEK:
 
-		log.debug("mgw: purge OUR_IPREF_SEEK mark(%v)", mark)
+		//log.debug("mgw: purge OUR_IPREF_SEEK mark(%v)", mark)
 		mgw.purge.btree_enu, err = mgw.our_ipref.SeekFirst()
 		if err != nil {
 			log.err("mgw: cannot get enumerator for our_ipref")
@@ -501,7 +524,7 @@ func (mgw *MapGw) timer(pb *PktBuf) int {
 
 	case MGW_PURGE_OUR_IPREF:
 
-		log.debug("mgw: purge OUR_IPREF mark(%v)", mark)
+		//log.debug("mgw: purge OUR_IPREF mark(%v)", mark)
 		num := mgw.our_ipref.Len() / ((MAPPER_TMOUT * 1000) / (FWD_TIMER_IVL + FWD_TIMER_FUZZ/2))
 		if num < MAPPER_PURGE_MIN {
 			num = MAPPER_PURGE_MIN
@@ -538,7 +561,7 @@ func (mgw *MapGw) timer(pb *PktBuf) int {
 
 	case MGW_PURGE_STOP:
 
-		log.debug("mgw: purge STOP mark(%v)", mark)
+		//log.debug("mgw: purge STOP mark(%v)", mark)
 		mgw_timer_done <- true
 		mgw.purge.state = MGW_PURGE_START
 		return DROP
@@ -596,6 +619,16 @@ func (mtun *MapTun) set_cur_mark(oid, mark uint32) {
 		mtun.cur_mark = append(mtun.cur_mark, make([]uint32, oid-uint32(len(mtun.cur_mark))+1)...)
 	}
 	mtun.cur_mark[oid] = mark
+}
+
+func (mtun *MapTun) set_soft(src IP32, soft SoftRec) {
+
+	log.debug("mtun: set soft %v:%v mtu(%v) ttl/hops %v/%v", soft.gw, soft.port,
+		soft.mtu, soft.ttl, soft.hops)
+
+	mtun.soft[src] = soft
+
+	send_soft_rec(soft) // tel mgw about new or changed soft record
 }
 
 func (mtun *MapTun) get_dst_ip(gw IP32, ref Ref) IP32 {
@@ -750,13 +783,13 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 		switch mtun.purge.state {
 		case MTUN_PURGE_START:
 
-			log.debug("mtun: purge START mark(%v)", mark)
+			//log.debug("mtun: purge START mark(%v)", mark)
 			mtun.purge.state = MTUN_PURGE_OUR_IP_SEEK
 			fallthrough
 
 		case MTUN_PURGE_OUR_IP_SEEK:
 
-			log.debug("mtun: purge OUR_IP_SEEK mark(%v)", mark)
+			//log.debug("mtun: purge OUR_IP_SEEK mark(%v)", mark)
 			mtun.purge.btree_enu, err = mtun.our_ip.SeekFirst()
 			if err != nil {
 				log.err("mtun: cannot get enumerator for our_ip")
@@ -768,7 +801,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 		case MTUN_PURGE_OUR_IP:
 
-			log.debug("mtun: purge OUR_IP mark(%v)", mark)
+			//log.debug("mtun: purge OUR_IP mark(%v)", mark)
 
 			key, val, err = mtun.purge.btree_enu.Next()
 			if err != nil {
@@ -783,7 +816,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 			mtun.purge.sbtree = val.(*b.Tree)
 			if mtun.purge.sbtree.Len() == 0 {
-				log.debug("mtun: purge OUR_IP empty subtree for ge %v", key.(IP32))
+				log.debug("mtun: purge OUR_IP empty subtree for gw %v, removing gw", key.(IP32))
 				mtun.our_ip.Delete(key)
 				continue
 			}
@@ -792,7 +825,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 		case MTUN_PURGE_OUR_IP_SUB_SEEK:
 
-			log.debug("mtun: purge OUR_IP_SUB_SEEK mark(%v)", mark)
+			//log.debug("mtun: purge OUR_IP_SUB_SEEK mark(%v)", mark)
 
 			mtun.purge.sbtree_enu, err = mtun.purge.sbtree.SeekFirst()
 			if err != nil {
@@ -805,7 +838,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 		case MTUN_PURGE_OUR_IP_SUB:
 
-			log.debug("mtun: purge OUR_IP_SUB mark(%v)", mark)
+			//log.debug("mtun: purge OUR_IP_SUB mark(%v)", mark)
 
 			key, val, err = mtun.purge.sbtree_enu.Next()
 			if err != nil {
@@ -819,12 +852,13 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 			}
 
 			oid = val.(IpRec).oid
+			rec := val.(IpRec)
 			if int(oid) >= len(mtun.cur_mark) {
-				log.err("mtun: invalid oid(%v) in our_ip, deleting record", oid)
+				log.err("mtun: invalid oid(%v) in our_ip, removing  %v %v(%v) %v",
+					oid, rec.ip, "invalid", oid, rec.mark)
 				mtun.purge.sbtree.Delete(key)
 			} else if val.(IpRec).mark < mtun.cur_mark[oid] {
 				if cli.debug["mapper"] || cli.debug["all"] {
-					rec := val.(IpRec)
 					log.debug("mtun: purge OUR_IP_SUB mark(%v), removing %v %v(%v) %v",
 						mark, rec.ip, owners.name(oid), oid, rec.mark)
 				}
@@ -835,7 +869,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 		case MTUN_PURGE_OUR_EA_SEEK:
 
-			log.debug("mtun: purge OUR_EA_SEEK mark(%v)", mark)
+			//log.debug("mtun: purge OUR_EA_SEEK mark(%v)", mark)
 			mtun.purge.btree_enu, err = mtun.our_ea.SeekFirst()
 			if err != nil {
 				log.err("mtun: cannot get enumerator for our_ea")
@@ -847,7 +881,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 		case MTUN_PURGE_OUR_EA:
 
-			log.debug("mtun: purge OUR_EA mark(%v)", mark)
+			//log.debug("mtun: purge OUR_EA mark(%v)", mark)
 
 			key, val, err = mtun.purge.btree_enu.Next()
 			if err != nil {
@@ -862,7 +896,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 			mtun.purge.sbtree = val.(*b.Tree)
 			if mtun.purge.sbtree.Len() == 0 {
-				log.debug("mtun: purge OUR_EA empty subtree for ge %v", key.(IP32))
+				log.debug("mtun: purge OUR_EA empty subtree for gw %v, removing gw and its soft record", key.(IP32))
 				gw := key.(IP32)
 				// remove soft
 				delete(mtun.soft, gw)
@@ -877,7 +911,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 		case MTUN_PURGE_OUR_EA_SUB_SEEK:
 
-			log.debug("mtun: purge OUR_EA_SUB_SEEK mark(%v)", mark)
+			//log.debug("mtun: purge OUR_EA_SUB_SEEK mark(%v)", mark)
 
 			mtun.purge.sbtree_enu, err = mtun.purge.sbtree.SeekFirst()
 			if err != nil {
@@ -890,7 +924,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 		case MTUN_PURGE_OUR_EA_SUB:
 
-			log.debug("mtun: purge OUR_EA_SUB mark(%v)", mark)
+			//log.debug("mtun: purge OUR_EA_SUB mark(%v)", mark)
 
 			key, val, err = mtun.purge.sbtree_enu.Next()
 			if err != nil {
@@ -904,12 +938,13 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 			}
 
 			oid = val.(IpRec).oid
+			rec := val.(IpRec)
 			if int(oid) >= len(mtun.cur_mark) {
-				log.err("mtun: invalid oid(%v) in our_ea, deleting record", oid)
+				log.err("mtun: invalid oid(%v) in our_ea, removing %v %v(%v) %v",
+					oid, rec.ip, "invalid", oid, rec.mark)
 				mtun.purge.sbtree.Delete(key)
 			} else if val.(IpRec).mark < mtun.cur_mark[oid] {
 				if cli.debug["mapper"] || cli.debug["all"] {
-					rec := val.(IpRec)
 					log.debug("mtun: purge OUR_EA_SUB mark(%v), removing %v %v(%v) %v",
 						mark, rec.ip, owners.name(oid), oid, rec.mark)
 				}
@@ -920,7 +955,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 		case MTUN_PURGE_STOP:
 
-			log.debug("mtun: purge STOP mark(%v)", mark)
+			//log.debug("mtun: purge STOP mark(%v)", mark)
 			mtun_timer_done <- true
 			mtun.purge.state = MTUN_PURGE_START
 			return DROP

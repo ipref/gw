@@ -472,29 +472,6 @@ func insert_ipref_option(pb *PktBuf) int {
 	return ACCEPT
 }
 
-// send soft record to the fwd_to_gw forwarder
-func send_soft_rec(soft SoftRec) {
-
-	pb := <-getbuf
-
-	pb.set_v1hdr()
-	pb.write_v1_header(V1_SIG, V1_SET_SOFT, 0, 0)
-
-	pkt := pb.pkt[pb.v1hdr:]
-	off := V1_HDR_LEN
-
-	be.PutUint32(pkt[off+V1_SOFT_GW:off+V1_SOFT_GW+4], uint32(soft.gw))
-	be.PutUint16(pkt[off+V1_SOFT_MTU:off+V1_SOFT_MTU+2], soft.mtu)
-	be.PutUint16(pkt[off+V1_SOFT_PORT:off+V1_SOFT_PORT+2], soft.port)
-	pkt[off+V1_SOFT_TTL] = soft.ttl
-	pkt[off+V1_SOFT_HOPS] = soft.hops
-	be.PutUint16(pkt[off+V1_SOFT_RSVD:off+V1_SOFT_RSVD+2], 0)
-
-	pb.tail = pb.v1hdr + V1_HDR_LEN + V1_SOFT_LEN
-
-	recv_tun <- pb
-}
-
 func remove_ipref_option(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
@@ -552,7 +529,7 @@ func remove_ipref_option(pb *PktBuf) int {
 	}
 
 	if soft.gw != src {
-		log.err("removing opt:  soft record gw %v does match src %v, resetting", soft.gw, src)
+		log.err("removing opt:  soft record gw %v does not match src %v, resetting", soft.gw, src)
 		soft.init(src)
 		soft.port = 0 // force change
 	}
@@ -565,14 +542,7 @@ func remove_ipref_option(pb *PktBuf) int {
 		soft.hops = pkt[encap+ENCAP_TTL]
 		soft.port = be.Uint16(pkt[udp+UDP_SPORT : udp+UDP_SPORT+2])
 
-		log.debug("mtun: update soft %v:%v mtu(%v) ttl/hops %v/%v", soft.gw, soft.port,
-			soft.mtu, soft.ttl, soft.hops)
-
-		map_tun.soft[src] = soft
-
-		// tel mgw about new or changed soft record
-
-		send_soft_rec(soft)
+		map_tun.set_soft(src, soft)
 	}
 
 	// strip option
