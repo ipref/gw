@@ -4,7 +4,7 @@ package main
 
 import (
 	"crypto/rand"
-	prng "math/rand" // we don't need crypto rng for timer delays
+	prng "math/rand" // we don't need crypto rng for time delays
 	"sync"
 	"time"
 )
@@ -48,12 +48,12 @@ var mgw_timer_done chan bool
 var mtun_timer_done chan bool
 var timer_wg sync.WaitGroup
 
-func get_timer_packet(mark uint32) *PktBuf {
+func get_timer_packet(cmd byte, mark uint32) *PktBuf {
 
 	pb := <-getbuf
 
 	pb.set_v1hdr()
-	pb.write_v1_header(V1_SIG, V1_PURGE, 0, mark)
+	pb.write_v1_header(V1_SIG, cmd, 0, mark)
 
 	pb.tail = pb.v1hdr + V1_HDR_LEN
 
@@ -62,13 +62,20 @@ func get_timer_packet(mark uint32) *PktBuf {
 
 func mgw_timer(mark uint32) {
 
+	// set time mark...
+
+	pb := get_timer_packet(V1_SET_MARK, mark)
+	recv_tun <- pb
+
+	// ...then purge expired records
+
 	for {
 		select {
 		case _ = <-mgw_timer_done:
 			timer_wg.Done()
 			return
 		default:
-			pb := get_timer_packet(mark)
+			pb := get_timer_packet(V1_PURGE, 0)
 			recv_tun <- pb
 			time.Sleep(time.Duration(FWD_TIMER_IVL+prng.Intn(FWD_TIMER_FUZZ)) * time.Millisecond)
 		}
@@ -77,13 +84,20 @@ func mgw_timer(mark uint32) {
 
 func mtun_timer(mark uint32) {
 
+	// set time mark...
+
+	pb := get_timer_packet(V1_SET_MARK, mark)
+	recv_gw <- pb
+
+	// ...then purge expired records
+
 	for {
 		select {
 		case _ = <-mtun_timer_done:
 			timer_wg.Done()
 			return
 		default:
-			pb := get_timer_packet(mark)
+			pb := get_timer_packet(V1_PURGE, 0)
 			recv_gw <- pb
 			time.Sleep(time.Duration(FWD_TIMER_IVL+prng.Intn(FWD_TIMER_FUZZ)) * time.Millisecond)
 		}
@@ -98,7 +112,7 @@ func timer() {
 	for {
 		time.Sleep(time.Duration(TIMER_IVL+prng.Intn(TIMER_FUZZ)) * time.Millisecond)
 
-		mark := marker.now()
+		mark := marker.now() // the same mark for both timers
 
 		log.debug("tmr: starting purge run, mark: %v", mark)
 		timer_wg.Add(2)
