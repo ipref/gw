@@ -196,7 +196,50 @@ func send_soft_rec(soft SoftRec) {
 	recv_tun <- pb
 }
 
+// send an address record
+func send_arec(mm *Map, ea, ip, gw IP32, ref Ref, -> pktq chan *PktBuf) {
+
+	pb := <-getbuf
+
+	if len(pb.pkt)-pb.data < V1_HDR_LEN+4+V1_AREC_LEN {
+		log.fatal("%v: not enough space for an address record", mm.pfx()) // paranoia
+	}
+
+	oid := mm.get_oid()
+	mark := mm.get_cur_mark(oid) + MAPPER_TMOUT
+
+	pb.set_v1hdr()
+	pb.write_v1_header(V1_SIG, V1_SET_AREC, oid, mark)
+
+	pkt := pb.pkt[pb.v1hdr:]
+	pkt[V1_VER] = 0
+	pkt[V1_CMD] = V1_SET_AREC
+	off := V1_HDR_LEN
+
+	pkt[off+V1_AREC_HDR_RSVD] = 0
+	pkt[off+V1_AREC_HDR_ITEM_TYPE] = V1_AREC
+	be.PutUint16(pkt[off+V1_AREC_HDR_NUM_ITEMS:off+V1_AREC_HDR_NUM_ITEMS+2], 1)
+	off += V1_AREC_HDR_LEN
+
+	be.PutUint32(pkt[off+V1_EA:off+V1_EA+4], uint32(ea))
+	be.PutUint32(pkt[off+V1_IP:off+V1_IP+4], uint32(ip))
+	be.PutUint32(pkt[off+V1_GW:off+V1_GW+4], uint32(gw))
+	be.PutUint64(pkt[off+V1_REFH:off+V1_REFH+8], ref.h)
+	be.PutUint64(pkt[off+V1_REFL:off+V1_REFL+8], ref.l)
+	off += V1_AREC_LEN
+
+	pb.tail = off
+
+	<-pktq
+}
+
 // -- mapper variables ---------------------------------------------------------
+
+type Map interface {
+	get_pfx() string
+	get_oid() uint32
+	get_cur_mark(uint32) uint32
+}
 
 const (
 	MAPPER_TMOUT     = 1800                          // [s] mapper record timeout
@@ -224,6 +267,7 @@ type MapGw struct {
 	oid         uint32   // must be the same for both mgw and mtun
 	cur_mark    []uint32 // current mark per oid
 	soft        map[IP32]SoftRec
+	pfx         string // prefix for printing messages
 	purge       struct {
 		state     int
 		btree_enu *b.Enumerator
@@ -232,13 +276,32 @@ type MapGw struct {
 
 func (mgw *MapGw) init(oid uint32) {
 
-	mgw.oid = owners.new_oid("mgw")
+	mgw.pfx = "mgw"
 	mgw.their_ipref = b.TreeNew(b.Cmp(addr_cmp))
 	mgw.our_ipref = b.TreeNew(b.Cmp(addr_cmp))
 	mgw.oid = oid
 	mgw.cur_mark = make([]uint32, 2)
 	mgw.soft = make(map[IP32]SoftRec)
 	mgw.purge.state = MGW_PURGE_START
+}
+
+func (mgw *MapGw) get_pfx() string {
+	return mgw.pfx
+}
+
+func (mgw *MapGw) get_oid() uint32 {
+	return mgw.oid
+}
+
+// return current mark for a given oid
+func (mgw *MapGw) get_cur_mark(oid uint32) uint32 {
+
+	if oid < len(mgw.cur_mark) {
+		if mark, ok := mgw.cur_mark[oid]; ok {
+			return mark
+		}
+	}
+	return 0
 }
 
 func (mgw *MapGw) set_cur_mark(oid, mark uint32) {
@@ -298,35 +361,7 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 
 		// tell mtun about it
 
-		pb := <-getbuf
-
-		if len(pb.pkt)-pb.data < V1_HDR_LEN+4+V1_AREC_LEN {
-			log.fatal("mgw: not enough space for an address record") // paranoia
-		}
-
-		pb.set_v1hdr()
-		pb.write_v1_header(V1_SIG, V1_SET_AREC, mgw.oid, iprefrec.(IpRefRec).mark)
-
-		pkt := pb.pkt[pb.v1hdr:]
-		pkt[V1_VER] = 0
-		pkt[V1_CMD] = V1_SET_AREC
-		off := V1_HDR_LEN
-
-		pkt[off+V1_AREC_HDR_RSVD] = 0
-		pkt[off+V1_AREC_HDR_ITEM_TYPE] = V1_AREC
-		be.PutUint16(pkt[off+V1_AREC_HDR_NUM_ITEMS:off+V1_AREC_HDR_NUM_ITEMS+2], 1)
-		off += V1_AREC_HDR_LEN
-
-		be.PutUint32(pkt[off+V1_EA:off+V1_EA+4], 0)
-		be.PutUint32(pkt[off+V1_IP:off+V1_IP+4], uint32(src))
-		be.PutUint32(pkt[off+V1_GW:off+V1_GW+4], uint32(cli.gw_ip))
-		be.PutUint64(pkt[off+V1_REFH:off+V1_REFH+8], ref.h)
-		be.PutUint64(pkt[off+V1_REFL:off+V1_REFL+8], ref.l)
-		off += V1_AREC_LEN
-
-		pb.tail = off
-
-		<-recv_gw
+		send_arec(mgw, 0, src, cli.gw_ip, ref, recv_gw)
 	}
 	return iprefrec.(IpRefRec)
 
@@ -592,6 +627,7 @@ type MapTun struct {
 	oid      uint32   // must be the same for both mgw and mtun
 	cur_mark []uint32 // current mark per oid
 	soft     map[IP32]SoftRec
+	pfx      string
 	purge    struct {
 		state      int
 		btree_enu  *b.Enumerator // first level btree enumerator
@@ -602,6 +638,7 @@ type MapTun struct {
 
 func (mtun *MapTun) init(oid uint32) {
 
+	mtun.pfx = "mtun"
 	mtun.our_ip = b.TreeNew(b.Cmp(addr_cmp))
 	mtun.our_ea = b.TreeNew(b.Cmp(addr_cmp))
 	mtun.oid = oid
@@ -610,6 +647,24 @@ func (mtun *MapTun) init(oid uint32) {
 	mtun.purge.state = MTUN_PURGE_START
 }
 
+func (mtun *MapTun) get_pfx() string {
+	return mtun.pfx
+}
+
+func (mtun *MapTun) get_oid() uint32 {
+	return mtun.oid
+}
+
+// return current mark for a given oid
+func (mtun *MapTun) get_cur_mark(oid uint32) uint32 {
+
+	if oid < len(mtun.cur_mark) {
+		if mark, ok := mtun.cur_mark[oid]; ok {
+			return mark
+		}
+	}
+	return 0
+}
 func (mtun *MapTun) set_cur_mark(oid, mark uint32) {
 
 	if oid == 0 || mark == 0 {
@@ -898,11 +953,9 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 			if mtun.purge.sbtree.Len() == 0 {
 				log.debug("mtun: purge OUR_EA empty subtree for gw %v, removing gw and its soft record", key.(IP32))
 				gw := key.(IP32)
-				// remove soft
+				// remove soft, tell mgw about it, then remove the key as the last step
 				delete(mtun.soft, gw)
-				// tell mgw about it
-				send_soft_rec(SoftRec{gw, 0, 0, 0, 0}) // port == 0 means delete record
-				// remove from tree as the last step
+				send_soft_rec(SoftRec{gw, 0, 0, 0, 0}) // port == 0 means remove record
 				mtun.our_ea.Delete(key)
 				continue
 			}
