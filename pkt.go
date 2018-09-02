@@ -111,9 +111,9 @@ const (
 )
 
 type IcmpReq struct { // params for icmp requests
-	thype byte // we want 'type' but it's a reserved keyword
-	code  byte
-	mtu   uint16
+	typ  byte // we want 'type' but it's a reserved keyword so we use Polish spelling
+	code byte
+	mtu  uint16
 }
 type PktBuf struct {
 	pkt   []byte

@@ -27,7 +27,7 @@ func icmp() {
 	for pb := range icmpreq {
 
 		log.info("icmp: received icmp request (%v %v %v), dropping for now",
-			pb.icmp.thype, pb.icmp.code, pb.icmp.mtu)
+			pb.icmp.typ, pb.icmp.code, pb.icmp.mtu)
 		retbuf <- pb
 	}
 }

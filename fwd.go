@@ -390,7 +390,7 @@ func insert_ipref_option(pb *PktBuf) int {
 
 	iprefdst := map_gw.get_dst_ipref(dst)
 	if iprefdst.ip == 0 {
-		pb.icmp.thype = ICMP_DEST_UNREACH
+		pb.icmp.typ = ICMP_DEST_UNREACH
 		pb.icmp.code = ICMP_NET_UNREACH
 		pb.icmp.mtu = 0
 		icmpreq <- pb
