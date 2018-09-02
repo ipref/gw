@@ -311,6 +311,9 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 	}
 	numkeys := len(keys)
 
+	log.info("dns watcher: sending hosts records to mapper: %v(%v) mark(%v), num(%v)",
+		owners.name(oid), oid, mark, numkeys)
+
 	for ix := 0; ix < numkeys; {
 
 		pb := <-getbuf
@@ -431,15 +434,16 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 
 			pbb.copy_from(pb)
 
-			log.info("dns watcher: sending hosts records to mapper: oid(%v) mark(%v), num(%v)",
-				oid, mark, numitems)
+			log.debug("dns watcher: sending packet with hosts records: %v(%v) mark(%v), num(%v)",
+				owners.name(oid), oid, mark, numitems)
 
 			recv_tun <- pb
 			recv_gw <- pbb
 
 		} else {
 
-			log.info("dns watcher: no valid hosts records to send to mapper: oid(%v)", oid)
+			log.info("dns watcher: no valid hosts records to send to mapper: %v(%v)",
+				owners.name(oid), oid)
 
 			retbuf <- pb
 			retbuf <- pbb

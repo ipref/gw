@@ -62,6 +62,8 @@ func get_timer_packet(cmd byte, mark M32) *PktBuf {
 
 func mgw_timer(mark M32) {
 
+	log.debug("mgw_tmr: starting purge run, mark: %v", mark)
+
 	// set time mark...
 
 	pb := get_timer_packet(V1_SET_MARK, mark)
@@ -72,6 +74,7 @@ func mgw_timer(mark M32) {
 	for {
 		select {
 		case _ = <-mgw_timer_done:
+			log.debug("mgw_tmr: finished purge run, mark: %v", mark)
 			timer_wg.Done()
 			return
 		default:
@@ -84,6 +87,8 @@ func mgw_timer(mark M32) {
 
 func mtun_timer(mark M32) {
 
+	log.debug("mtun_tmr: starting purge run, mark: %v", mark)
+
 	// set time mark...
 
 	pb := get_timer_packet(V1_SET_MARK, mark)
@@ -94,6 +99,7 @@ func mtun_timer(mark M32) {
 	for {
 		select {
 		case _ = <-mtun_timer_done:
+			log.debug("mtun_tmr: finished purge run, mark: %v", mark)
 			timer_wg.Done()
 			return
 		default:

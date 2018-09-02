@@ -499,6 +499,7 @@ func (mgw *MapGw) timer(pb *PktBuf) int {
 		switch mgw.purge.state {
 		case MGW_PURGE_START:
 
+			log.debug("mgw: purging %v records a time", num)
 			mgw.purge.state = MGW_PURGE_THEIR_IPREF_SEEK
 			fallthrough
 
@@ -853,8 +854,8 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 	var val interface{}
 	var err error
 
-	// no easy way to count number of records, we estimate instead as 4 x ea
-	num := mtun.our_ea.Len() * 4 / ((MAPPER_TMOUT * 1000) / (FWD_TIMER_IVL + FWD_TIMER_FUZZ/2))
+	// no easy way to count number of records, we estimate instead as 8 x ea
+	num := mtun.our_ea.Len() * 8 / ((MAPPER_TMOUT * 1000) / (FWD_TIMER_IVL + FWD_TIMER_FUZZ/2))
 	if num < MAPPER_PURGE_MIN {
 		num = MAPPER_PURGE_MIN
 	}
@@ -864,6 +865,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 		switch mtun.purge.state {
 		case MTUN_PURGE_START:
 
+			log.debug("mtun: purging %v records a time", num)
 			mtun.purge.state = MTUN_PURGE_OUR_IP_SEEK
 			fallthrough
 
