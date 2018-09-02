@@ -36,9 +36,9 @@ func (m *Mark) init() {
 	m.base = time.Now().Add(-time.Second)
 }
 
-func (m *Mark) now() uint32 {
+func (m *Mark) now() M32 {
 
-	return uint32(time.Now().Sub(m.base) / time.Second)
+	return M32(time.Now().Sub(m.base) / time.Second)
 
 }
 
@@ -48,7 +48,7 @@ var mgw_timer_done chan bool
 var mtun_timer_done chan bool
 var timer_wg sync.WaitGroup
 
-func get_timer_packet(cmd byte, mark uint32) *PktBuf {
+func get_timer_packet(cmd byte, mark M32) *PktBuf {
 
 	pb := <-getbuf
 
@@ -60,7 +60,7 @@ func get_timer_packet(cmd byte, mark uint32) *PktBuf {
 	return pb
 }
 
-func mgw_timer(mark uint32) {
+func mgw_timer(mark M32) {
 
 	// set time mark...
 
@@ -82,7 +82,7 @@ func mgw_timer(mark uint32) {
 	}
 }
 
-func mtun_timer(mark uint32) {
+func mtun_timer(mark M32) {
 
 	// set time mark...
 
