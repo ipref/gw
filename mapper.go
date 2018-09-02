@@ -851,7 +851,6 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 	var key interface{}
 	var val interface{}
-	var oid O32
 	var err error
 
 	// no easy way to count number of records, we estimate instead as 4 x ea
@@ -1006,10 +1005,10 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 				log.err("mtun: invalid oid(%v) in our_ea, removing %v %v(%v) %v",
 					rec.oid, rec.ip, "invalid", rec.oid, rec.mark)
 				mtun.purge.sbtree.Delete(key)
-			} else if rec.mark < mtun.cur_mark[oid] {
+			} else if rec.mark < mtun.cur_mark[rec.oid] {
 				if cli.debug["mapper"] || cli.debug["all"] {
 					log.debug("mtun: purge OUR_EA_SUB mark(%v), removing %v %v(%v) %v",
-						mtun.cur_mark[oid], rec.ip, owners.name(rec.oid), rec.oid, rec.mark)
+						mtun.cur_mark[rec.oid], rec.ip, owners.name(rec.oid), rec.oid, rec.mark)
 				}
 				mtun.purge.sbtree.Delete(key)
 			}
