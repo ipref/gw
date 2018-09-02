@@ -35,7 +35,7 @@ func main() {
 	owners.init()
 	marker.init()
 
-	mapper_oid := owners.new_oid("mapper") // both mapper sets need the same oid and timer mark
+	mapper_oid = owners.new_oid("mapper") // both mapper sets need the same oid and timer mark
 	map_gw.init(mapper_oid)
 	map_tun.init(mapper_oid)
 	mapper_mark := marker.now()

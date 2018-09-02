@@ -69,7 +69,9 @@ exist. When all host entries, related to the gatway, are removed then the
 gateway's soft state is also removed.
 */
 
-type IP32 uint32
+type M32 int32   // mark, a monotonic counter
+type O32 int32   // owner id, an index into array
+type IP32 uint32 // ip address
 
 func (ip IP32) String() string {
 	addr := []byte{0, 0, 0, 0}
@@ -238,6 +240,7 @@ const (
 	MAPPER_PURGE_MIN = 15                            // min items to purge at a time
 )
 
+var mapper_oid uint32
 var map_gw MapGw   // exclusively owned by fwd_to_gw
 var map_tun MapTun // exclusively owned by fwd_to_tun
 
@@ -290,56 +293,80 @@ func (mgw *MapGw) set_cur_mark(oid, mark uint32) {
 func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 
 	iprefrec, ok := mgw.their_ipref.Get(dst)
-
-	if !ok || iprefrec.(IpRefRec).mark < mgw.cur_mark[mgw.oid] {
-
-		iprefrec = interface{}(IpRefRec{0, Ref{0, 0}, 0, 0}) // not found
-
-	} else if iprefrec.(IpRefRec).oid == mgw.oid && iprefrec.(IpRefRec).mark-mgw.cur_mark[mgw.oid] < MAPPER_REFRESH {
-
-		rec := iprefrec.(IpRefRec)
-		rec.mark = mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
-		mgw.their_ipref.Set(dst, rec) // bump up expiration
+	if !ok {
+		log.debug("mgw: dst ipref not found for: %v", dst)
+		return IpRefRec{0, Ref{0, 0}, 0, 0} // not found
 	}
 
-	return iprefrec.(IpRefRec)
+	rec := iprefrec.(IpRefRec)
+
+	if int(rec.oid) >= len(mgw.cur_mark) {
+		log.err("mgw: invalid oid(%v) in their_ipref, ignoring record", rec.oid)
+		return IpRefRec{0, Ref{0, 0}, 0, 0}
+	}
+
+	if rec.mark < mgw.cur_mark[rec.oid] {
+		log.debug("mgw: dst ipref expired for: %v", dst)
+		return IpRefRec{0, Ref{0, 0}, 0, 0} // expired
+	}
+
+	if rec.oid == mgw.oid && rec.mark-mgw.cur_mark[mgw.oid] < MAPPER_REFRESH {
+
+		log.debug("mgw: refreshing dst ipref for: %v", dst)
+		mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
+		rec.mark = mark
+		mgw.their_ipref.Set(dst, rec)                                           // bump up expiration
+		send_arec(mgw.pfx, dst, 0, rec.ip, rec.ref, rec.oid, rec.mark, recv_gw) // tell mtun
+	}
+
+	return rec
 }
 
 func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 
 	iprefrec, ok := mgw.our_ipref.Get(src)
+
 	if ok {
-		if iprefrec.(IpRefRec).oid == mgw.oid && iprefrec.(IpRefRec).mark-mgw.cur_mark[mgw.oid] < MAPPER_REFRESH {
 
-			rec := iprefrec.(IpRefRec)
-			rec.mark = mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
-			mgw.our_ipref.Set(src, rec) // bump up expiration
-		}
-	} else {
+		rec := iprefrec.(IpRefRec)
 
-		// local host ip does not have a map to ipref, create it
-
-		ref := <-random_mapper_ref
-		if ref.isZero() {
-			return IpRefRec{0, Ref{0, 0}, 0, 0} // cannot get new reference
+		if int(rec.oid) >= len(mgw.cur_mark) {
+			log.err("mgw: invalid oid(%v) in our_ipref, ignoring record", rec.oid)
+			return IpRefRec{0, Ref{0, 0}, 0, 0}
 		}
 
-		oid := mgw.oid
-		mark := mgw.cur_mark[oid] + MAPPER_TMOUT
-		iprefrec = interface{}(IpRefRec{
-			cli.gw_ip,
-			ref,
-			oid,
-			mark,
-		})
-		mgw.our_ipref.Set(src, iprefrec)
+		if rec.mark < mgw.cur_mark[rec.oid] {
 
-		// tell mtun about it
+			log.debug("mgw: src ipref expired for: %v, reallocating", src)
 
-		send_arec(mgw.pfx, 0, src, cli.gw_ip, ref, oid, mark, recv_gw)
+		} else {
+
+			if rec.oid == mgw.oid && rec.mark-mgw.cur_mark[mgw.oid] < MAPPER_REFRESH {
+
+				log.debug("mgw: refreshing src ipref for: %v", src)
+				mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
+				rec.mark = mark
+				mgw.our_ipref.Set(src, rec)                                             // bump up expiration
+				send_arec(mgw.pfx, 0, src, rec.ip, rec.ref, rec.oid, rec.mark, recv_gw) // tell mtun
+			}
+
+			return rec
+		}
 	}
-	return iprefrec.(IpRefRec)
 
+	// local host's ip does not have a map to ipref, create one
+
+	ref := <-random_mapper_ref
+	if ref.isZero() {
+		log.err("mgw: cannot get new reference for %v, ignoring record", src)
+		return IpRefRec{0, Ref{0, 0}, 0, 0}
+	}
+	mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
+	rec := IpRefRec{cli.gw_ip, ref, mgw.oid, mark}
+	mgw.our_ipref.Set(src, rec)                                             // add new record
+	send_arec(mgw.pfx, 0, src, rec.ip, rec.ref, rec.oid, rec.mark, recv_gw) // tell mtun
+
+	return rec
 }
 
 func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
@@ -638,38 +665,92 @@ func (mtun *MapTun) get_dst_ip(gw IP32, ref Ref) IP32 {
 
 	our_refs, ok := mtun.our_ip.Get(gw)
 	if !ok {
-		return 0 // our gateway is not in the map, very weird, probably a bug
+		log.err("mtun: local gw not in the map: %v", gw)
+		return 0
 	}
 
 	iprec, ok := our_refs.(*b.Tree).Get(ref)
 	if !ok {
-		return 0 // unknown local host
+		log.err("mtun: no local host mapped to ref: %v", &ref)
+		return 0
 	}
 
-	return iprec.(IpRec).ip
+	rec := iprec.(IpRec)
+
+	if int(rec.oid) >= len(mtun.cur_mark) {
+		log.err("mtun: invalid oid(%v) in our_ip, ignoring record", rec.oid)
+		return 0
+	}
+
+	if rec.mark < mtun.cur_mark[rec.oid] {
+		log.debug("mtun: dst ip expired for: %v + %v", gw, &ref)
+		return 0 // expired
+	}
+
+	if rec.oid == mtun.oid && rec.mark-mtun.cur_mark[mtun.oid] < MAPPER_REFRESH {
+
+		log.debug("mtun: refreshing dst ip for: %v + %v", gw, &ref)
+		mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
+		rec.mark = mark
+		our_refs.(*b.Tree).Set(ref, rec)                                     // bump up expiration
+		send_arec(mtun.pfx, 0, rec.ip, gw, ref, rec.oid, rec.mark, recv_tun) // tell mgw
+	}
+
+	return rec.ip
 }
 
 func (mtun *MapTun) get_src_ea(gw IP32, ref Ref) IP32 {
 
 	their_refs, ok := mtun.our_ea.Get(gw)
 	if !ok {
-		// looks like we haven't seen this remote gw, allocate a map for it
+		// unknown remote gw, allocate a map for it
 		their_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
 		mtun.our_ea.Set(gw, their_refs)
 	}
 
 	iprec, ok := their_refs.(*b.Tree).Get(ref)
-	if !ok {
-		// no ea for this remote host, allocate one
-		ea := <-random_mapper_ea
-		if ea == 0 {
-			return ea // cannot get new ea
+
+	if ok {
+
+		rec := iprec.(IpRec)
+
+		if int(rec.oid) >= len(mtun.cur_mark) {
+			log.err("mtun: invalid oid(%v) in our_ea, ignoring record", rec.oid)
+			return 0
 		}
-		iprec = interface{}(IpRec{ea, mtun.oid, mtun.cur_mark[mtun.oid]})
-		their_refs.(*b.Tree).Set(ref, iprec)
+
+		if rec.mark < mtun.cur_mark[rec.oid] {
+
+			log.debug("mtun: src ea expired for: %v + %v, reallocating", gw, &ref)
+
+		} else {
+
+			if rec.oid == mtun.oid && rec.mark-mtun.cur_mark[mtun.oid] < MAPPER_REFRESH {
+
+				log.debug("mtun: refreshing src ea for: %v + %v", gw, ref)
+				mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
+				rec.mark = mark
+				their_refs.(*b.Tree).Set(ref, rec)                                   // bump up expiration
+				send_arec(mtun.pfx, rec.ip, 0, gw, ref, rec.oid, rec.mark, recv_tun) // tell mgw
+			}
+
+			return rec.ip
+		}
 	}
 
-	return iprec.(IpRec).ip
+	// no ea for this remote host, allocate one
+
+	ea := <-random_mapper_ea
+	if ea == 0 {
+		log.err("mtun: cannot get new ea for %v + %v, ignoring record", gw, &ref)
+		return 0 // cannot get new ea
+	}
+	mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
+	rec := IpRec{ea, mtun.oid, mark}
+	their_refs.(*b.Tree).Set(ref, rec)
+	send_arec(mtun.pfx, rec.ip, 0, gw, ref, rec.oid, rec.mark, recv_tun) // tell mgw
+
+	return rec.ip
 }
 
 func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
