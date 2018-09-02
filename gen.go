@@ -36,7 +36,7 @@ func (o *Owners) init() {
 }
 
 // return name associated with an oid
-func (o *Owners) name(oid uint32) string {
+func (o *Owners) name(oid O32) string {
 	name := "unknown"
 	o.mtx.Lock()
 	if int(oid) < len(o.oids) {
@@ -51,14 +51,14 @@ func (o *Owners) name(oid uint32) string {
 }
 
 // create new oid
-func (o *Owners) new_oid(name string) uint32 {
+func (o *Owners) new_oid(name string) O32 {
 
 	if len(name) == 0 {
 		log.fatal("owners: missing owner name")
 	}
 
 	o.mtx.Lock()
-	oid := uint32(len(o.oids))
+	oid := O32(len(o.oids))
 	o.oids = append(o.oids, name)
 	o.mtx.Unlock()
 	log.debug("owners: new oid: %v(%v)", name, oid)

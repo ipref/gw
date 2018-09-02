@@ -205,7 +205,7 @@ func (pb *PktBuf) set_v1hdr() int {
 	return pb.v1hdr
 }
 
-func (pb *PktBuf) write_v1_header(sig, cmd byte, oid, mark uint32) {
+func (pb *PktBuf) write_v1_header(sig, cmd byte, oid O32, mark uint32) {
 
 	pkt := pb.pkt[pb.v1hdr:]
 
@@ -217,7 +217,7 @@ func (pb *PktBuf) write_v1_header(sig, cmd byte, oid, mark uint32) {
 	pkt[V1_CMD] = cmd
 	pkt[V1_SRCQ] = 0
 	pkt[V1_DSTQ] = 0
-	be.PutUint32(pkt[V1_OID:V1_OID+4], oid)
+	be.PutUint32(pkt[V1_OID:V1_OID+4], uint32(oid))
 	be.PutUint32(pkt[V1_MARK:V1_MARK+4], mark)
 	be.PutUint32(pkt[V1_RESERVED:V1_RESERVED+4], 0)
 }

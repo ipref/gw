@@ -130,7 +130,7 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 			ss += fmt.Sprintf(" cmd(%v)", cmd)
 		}
 
-		oid := be.Uint32(pkt[V1_OID : V1_OID+4])
+		oid := O32(be.Uint32(pkt[V1_OID : V1_OID+4]))
 		mark := be.Uint32(pkt[V1_MARK : V1_MARK+4])
 		ss += fmt.Sprintf("  %v(%v)  mark(%v)  data/tail(%v/%v)",
 			owners.name(oid), oid, mark, pb.data, pb.tail)

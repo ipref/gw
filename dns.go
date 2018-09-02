@@ -297,7 +297,7 @@ func parse_hosts_file(fname string, input io.Reader) map[IP32]AddrRec {
 	return arecs
 }
 
-func install_hosts_records(oid uint32, arecs map[IP32]AddrRec) {
+func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 
 	// get mark for new keys
 

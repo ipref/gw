@@ -122,13 +122,13 @@ type AddrRec struct {
 type IpRefRec struct {
 	ip   IP32
 	ref  Ref
-	oid  uint32 // owner id
+	oid  O32    // owner id
 	mark uint32 // time offset or revision (which could be time offset, too)
 }
 
 type IpRec struct {
 	ip   IP32
-	oid  uint32
+	oid  O32
 	mark uint32
 }
 
@@ -199,7 +199,7 @@ func send_soft_rec(soft SoftRec) {
 }
 
 // send an address record
-func send_arec(pfx string, ea, ip, gw IP32, ref Ref, oid, mark uint32, pktq chan<- *PktBuf) {
+func send_arec(pfx string, ea, ip, gw IP32, ref Ref, oid O32, mark uint32, pktq chan<- *PktBuf) {
 
 	pb := <-getbuf
 
@@ -240,7 +240,7 @@ const (
 	MAPPER_PURGE_MIN = 15                            // min items to purge at a time
 )
 
-var mapper_oid uint32
+var mapper_oid O32
 var map_gw MapGw   // exclusively owned by fwd_to_gw
 var map_tun MapTun // exclusively owned by fwd_to_tun
 
@@ -258,7 +258,7 @@ const ( // purge states
 type MapGw struct {
 	their_ipref *b.Tree  // map[uint32]IpRefRec		our_ea -> (their_gw, their_ref)
 	our_ipref   *b.Tree  // map[uint32]IpRefRec		our_ip -> (our_gw,   our_ref)
-	oid         uint32   // must be the same for both mgw and mtun
+	oid         O32      // must be the same for both mgw and mtun
 	cur_mark    []uint32 // current mark per oid
 	soft        map[IP32]SoftRec
 	pfx         string // prefix for printing messages
@@ -268,7 +268,7 @@ type MapGw struct {
 	}
 }
 
-func (mgw *MapGw) init(oid uint32) {
+func (mgw *MapGw) init(oid O32) {
 
 	mgw.pfx = "mgw"
 	mgw.their_ipref = b.TreeNew(b.Cmp(addr_cmp))
@@ -279,13 +279,13 @@ func (mgw *MapGw) init(oid uint32) {
 	mgw.purge.state = MGW_PURGE_START
 }
 
-func (mgw *MapGw) set_cur_mark(oid, mark uint32) {
+func (mgw *MapGw) set_cur_mark(oid O32, mark uint32) {
 
 	if oid == 0 || mark == 0 {
 		log.fatal("mgw: unexpected invalid oid(%v) or mark(%v)", oid, mark)
 	}
-	if oid >= uint32(len(mgw.cur_mark)) {
-		mgw.cur_mark = append(mgw.cur_mark, make([]uint32, oid-uint32(len(mgw.cur_mark))+1)...)
+	if int(oid) >= len(mgw.cur_mark) {
+		mgw.cur_mark = append(mgw.cur_mark, make([]uint32, int(oid)-len(mgw.cur_mark)+1)...)
 	}
 	mgw.cur_mark[oid] = mark
 }
@@ -376,7 +376,7 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 		log.err("mgw: SET_AREC packet too short, dropping")
 		return DROP
 	}
-	oid := be.Uint32(pkt[V1_OID : V1_OID+4])
+	oid := O32(be.Uint32(pkt[V1_OID : V1_OID+4]))
 	mark := be.Uint32(pkt[V1_MARK : V1_MARK+4])
 
 	off := V1_HDR_LEN
@@ -444,7 +444,7 @@ func (mgw *MapGw) set_new_mark(pb *PktBuf) int {
 			be.Uint32(pb.pkt[pb.data:pb.data+4]), pb.data, pb.tail)
 		return DROP
 	}
-	oid := be.Uint32(pkt[V1_OID : V1_OID+4])
+	oid := O32(be.Uint32(pkt[V1_OID : V1_OID+4]))
 	mark := be.Uint32(pkt[V1_MARK : V1_MARK+4])
 	log.debug("mgw: set mark %v(%v): %v", owners.name(oid), oid, mark)
 	mgw.set_cur_mark(oid, mark)
@@ -617,7 +617,7 @@ const ( // purge states
 type MapTun struct {
 	our_ip   *b.Tree  // map[uint32]map[Ref]IpRec		our_gw   -> our_ref   -> our_ip
 	our_ea   *b.Tree  // map[uint32]map[Ref]IpRec		their_gw -> their_ref -> our_ea
-	oid      uint32   // must be the same for both mgw and mtun
+	oid      O32      // must be the same for both mgw and mtun
 	cur_mark []uint32 // current mark per oid
 	soft     map[IP32]SoftRec
 	pfx      string
@@ -629,7 +629,7 @@ type MapTun struct {
 	}
 }
 
-func (mtun *MapTun) init(oid uint32) {
+func (mtun *MapTun) init(oid O32) {
 
 	mtun.pfx = "mtun"
 	mtun.our_ip = b.TreeNew(b.Cmp(addr_cmp))
@@ -640,13 +640,13 @@ func (mtun *MapTun) init(oid uint32) {
 	mtun.purge.state = MTUN_PURGE_START
 }
 
-func (mtun *MapTun) set_cur_mark(oid, mark uint32) {
+func (mtun *MapTun) set_cur_mark(oid O32, mark uint32) {
 
 	if oid == 0 || mark == 0 {
 		log.fatal("mtun: unexpected invalid oid(%v) or mark(%v)", oid, mark)
 	}
-	if oid >= uint32(len(mtun.cur_mark)) {
-		mtun.cur_mark = append(mtun.cur_mark, make([]uint32, oid-uint32(len(mtun.cur_mark))+1)...)
+	if int(oid) >= len(mtun.cur_mark) {
+		mtun.cur_mark = append(mtun.cur_mark, make([]uint32, int(oid)-len(mtun.cur_mark)+1)...)
 	}
 	mtun.cur_mark[oid] = mark
 }
@@ -760,7 +760,7 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 		log.err("mtun: SET_AREC packet too short, dropping")
 		return DROP
 	}
-	oid := be.Uint32(pkt[V1_OID : V1_OID+4])
+	oid := O32(be.Uint32(pkt[V1_OID : V1_OID+4]))
 	mark := be.Uint32(pkt[V1_MARK : V1_MARK+4])
 
 	off := V1_HDR_LEN
@@ -839,7 +839,7 @@ func (mtun *MapTun) set_new_mark(pb *PktBuf) int {
 			be.Uint32(pb.pkt[pb.data:pb.data+4]), pb.data, pb.tail)
 		return DROP
 	}
-	oid := be.Uint32(pkt[V1_OID : V1_OID+4])
+	oid := O32(be.Uint32(pkt[V1_OID : V1_OID+4]))
 	mark := be.Uint32(pkt[V1_MARK : V1_MARK+4])
 	log.debug("mtun: set mark %v(%v): %v", owners.name(oid), oid, mark)
 	mtun.set_cur_mark(oid, mark)
@@ -851,7 +851,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 	var key interface{}
 	var val interface{}
-	var oid uint32
+	var oid O32
 	var err error
 
 	// no easy way to count number of records, we estimate instead as 4 x ea
