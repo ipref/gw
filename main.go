@@ -77,7 +77,8 @@ func main() {
 	go tun_receiver()
 	go tun_sender()
 
-	go timer()
+	go timer_tick()
+	go purge_tick()
 
 	msg := <-goexit
 

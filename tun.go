@@ -48,7 +48,7 @@ func tun_sender() {
 					rt_max = rt
 				}
 
-				log.debug("tun out: %v  rt: %v [us]  min/avg/max %v %v %v",
+				log.debug("tun out: %v  rt: %v [µs]  min/avg/max %v %v %v",
 					pb.pp_pkt(), rt, rt_min, rt_avg, rt_max)
 			} else {
 				log.debug("tun out: %v", pb.pp_pkt())

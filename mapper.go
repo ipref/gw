@@ -235,9 +235,8 @@ func send_arec(pfx string, ea, ip, gw IP32, ref Ref, oid O32, mark M32, pktq cha
 // -- mapper variables ---------------------------------------------------------
 
 const (
-	MAPPER_TMOUT     = 1800                          // [s] mapper record timeout
-	MAPPER_REFRESH   = MAPPER_TMOUT - MAPPER_TMOUT/4 // [s] when to refresh
-	MAPPER_PURGE_MIN = 15                            // min items to purge at a time
+	MAPPER_TMOUT   = 1800                          // [s] mapper record timeout
+	MAPPER_REFRESH = MAPPER_TMOUT - MAPPER_TMOUT/4 // [s] when to refresh
 )
 
 var mapper_oid O32
@@ -489,17 +488,11 @@ func (mgw *MapGw) timer(pb *PktBuf) int {
 	var val interface{}
 	var err error
 
-	num := mgw.their_ipref.Len() / ((MAPPER_TMOUT * 1000) / (FWD_TIMER_IVL + FWD_TIMER_FUZZ/2))
-	if num < MAPPER_PURGE_MIN {
-		num = MAPPER_PURGE_MIN
-	}
-
-	for ii := 0; ii < num; ii++ {
+	for ii := 0; ii < PURGE_NUM; ii++ {
 
 		switch mgw.purge.state {
 		case MGW_PURGE_START:
 
-			log.debug("mgw: purging %v records a time", num)
 			mgw.purge.state = MGW_PURGE_THEIR_IPREF_SEEK
 			fallthrough
 
@@ -590,7 +583,6 @@ func (mgw *MapGw) timer(pb *PktBuf) int {
 		case MGW_PURGE_STOP:
 
 			mgw.purge.state = MGW_PURGE_START
-			mgw_timer_done <- true
 			return DROP
 		}
 
@@ -854,18 +846,11 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 	var val interface{}
 	var err error
 
-	// no easy way to count number of records, we estimate instead as 8 x ea
-	num := mtun.our_ea.Len() * 8 / ((MAPPER_TMOUT * 1000) / (FWD_TIMER_IVL + FWD_TIMER_FUZZ/2))
-	if num < MAPPER_PURGE_MIN {
-		num = MAPPER_PURGE_MIN
-	}
-
-	for ii := 0; ii < num; ii++ {
+	for ii := 0; ii < PURGE_NUM; ii++ {
 
 		switch mtun.purge.state {
 		case MTUN_PURGE_START:
 
-			log.debug("mtun: purging %v records a time", num)
 			mtun.purge.state = MTUN_PURGE_OUR_IP_SEEK
 			fallthrough
 
@@ -1020,7 +1005,6 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 		case MTUN_PURGE_STOP:
 
 			mtun.purge.state = MTUN_PURGE_START
-			mtun_timer_done <- true
 			return DROP
 		}
 
