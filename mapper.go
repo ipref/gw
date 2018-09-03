@@ -209,10 +209,8 @@ func send_arec(pfx string, ea, ip, gw IP32, ref Ref, oid O32, mark M32, pktq cha
 
 	pb.set_v1hdr()
 	pb.write_v1_header(V1_SIG, V1_SET_AREC, oid, mark)
-
 	pkt := pb.pkt[pb.v1hdr:]
-	pkt[V1_VER] = 0
-	pkt[V1_CMD] = V1_SET_AREC
+
 	off := V1_HDR_LEN
 
 	pkt[off+V1_AREC_HDR_RSVD] = 0
@@ -356,6 +354,7 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 	// local host's ip does not have a map to ipref, create one
 
 	ref := <-random_mapper_ref
+	log.debug("mgw: no src ipref for: %v, allocating: %v", src, &ref)
 	if ref.isZero() {
 		log.err("mgw: cannot get new reference for %v, ignoring record", src)
 		return IpRefRec{0, Ref{0, 0}, 0, 0}
@@ -409,8 +408,11 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 
 		if ea != 0 && ip == 0 {
 
-			if pkt[off+V1_EA+2] >= SECOND_BYTE {
-				log.err("mgw: second byte rule violation(ea), %v %v %v %v, dropping record", ea, ip, gw, &ref)
+			if (oid == mgw.oid && pkt[off+V1_EA+2] < SECOND_BYTE) ||
+				(oid != mgw.oid && pkt[off+V1_EA+2] >= SECOND_BYTE) {
+
+				log.err("mgw: %v(%v): second byte rule violation(ea), %v %v %v %v, dropping record",
+					owners.name(oid), oid, ea, ip, gw, &ref)
 				continue
 			}
 
@@ -419,8 +421,10 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 
 		} else if ea == 0 && ip != 0 {
 
-			if pkt[off+V1_REFL+6] >= SECOND_BYTE {
-				log.err("mgw: second byte rule violation(ref), %v %v %v %v, dropping record", ea, ip, gw, &ref)
+			if (oid == mgw.oid && pkt[off+V1_REFL+6] < SECOND_BYTE) ||
+				(oid != mgw.oid && pkt[off+V1_REFL+6] >= SECOND_BYTE) {
+				log.err("mgw: %v(%v): second byte rule violation(ref), %v %v %v %v, dropping record",
+					owners.name(oid), oid, ea, ip, gw, &ref)
 				continue
 			}
 
@@ -515,14 +519,14 @@ func (mgw *MapGw) timer(pb *PktBuf) int {
 
 				rec := val.(IpRefRec)
 				if int(rec.oid) >= len(mgw.cur_mark) {
-					log.err("mgw: invalid oid(%v) in their_ipref, removing %v %v %v(%v) %v",
-						rec.oid, rec.ip, &rec.ref, "invalid", rec.oid, rec.mark)
+					log.err("mgw: invalid oid(%v) in their_ipref, removing %v 0.0.0.0 %v %v %v(%v):%v",
+						rec.oid, key.(IP32), rec.ip, &rec.ref, "invalid", rec.oid, rec.mark)
 					mgw.their_ipref.Delete(key)
 				} else if rec.mark < mgw.cur_mark[rec.oid] {
 					if cli.debug["mapper"] || cli.debug["all"] {
-						log.debug("mgw: purge THEIR_IPREF mark(%v), removing %v %v %v(%v) %v",
-							mgw.cur_mark[rec.oid], rec.ip, &rec.ref, owners.name(rec.oid),
-							rec.oid, rec.mark)
+						log.debug("mgw: purge THEIR_IPREF mark(%v), removing %v 0.0.0.0 %v %v %v(%v):%v",
+							mgw.cur_mark[rec.oid], key.(IP32), rec.ip, &rec.ref,
+							owners.name(rec.oid), rec.oid, rec.mark)
 					}
 					mgw.their_ipref.Delete(key)
 				}
@@ -557,14 +561,14 @@ func (mgw *MapGw) timer(pb *PktBuf) int {
 
 				rec := val.(IpRefRec)
 				if int(rec.oid) >= len(mgw.cur_mark) {
-					log.err("mgw: invalid oid(%v) in our_ipref, removing %v %v %v(%v) %v",
-						rec.oid, rec.ip, &rec.ref, "invalid", rec.oid, rec.mark)
+					log.err("mgw: invalid oid(%v) in our_ipref, removing 0.0.0.0 %v %v %v %v(%v):%v",
+						rec.oid, key.(IP32), rec.ip, &rec.ref, "invalid", rec.oid, rec.mark)
 					mgw.our_ipref.Delete(key)
 				} else if rec.mark < mgw.cur_mark[rec.oid] {
 					if cli.debug["mapper"] || cli.debug["all"] {
-						log.debug("mgw: purge OUR_IPREF mark(%v), removing %v %v %v(%v) %v",
-							mgw.cur_mark[rec.oid], rec.ip, &rec.ref, owners.name(rec.oid),
-							rec.oid, rec.mark)
+						log.debug("mgw: purge OUR_IPREF mark(%v), removing 0.0.0.0 %v %v %v %v(%v):%v",
+							mgw.cur_mark[rec.oid], key.(IP32), rec.ip, &rec.ref,
+							owners.name(rec.oid), rec.oid, rec.mark)
 					}
 					mgw.our_ipref.Delete(key)
 				}
@@ -734,6 +738,7 @@ func (mtun *MapTun) get_src_ea(gw IP32, ref Ref) IP32 {
 	// no ea for this remote host, allocate one
 
 	ea := <-random_mapper_ea
+	log.debug("mtun: no src ea for: %v + %v, allocating: %v", gw, &ref, ea)
 	if ea == 0 {
 		log.err("mtun: cannot get new ea for %v + %v, ignoring record", gw, &ref)
 		return 0 // cannot get new ea
@@ -788,8 +793,10 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
 		if ea != 0 && ip == 0 {
 
-			if pkt[off+V1_EA+2] >= SECOND_BYTE {
-				log.err("mtun: second byte rule violation(ea), %v %v %v %v, dropping record", ea, ip, gw, &ref)
+			if (oid == mtun.oid && pkt[off+V1_EA+2] < SECOND_BYTE) ||
+				(oid != mtun.oid && pkt[off+V1_EA+2] >= SECOND_BYTE) {
+				log.err("mtun: %v(%v): second byte rule violation(ea), %v %v %v %v, dropping record",
+					owners.name(oid), oid, ea, ip, gw, &ref)
 				continue
 			}
 
@@ -803,8 +810,10 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
 		} else if ea == 0 && ip != 0 {
 
-			if pkt[off+V1_REFL+6] >= SECOND_BYTE {
-				log.err("mtun: second byte rule violation(ref), %v %v %v %v, dropping record", ea, ip, gw, &ref)
+			if (oid == mtun.oid && pkt[off+V1_REFL+6] < SECOND_BYTE) ||
+				(oid != mtun.oid && pkt[off+V1_REFL+6] >= SECOND_BYTE) {
+				log.err("mtun: %v(%v): second byte rule violation(ref), %v %v %v %v, dropping record",
+					owners.name(oid), oid, ea, ip, gw, &ref)
 				continue
 			}
 
@@ -844,6 +853,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 	var key interface{}
 	var val interface{}
+	var gw IP32
 	var err error
 
 	for ii := 0; ii < PURGE_NUM; ii++ {
@@ -870,6 +880,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 			key, val, err = mtun.purge.btree_enu.Next()
 			if err != nil {
 				if err == io.EOF {
+					gw = 0
 					mtun.purge.btree_enu.Close()
 					mtun.purge.state = MTUN_PURGE_OUR_EA_SEEK
 					continue
@@ -878,9 +889,10 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 				return DROP
 			}
 
+			gw = key.(IP32)
 			mtun.purge.sbtree = val.(*b.Tree)
 			if mtun.purge.sbtree.Len() == 0 {
-				log.debug("mtun: purge OUR_IP empty subtree for gw %v, removing gw", key.(IP32))
+				log.debug("mtun: purge OUR_IP empty subtree for gw %v, removing gw", gw)
 				mtun.our_ip.Delete(key)
 				continue
 			}
@@ -903,6 +915,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 			key, val, err = mtun.purge.sbtree_enu.Next()
 			if err != nil {
 				if err == io.EOF {
+					gw = 0
 					mtun.purge.sbtree_enu.Close()
 					mtun.purge.state = MTUN_PURGE_OUR_IP // go back to first level
 					continue
@@ -912,14 +925,16 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 			}
 
 			rec := val.(IpRec)
+			ref := key.(Ref)
 			if int(rec.oid) >= len(mtun.cur_mark) {
-				log.err("mtun: invalid oid(%v) in our_ip, removing  %v %v(%v) %v",
-					rec.oid, rec.ip, "invalid", rec.oid, rec.mark)
+				log.err("mtun: invalid oid(%v) in our_ip, removing 0.0.0.0 %v %v %v %v(%v):%v",
+					rec.oid, rec.ip, gw, &ref, "invalid", rec.oid, rec.mark)
 				mtun.purge.sbtree.Delete(key)
 			} else if rec.mark < mtun.cur_mark[rec.oid] {
 				if cli.debug["mapper"] || cli.debug["all"] {
-					log.debug("mtun: purge OUR_IP_SUB mark(%v), removing %v %v(%v) %v",
-						mtun.cur_mark[rec.oid], rec.ip, owners.name(rec.oid), rec.oid, rec.mark)
+					log.debug("mtun: purge OUR_IP_SUB mark(%v), removing 0.0.0.0 %v %v %v %v(%v):%v",
+						mtun.cur_mark[rec.oid], rec.ip, gw, &ref,
+						owners.name(rec.oid), rec.oid, rec.mark)
 				}
 				mtun.purge.sbtree.Delete(key)
 			}
@@ -942,6 +957,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 			key, val, err = mtun.purge.btree_enu.Next()
 			if err != nil {
 				if err == io.EOF {
+					gw = 0
 					mtun.purge.btree_enu.Close()
 					mtun.purge.state = MTUN_PURGE_STOP
 					continue
@@ -950,9 +966,9 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 				return DROP
 			}
 
+			gw = key.(IP32)
 			mtun.purge.sbtree = val.(*b.Tree)
 			if mtun.purge.sbtree.Len() == 0 {
-				gw := key.(IP32)
 				log.debug("mtun: purge OUR_EA empty subtree for gw %v, removing gw and its soft record", gw)
 				// remove soft, tell mgw about it, then remove the key last
 				delete(mtun.soft, gw)
@@ -979,6 +995,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 			key, val, err = mtun.purge.sbtree_enu.Next()
 			if err != nil {
 				if err == io.EOF {
+					gw = 0
 					mtun.purge.sbtree_enu.Close()
 					mtun.purge.state = MTUN_PURGE_OUR_EA // go back to first level
 					continue
@@ -988,14 +1005,16 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 			}
 
 			rec := val.(IpRec)
+			ref := key.(Ref)
 			if int(rec.oid) >= len(mtun.cur_mark) {
-				log.err("mtun: invalid oid(%v) in our_ea, removing %v %v(%v) %v",
-					rec.oid, rec.ip, "invalid", rec.oid, rec.mark)
+				log.err("mtun: invalid oid(%v) in our_ea, removing %v 0.0.0.0 %v %v %v(%v):%v",
+					rec.oid, rec.ip, gw, &ref, "invalid", rec.oid, rec.mark)
 				mtun.purge.sbtree.Delete(key)
 			} else if rec.mark < mtun.cur_mark[rec.oid] {
 				if cli.debug["mapper"] || cli.debug["all"] {
-					log.debug("mtun: purge OUR_EA_SUB mark(%v), removing %v %v(%v) %v",
-						mtun.cur_mark[rec.oid], rec.ip, owners.name(rec.oid), rec.oid, rec.mark)
+					log.debug("mtun: purge OUR_EA_SUB mark(%v), removing %v 0.0.0.0 %v %v %v(%v) %v",
+						mtun.cur_mark[rec.oid], rec.ip, gw, &ref,
+						owners.name(rec.oid), rec.oid, rec.mark)
 				}
 				mtun.purge.sbtree.Delete(key)
 			}

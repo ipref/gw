@@ -223,6 +223,6 @@ func gen_mapper_eas() {
 			allocated[ea] = true
 			break
 		}
-		random_dns_ea <- ea
+		random_mapper_ea <- ea
 	}
 }

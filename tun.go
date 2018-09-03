@@ -146,7 +146,14 @@ func tun_receiver() {
 
 		srcix := int(be.Uint16(creep[0:2])) % len(us)
 		dstix := int(be.Uint16(creep[2:4])) % len(them)
-		be.PutUint32(pb.pkt[pb.data+IP_SRC:pb.data+IP_SRC+4], uint32(us[srcix]))
+		if ii%7 == 0 { // make some packets originate from addresses not in dns
+			src := us[srcix]
+			src &= 0xffff
+			src |= 0xac150000 // 172.21.x.x
+			be.PutUint32(pb.pkt[pb.data+IP_SRC:pb.data+IP_SRC+4], uint32(src))
+		} else {
+			be.PutUint32(pb.pkt[pb.data+IP_SRC:pb.data+IP_SRC+4], uint32(us[srcix]))
+		}
 		be.PutUint32(pb.pkt[pb.data+IP_DST:pb.data+IP_DST+4], uint32(them[dstix]))
 
 		if cli.debug["tun"] || cli.debug["all"] {

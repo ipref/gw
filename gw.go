@@ -94,6 +94,12 @@ func echo_discard(pb *PktBuf) int {
 	} else {
 		copy(pkt[opt+OPT_SREF128:opt+OPT_SREF128+8], pkt[opt+OPT_DREF128:opt+OPT_DREF128+8])
 		copy(pkt[opt+OPT_SREF128+8:opt+OPT_SREF128+16], pkt[opt+OPT_DREF128+8:opt+OPT_DREF128+16])
+		// modify some srefs to make them not appear in dns
+		if ref_l[6] >= SECOND_BYTE {
+			pkt[opt+OPT_SREF128+7] = 0
+			pkt[opt+OPT_SREF128+8] = 0
+			pkt[opt+OPT_SREF128+9] = 0
+		}
 	}
 	copy(pkt[payudp+UDP_SPORT:payudp+UDP_SPORT+2], pkt[payudp+UDP_DPORT:payudp+UDP_DPORT+2])
 

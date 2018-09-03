@@ -390,6 +390,7 @@ func insert_ipref_option(pb *PktBuf) int {
 
 	iprefdst := map_gw.get_dst_ipref(dst)
 	if iprefdst.ip == 0 {
+		log.err("inserting opt: unknown dst address: %v %v , sending icmp", src, dst)
 		pb.icmp.typ = ICMP_DEST_UNREACH
 		pb.icmp.code = ICMP_NET_UNREACH
 		pb.icmp.mtu = 0
@@ -609,7 +610,7 @@ func fwd_to_gw() {
 			}
 
 		default:
-			log.err("fwd_to_gw: unknown packet type: 0x%02x, dropping", pb.pkt[pb.data])
+			log.err("fwd_to_gw: unknown packet signature: 0x%02x, dropping", pb.pkt[pb.data])
 		}
 
 		if verdict == DROP {
@@ -656,7 +657,7 @@ func fwd_to_tun() {
 			}
 
 		default:
-			log.err("fwd_to_tun: unknown packet type: 0x%02x, dropping", pb.pkt[pb.data])
+			log.err("fwd_to_tun: unknown packet signature: 0x%02x, dropping", pb.pkt[pb.data])
 		}
 
 		if verdict == DROP {
