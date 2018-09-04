@@ -156,6 +156,8 @@ func tun_receiver() {
 		}
 		be.PutUint32(pb.pkt[pb.data+IP_DST:pb.data+IP_DST+4], uint32(them[dstix]))
 
+		pb.fill_csum()
+
 		if cli.debug["tun"] || cli.debug["all"] {
 			log.debug("tun in:  %v", pb.pp_pkt())
 		}

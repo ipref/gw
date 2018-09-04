@@ -222,6 +222,38 @@ func (pb *PktBuf) write_v1_header(sig, cmd byte, oid O32, mark M32) {
 	be.PutUint32(pkt[V1_RESERVED:V1_RESERVED+4], 0)
 }
 
+// Add buffer bytes to csum. Input csum and result are not inverted.
+func csum_add(csum uint16, buf []byte) uint16 {
+
+	sum := uint32(csum)
+
+	for ix := 0; ix < len(buf); ix += 2 {
+		sum += uint32(be.Uint16(buf[ix : ix+2]))
+	}
+
+	for sum > 0xffff {
+		sum = (sum & 0xffff) + (sum >> 16)
+	}
+
+	return uint16(sum)
+}
+
+// Subract buffer bytes from csum. Input csum and result are not inverted.
+func csum_subtract(csum uint16, buf []byte) uint16 {
+
+	sum := uint32(csum)
+
+	for ix := 0; ix < len(buf); ix += 2 {
+		sum -= uint32(be.Uint16(buf[ix : ix+2]))
+	}
+
+	for sum > 0xffff {
+		sum = (sum & 0xffff) - (((sum ^ 0xffff0000) + 0x10000) >> 16)
+	}
+
+	return uint16(sum)
+}
+
 var getbuf chan (*PktBuf)
 var retbuf chan (*PktBuf)
 

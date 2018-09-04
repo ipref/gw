@@ -356,6 +356,41 @@ func (pb *PktBuf) fill_payload() {
 	be.PutUint16(pb.pkt[pb.iphdr+IP_LEN:pb.iphdr+IP_LEN+2], uint16(pb.tail-pb.iphdr)) // pktlen
 }
 
+func (pb *PktBuf) fill_csum() {
+
+	var csum uint16
+
+	pb.set_iphdr() // ip header is at pb.data when this call is made
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+
+	// iphdr csum
+
+	be.PutUint16(pkt[IP_LEN:IP_LEN+2], uint16(len(pkt)))
+	be.PutUint16(pkt[IP_CSUM:IP_CSUM+2], 0)
+	csum = csum_add(0, pkt[:pb.iphdr_len()])
+	be.PutUint16(pkt[IP_CSUM:IP_CSUM+2], csum^0xffff)
+
+	// l4 csum
+
+	off := pb.iphdr_len()
+
+	csum = csum_add(0, pkt[IP_SRC:IP_DST+4])
+
+	switch pkt[IP_PROTO] {
+	case TCP:
+	case UDP:
+
+		be.PutUint16(pkt[off+UDP_LEN:off+UDP_LEN+2], uint16(len(pkt)-off))
+		be.PutUint16(pkt[off+UDP_CSUM:off+UDP_CSUM+2], 0)
+		csum = csum_add(csum, []byte{0, pkt[IP_PROTO]})
+		csum = csum_add(csum, pkt[off+UDP_LEN:off+UDP_LEN+2])
+		csum = csum_add(csum, pkt[off:])
+		be.PutUint16(pkt[off+UDP_CSUM:off+UDP_CSUM+2], csum^0xffff)
+
+	case ICMP:
+	}
+}
+
 func (pb *PktBuf) fill(proto int) {
 
 	if len(pb.pkt) < int(cli.gw_mtu) {
