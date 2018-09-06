@@ -205,6 +205,38 @@ func (pb *PktBuf) set_v1hdr() int {
 	return pb.v1hdr
 }
 
+// calculate iphdr csum and l4 csum
+func (pb *PktBuf) verify_csum() (uint16, uint16) {
+
+	var iphdr_csum uint16
+	var l4_csum uint16
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+
+	// iphdr csum
+
+	iphdr_csum = csum_add(0, pkt[:pb.iphdr_len()])
+
+	// l4 csum
+
+	off := pb.iphdr_len()
+
+	l4_csum = csum_add(0, pkt[IP_SRC:IP_DST+4])
+
+	switch pkt[IP_PROTO] {
+	case TCP:
+	case UDP:
+
+		l4_csum = csum_add(l4_csum, []byte{0, pkt[IP_PROTO]})
+		l4_csum = csum_add(l4_csum, pkt[off+UDP_LEN:off+UDP_LEN+2])
+		l4_csum = csum_add(l4_csum, pkt[off:])
+
+	case ICMP:
+	}
+
+	return iphdr_csum ^ 0xffff, l4_csum ^ 0xffff
+}
+
 func (pb *PktBuf) write_v1_header(sig, cmd byte, oid O32, mark M32) {
 
 	pkt := pb.pkt[pb.v1hdr:]

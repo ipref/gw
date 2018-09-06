@@ -48,8 +48,10 @@ func tun_sender() {
 					rt_max = rt
 				}
 
-				log.debug("tun out: %v  rt: %v [µs]  min/avg/max %v %v %v",
-					pb.pp_pkt(), rt, rt_min, rt_avg, rt_max)
+				ip_csum, udp_csum := pb.verify_csum()
+
+				log.debug("tun out: %v  csum: %04x/%04x rt: %v [µs]  min/avg/max %v %v %v",
+					pb.pp_pkt(), ip_csum, udp_csum, rt, rt_min, rt_avg, rt_max)
 			} else {
 				log.debug("tun out: %v", pb.pp_pkt())
 			}
@@ -112,11 +114,15 @@ func tun_receiver() {
 
 	creep := make([]byte, 4)
 
-	// Send packet from random sources to random destinations
+	// Send packets from random sources to random destinations
 
-	for ii := 0; ii < num_pkts; ii++ {
+	for ii := 0; ii < 1000000; ii++ {
 
-		time.Sleep(174879 * time.Microsecond)
+		if ii == num_pkts {
+			time.Sleep(123 * time.Second) // pause after initial count
+		} else {
+			time.Sleep(174879 * time.Microsecond)
+		}
 
 		pb := <-getbuf
 		pb.fill(UDP)
