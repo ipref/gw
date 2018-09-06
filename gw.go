@@ -94,11 +94,24 @@ func echo_discard(pb *PktBuf) int {
 	} else {
 		copy(pkt[opt+OPT_SREF128:opt+OPT_SREF128+8], pkt[opt+OPT_DREF128:opt+OPT_DREF128+8])
 		copy(pkt[opt+OPT_SREF128+8:opt+OPT_SREF128+16], pkt[opt+OPT_DREF128+8:opt+OPT_DREF128+16])
+
 		// modify some srefs to make them not appear in dns
+
 		if ref_l[6] >= SECOND_BYTE {
+
+			csum_diff := csum_add(uint16(pkt[opt+OPT_SREF128+7]), pkt[opt+OPT_SREF128+8:opt+OPT_SREF128+10])
 			pkt[opt+OPT_SREF128+7] = 0
 			pkt[opt+OPT_SREF128+8] = 0
 			pkt[opt+OPT_SREF128+9] = 0
+
+			var csum uint32
+
+			csum = uint32(be.Uint16(pkt[udp+UDP_CSUM:udp+UDP_CSUM+2]) ^ 0xffff)
+			csum -= uint32(csum_diff)
+			for csum > 0xffff {
+				csum = (csum & 0xffff) - (((csum ^ 0xffff0000) + 0x10000) >> 16)
+			}
+			be.PutUint16(pkt[udp+UDP_CSUM:udp+UDP_CSUM+2], uint16(csum)^0xffff)
 		}
 	}
 	copy(pkt[payudp+UDP_SPORT:payudp+UDP_SPORT+2], pkt[payudp+UDP_DPORT:payudp+UDP_DPORT+2])
