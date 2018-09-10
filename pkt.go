@@ -95,6 +95,16 @@ const (
 	UDP_DPORT = 2
 	UDP_LEN   = 4
 	UDP_CSUM  = 6
+	// TCP offsets
+	TCP_SPORT = 0
+	TCP_DPORT = 2
+	TCP_CSUM  = 16
+	// ICMP offsets
+	ICMP_TYPE = 0
+	ICMP_CODE = 1
+	ICMP_CSUM = 2
+	ICMP_MTU  = 6
+	ICMP_DATA = 8
 	// encap offsets
 	ENCAP_TTL   = 0
 	ENCAP_PROTO = 1
