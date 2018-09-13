@@ -8,8 +8,6 @@ import (
 	"syscall"
 )
 
-const DEVEL_ECHO = true // enable internal discard/echo for development
-
 var goexit chan (string)
 
 func catch_signals() {
@@ -51,7 +49,6 @@ func main() {
 	send_tun = make(chan *PktBuf, PKTQLEN)
 	recv_gw = make(chan *PktBuf, PKTQLEN)
 	send_gw = make(chan *PktBuf, PKTQLEN)
-	echo = make(chan *PktBuf, PKTQLEN) // for development only
 
 	random_dns_ref = make(chan Ref, GENQLEN)
 	random_mapper_ref = make(chan Ref, GENQLEN)
