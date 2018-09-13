@@ -393,8 +393,8 @@ func (pb *PktBuf) fill_csum() {
 
 func (pb *PktBuf) fill(proto int) {
 
-	if len(pb.pkt) < int(cli.gw_mtu) {
-		log.fatal("packet buffer too short: %v, needs %v", len(pb.pkt), cli.gw_mtu)
+	if len(pb.pkt) < int(cli.ifc.MTU) {
+		log.fatal("packet buffer too short: %v, needs %v", len(pb.pkt), cli.ifc.MTU)
 	}
 
 	pb.data = OPTLEN - TUN_HDR_LEN

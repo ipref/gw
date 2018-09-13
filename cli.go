@@ -24,7 +24,7 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	ea_ip     IP32
 	ea_mask   IP32
 	gw_ip     IP32
-	gw_mtu    uint
+	ifc       net.Interface
 	log_level uint
 }
 
@@ -94,6 +94,37 @@ func parse_cli() {
 	}
 	cli.gw_ip = IP32(be.Uint32(gw.To4()))
 
+	// deduce gw interface
+
+	ifcs, err := net.Interfaces()
+	if err != nil {
+		log.fatal("cannot get interface data: %v", err)
+	}
+ifc_loop:
+	for _, ifc := range ifcs {
+		addrs, err := ifc.Addrs()
+		if err == nil {
+			for _, addr := range addrs {
+				ip := net.ParseIP(strings.Split(addr.String(), "/")[0]) // addr string: 192.168.80.10/24
+				if ip == nil {
+					continue
+				}
+				ip4 := ip.To4()
+				if ip4 == nil {
+					continue
+				}
+				if IP32(be.Uint32(ip4)) == cli.gw_ip {
+					cli.ifc = ifc
+					break ifc_loop
+				}
+			}
+		}
+	}
+
+	if cli.ifc.Index == 0 {
+		log.fatal("cannot find interface with gw address %v", cli.gw_ip)
+	}
+
 	// parse ea net
 
 	_, ipnet, err := net.ParseCIDR(cli.ea)
@@ -113,10 +144,6 @@ func parse_cli() {
 	cli.ea_ip = IP32(be.Uint32(ipnet.IP.To4()))
 	cli.ea_mask = IP32(be.Uint32(net.IP(ipnet.Mask).To4()))
 	cli.ea_ip &= cli.ea_mask
-
-	// deduce mtu
-
-	cli.gw_mtu = 1500
 
 	// normalize file paths
 

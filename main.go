@@ -26,6 +26,7 @@ func main() {
 	parse_cli() // also initializes log
 
 	log.info("START meadow")
+	log.info("gateway ip %v  ifc(%v):%v  mtu(%v)", cli.gw_ip, cli.ifc.Index, cli.ifc.Name, cli.ifc.MTU)
 
 	goexit = make(chan string)
 	go catch_signals()
@@ -68,8 +69,7 @@ func main() {
 	go fwd_to_gw()
 	go fwd_to_tun()
 
-	go gw_receiver()
-	go gw_sender()
+	start_gw()
 
 	go tun_receiver()
 	go tun_sender()

@@ -2,14 +2,19 @@
 
 package main
 
-//import (
-//    "github.com/mdlayher/raw"
-//)
+import (
+	"github.com/mdlayher/raw"
+	"net"
+)
+
+const (
+	EtherIPv4 = 0x0800
+)
 
 var recv_gw chan *PktBuf
 var send_gw chan *PktBuf
 
-func gw_sender() {
+func gw_sender(con net.PacketConn) {
 
 	for pb := range send_gw {
 
@@ -38,6 +43,17 @@ func gw_sender() {
 	}
 }
 
-func gw_receiver() {
+func gw_receiver(con net.PacketConn) {
 
+}
+
+func start_gw() {
+
+	con, err := raw.ListenPacket(&cli.ifc, EtherIPv4, &raw.Config{false, true, false})
+	if err != nil {
+		log.fatal("gw:  cannot get raw socket: %v", err)
+	}
+
+	go gw_sender(con)
+	go gw_receiver(con)
 }

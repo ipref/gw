@@ -144,7 +144,7 @@ func (sft *SoftRec) init(gw IP32) {
 
 	sft.gw = gw
 	sft.port = IPREF_PORT
-	sft.mtu = uint16(cli.gw_mtu)
+	sft.mtu = uint16(cli.ifc.MTU)
 	sft.ttl = 1
 	sft.hops = 1
 }
