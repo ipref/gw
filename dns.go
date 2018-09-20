@@ -322,19 +322,13 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 		// v1 header
 
 		pb.set_v1hdr()
-		pb.write_v1_header(V1_SIG, V1_SET_AREC, oid, mark)
-
 		pkt := pb.pkt[pb.v1hdr:]
+
+		pb.write_v1_header(V1_SET_AREC, oid, mark)
+		pkt[V1_ITEM_TYPE] = V1_TYPE_AREC
 		off := V1_HDR_LEN
 
-		// arec header
-
-		cmd := off
-		pkt[cmd+V1_AREC_HDR_RSVD] = 0
-		pkt[cmd+V1_AREC_HDR_ITEM_TYPE] = V1_AREC
-
 		numitems := 0
-		off += V1_AREC_HDR_LEN
 
 		// arec records
 
@@ -408,11 +402,11 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 
 			// pack it up
 
-			be.PutUint32(pkt[off+V1_EA:off+V1_EA+4], uint32(rec.ea))
-			be.PutUint32(pkt[off+V1_IP:off+V1_IP+4], uint32(rec.ip))
-			be.PutUint32(pkt[off+V1_GW:off+V1_GW+4], uint32(rec.gw))
-			be.PutUint64(pkt[off+V1_REFH:off+V1_REFH+8], rec.ref.h)
-			be.PutUint64(pkt[off+V1_REFL:off+V1_REFL+8], rec.ref.l)
+			be.PutUint32(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], uint32(rec.ea))
+			be.PutUint32(pkt[off+V1_AREC_IP:off+V1_AREC_IP+4], uint32(rec.ip))
+			be.PutUint32(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], uint32(rec.gw))
+			be.PutUint64(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], rec.ref.h)
+			be.PutUint64(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], rec.ref.l)
 
 			off += V1_AREC_LEN
 			numitems++
@@ -429,7 +423,7 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 
 		if numitems > 0 {
 
-			be.PutUint16(pkt[cmd+V1_AREC_HDR_NUM_ITEMS:cmd+V1_AREC_HDR_NUM_ITEMS+2], uint16(numitems))
+			be.PutUint16(pkt[V1_NUM_ITEMS:V1_NUM_ITEMS+2], uint16(numitems))
 			pb.tail = off
 
 			pbb.copy_from(pb)
@@ -456,7 +450,7 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 	pbb := <-getbuf
 
 	pb.set_v1hdr()
-	pb.write_v1_header(V1_SIG, V1_SET_MARK, oid, mark)
+	pb.write_v1_header(V1_SET_MARK, oid, mark)
 	pb.tail = pb.v1hdr + V1_HDR_LEN
 	pbb.copy_from(pb)
 

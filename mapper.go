@@ -181,9 +181,11 @@ func send_soft_rec(soft SoftRec) {
 	pb := <-getbuf
 
 	pb.set_v1hdr()
-	pb.write_v1_header(V1_SIG, V1_SET_SOFT, 0, 0)
-
 	pkt := pb.pkt[pb.v1hdr:]
+
+	pb.write_v1_header(V1_SET_SOFT, 0, 0)
+	pkt[V1_ITEM_TYPE] = V1_TYPE_SOFT
+	be.PutUint16(pkt[V1_NUM_ITEMS:V1_NUM_ITEMS+2], 1)
 	off := V1_HDR_LEN
 
 	be.PutUint32(pkt[off+V1_SOFT_GW:off+V1_SOFT_GW+4], uint32(soft.gw))
@@ -203,26 +205,23 @@ func send_arec(pfx string, ea, ip, gw IP32, ref Ref, oid O32, mark M32, pktq cha
 
 	pb := <-getbuf
 
-	if len(pb.pkt)-pb.data < V1_HDR_LEN+4+V1_AREC_LEN {
+	if len(pb.pkt)-pb.data < V1_HDR_LEN+V1_AREC_LEN {
 		log.fatal("%v: not enough space for an address record", pfx) // paranoia
 	}
 
 	pb.set_v1hdr()
-	pb.write_v1_header(V1_SIG, V1_SET_AREC, oid, mark)
 	pkt := pb.pkt[pb.v1hdr:]
 
+	pb.write_v1_header(V1_SET_AREC, oid, mark)
+	pkt[V1_ITEM_TYPE] = V1_TYPE_AREC
+	be.PutUint16(pkt[V1_NUM_ITEMS:V1_NUM_ITEMS+2], 1)
 	off := V1_HDR_LEN
 
-	pkt[off+V1_AREC_HDR_RSVD] = 0
-	pkt[off+V1_AREC_HDR_ITEM_TYPE] = V1_AREC
-	be.PutUint16(pkt[off+V1_AREC_HDR_NUM_ITEMS:off+V1_AREC_HDR_NUM_ITEMS+2], 1)
-	off += V1_AREC_HDR_LEN
-
-	be.PutUint32(pkt[off+V1_EA:off+V1_EA+4], uint32(ea))
-	be.PutUint32(pkt[off+V1_IP:off+V1_IP+4], uint32(ip))
-	be.PutUint32(pkt[off+V1_GW:off+V1_GW+4], uint32(gw))
-	be.PutUint64(pkt[off+V1_REFH:off+V1_REFH+8], ref.h)
-	be.PutUint64(pkt[off+V1_REFL:off+V1_REFL+8], ref.l)
+	be.PutUint32(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], uint32(ea))
+	be.PutUint32(pkt[off+V1_AREC_IP:off+V1_AREC_IP+4], uint32(ip))
+	be.PutUint32(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], uint32(gw))
+	be.PutUint64(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], ref.h)
+	be.PutUint64(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], ref.l)
 	off += V1_AREC_LEN
 
 	pb.tail = off
@@ -370,22 +369,20 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.v1hdr:pb.tail]
-	if len(pkt) < V1_HDR_LEN+V1_AREC_HDR_LEN+V1_AREC_LEN {
+	if len(pkt) < V1_HDR_LEN {
 		log.err("mgw: SET_AREC packet too short, dropping")
 		return DROP
 	}
 	oid := O32(be.Uint32(pkt[V1_OID : V1_OID+4]))
 	mark := M32(be.Uint32(pkt[V1_MARK : V1_MARK+4]))
 
-	off := V1_HDR_LEN
-
-	if pkt[off+V1_AREC_HDR_ITEM_TYPE] != V1_AREC {
-		log.err("mgw: unexpected item type: %v, dropping", pkt[off+V1_AREC_HDR_ITEM_TYPE])
+	if pkt[V1_ITEM_TYPE] != V1_TYPE_AREC {
+		log.err("mgw: unexpected item type: %v, dropping", pkt[V1_ITEM_TYPE])
 		return DROP
 	}
-	num_items := int(be.Uint16(pkt[off+V1_AREC_HDR_NUM_ITEMS : off+V1_AREC_HDR_NUM_ITEMS+2]))
+	num_items := int(be.Uint16(pkt[V1_NUM_ITEMS : V1_NUM_ITEMS+2]))
 
-	off += V1_AREC_HDR_LEN
+	off := V1_HDR_LEN
 
 	if num_items == 0 || int(num_items*V1_AREC_LEN) != (pb.len()-off) {
 		log.err("mgw: mismatch between number of items (%v) and packet length (%v), dropping",
@@ -395,11 +392,11 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 	for ii := 0; ii < num_items; ii, off = ii+1, off+V1_AREC_LEN {
 
 		var ref Ref
-		ea := IP32(be.Uint32(pkt[off+V1_EA : off+V1_EA+4]))
-		ip := IP32(be.Uint32(pkt[off+V1_IP : off+V1_IP+4]))
-		gw := IP32(be.Uint32(pkt[off+V1_GW : off+V1_GW+4]))
-		ref.h = be.Uint64(pkt[off+V1_REFH : off+V1_REFH+8])
-		ref.l = be.Uint64(pkt[off+V1_REFL : off+V1_REFL+8])
+		ea := IP32(be.Uint32(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4]))
+		ip := IP32(be.Uint32(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4]))
+		gw := IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
+		ref.h = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
+		ref.l = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
 
 		if gw == 0 || ref.isZero() {
 			log.err("mgw: unexpected null gw + ref, %v %v %v %v, dropping record", ea, ip, gw, &ref)
@@ -408,8 +405,8 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 
 		if ea != 0 && ip == 0 {
 
-			if (oid == mgw.oid && pkt[off+V1_EA+2] < SECOND_BYTE) ||
-				(oid != mgw.oid && pkt[off+V1_EA+2] >= SECOND_BYTE) {
+			if (oid == mgw.oid && pkt[off+V1_AREC_EA+2] < SECOND_BYTE) ||
+				(oid != mgw.oid && pkt[off+V1_AREC_EA+2] >= SECOND_BYTE) {
 
 				log.err("mgw: %v(%v): second byte rule violation(ea), %v %v %v %v, dropping record",
 					owners.name(oid), oid, ea, ip, gw, &ref)
@@ -421,8 +418,8 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 
 		} else if ea == 0 && ip != 0 {
 
-			if (oid == mgw.oid && pkt[off+V1_REFL+6] < SECOND_BYTE) ||
-				(oid != mgw.oid && pkt[off+V1_REFL+6] >= SECOND_BYTE) {
+			if (oid == mgw.oid && pkt[off+V1_AREC_REFL+6] < SECOND_BYTE) ||
+				(oid != mgw.oid && pkt[off+V1_AREC_REFL+6] >= SECOND_BYTE) {
 				log.err("mgw: %v(%v): second byte rule violation(ref), %v %v %v %v, dropping record",
 					owners.name(oid), oid, ea, ip, gw, &ref)
 				continue
@@ -458,9 +455,15 @@ func (mgw *MapGw) set_new_mark(pb *PktBuf) int {
 func (mgw *MapGw) update_soft(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.v1hdr:pb.tail]
-	if len(pkt) != V1_HDR_LEN+V1_SOFT_LEN || pkt[V1_CMD] != V1_SET_SOFT {
+
+	if len(pkt) != V1_HDR_LEN+V1_SOFT_LEN ||
+		pkt[V1_CMD] != V1_SET_SOFT ||
+		pkt[V1_ITEM_TYPE] != V1_TYPE_SOFT ||
+		be.Uint16(pkt[V1_NUM_ITEMS:V1_NUM_ITEMS+2]) != 1 {
+
 		log.err("mgw: invalid SET_SOFT packet: PKT %08x data/tail(%v/%v), dropping",
 			be.Uint32(pb.pkt[pb.data:pb.data+4]), pb.data, pb.tail)
+
 		return DROP
 	}
 
@@ -754,22 +757,20 @@ func (mtun *MapTun) get_src_ea(gw IP32, ref Ref) IP32 {
 func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.v1hdr:pb.tail]
-	if len(pkt) < V1_HDR_LEN+V1_AREC_HDR_LEN+V1_AREC_LEN {
+	if len(pkt) < V1_HDR_LEN {
 		log.err("mtun: SET_AREC packet too short, dropping")
 		return DROP
 	}
 	oid := O32(be.Uint32(pkt[V1_OID : V1_OID+4]))
 	mark := M32(be.Uint32(pkt[V1_MARK : V1_MARK+4]))
 
-	off := V1_HDR_LEN
-
-	if pkt[off+V1_AREC_HDR_ITEM_TYPE] != V1_AREC {
-		log.err("mtun: unexpected item type: %v, dropping", pkt[off+V1_AREC_HDR_ITEM_TYPE])
+	if pkt[V1_ITEM_TYPE] != V1_TYPE_AREC {
+		log.err("mtun: unexpected item type: %v, dropping", pkt[V1_ITEM_TYPE])
 		return DROP
 	}
-	num_items := int(be.Uint16(pkt[off+V1_AREC_HDR_NUM_ITEMS : off+V1_AREC_HDR_NUM_ITEMS+2]))
+	num_items := int(be.Uint16(pkt[V1_NUM_ITEMS : V1_NUM_ITEMS+2]))
 
-	off += V1_AREC_HDR_LEN
+	off := V1_HDR_LEN
 
 	if num_items == 0 || num_items*V1_AREC_LEN != (pb.len()-off) {
 		log.err("mtun: mismatch between number of items (%v) and packet length (%v), dropping",
@@ -780,11 +781,11 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 	for ii := 0; ii < num_items; ii, off = ii+1, off+V1_AREC_LEN {
 
 		var ref Ref
-		ea := IP32(be.Uint32(pkt[off+V1_EA : off+V1_EA+4]))
-		ip := IP32(be.Uint32(pkt[off+V1_IP : off+V1_IP+4]))
-		gw := IP32(be.Uint32(pkt[off+V1_GW : off+V1_GW+4]))
-		ref.h = be.Uint64(pkt[off+V1_REFH : off+V1_REFH+8])
-		ref.l = be.Uint64(pkt[off+V1_REFL : off+V1_REFL+8])
+		ea := IP32(be.Uint32(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4]))
+		ip := IP32(be.Uint32(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4]))
+		gw := IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
+		ref.h = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
+		ref.l = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
 
 		if gw == 0 || ref.isZero() {
 			log.err("mtun: unexpected null gw + ref, %v %v %v %v, dropping record", ea, ip, gw, &ref)
@@ -793,8 +794,8 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
 		if ea != 0 && ip == 0 {
 
-			if (oid == mtun.oid && pkt[off+V1_EA+2] < SECOND_BYTE) ||
-				(oid != mtun.oid && pkt[off+V1_EA+2] >= SECOND_BYTE) {
+			if (oid == mtun.oid && pkt[off+V1_AREC_EA+2] < SECOND_BYTE) ||
+				(oid != mtun.oid && pkt[off+V1_AREC_EA+2] >= SECOND_BYTE) {
 				log.err("mtun: %v(%v): second byte rule violation(ea), %v %v %v %v, dropping record",
 					owners.name(oid), oid, ea, ip, gw, &ref)
 				continue
@@ -810,8 +811,8 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
 		} else if ea == 0 && ip != 0 {
 
-			if (oid == mtun.oid && pkt[off+V1_REFL+6] < SECOND_BYTE) ||
-				(oid != mtun.oid && pkt[off+V1_REFL+6] >= SECOND_BYTE) {
+			if (oid == mtun.oid && pkt[off+V1_AREC_REFL+6] < SECOND_BYTE) ||
+				(oid != mtun.oid && pkt[off+V1_AREC_REFL+6] >= SECOND_BYTE) {
 				log.err("mtun: %v(%v): second byte rule violation(ref), %v %v %v %v, dropping record",
 					owners.name(oid), oid, ea, ip, gw, &ref)
 				continue

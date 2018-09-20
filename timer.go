@@ -49,7 +49,7 @@ func get_timer_packet(cmd byte, mark M32) *PktBuf {
 	pb := <-getbuf
 
 	pb.set_v1hdr()
-	pb.write_v1_header(V1_SIG, cmd, mapper_oid, mark)
+	pb.write_v1_header(cmd, mapper_oid, mark)
 
 	pb.tail = pb.v1hdr + V1_HDR_LEN
 

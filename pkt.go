@@ -14,24 +14,22 @@ const ( // v1 constants
 	V1_AREC_LEN     = 4 + 4 + 4 + 8 + 8     // ea + ip + gw + ref.h + ref.l
 	V1_SOFT_LEN     = 4 + 2 + 2 + 1 + 1 + 2 // gw + mtu + port + ttl + hops + rsvd
 	// v1 header offsets
-	V1_VER      = 0
-	V1_CMD      = 1
-	V1_SRCQ     = 2
-	V1_DSTQ     = 3
-	V1_OID      = 4
-	V1_MARK     = 8
-	V1_RESERVED = 12
-	// v1 set address record header offsets
-	V1_AREC_HDR_RSVD      = 0
-	V1_AREC_HDR_ITEM_TYPE = 1
-	V1_AREC_HDR_NUM_ITEMS = 2
-	// v1 set address record offsets
-	V1_EA   = 0
-	V1_IP   = 4
-	V1_GW   = 8
-	V1_REFH = 12
-	V1_REFL = 20
-	// v1 set soft offsets
+	V1_VER       = 0
+	V1_CMD       = 1
+	V1_SRCQ      = 2
+	V1_DSTQ      = 3
+	V1_OID       = 4
+	V1_MARK      = 8
+	V1_RESERVED  = 12
+	V1_ITEM_TYPE = 13
+	V1_NUM_ITEMS = 14
+	// v1 arec offsets
+	V1_AREC_EA   = 0
+	V1_AREC_IP   = 4
+	V1_AREC_GW   = 8
+	V1_AREC_REFH = 12
+	V1_AREC_REFL = 20
+	// v1 soft offsets
 	V1_SOFT_GW   = 0
 	V1_SOFT_MTU  = 4
 	V1_SOFT_PORT = 6
@@ -40,9 +38,11 @@ const ( // v1 constants
 	V1_SOFT_RSVD = 10
 )
 
-const ( // set address record data types
+const ( // v1 item types
 
-	V1_AREC = iota + 1
+	V1_TYPE_NONE = iota
+	V1_TYPE_AREC
+	V1_TYPE_SOFT
 )
 
 const ( // v1 commands
@@ -247,7 +247,7 @@ func (pb *PktBuf) verify_csum() (uint16, uint16) {
 	return iphdr_csum ^ 0xffff, l4_csum ^ 0xffff
 }
 
-func (pb *PktBuf) write_v1_header(sig, cmd byte, oid O32, mark M32) {
+func (pb *PktBuf) write_v1_header(cmd byte, oid O32, mark M32) {
 
 	pkt := pb.pkt[pb.v1hdr:]
 
@@ -255,13 +255,15 @@ func (pb *PktBuf) write_v1_header(sig, cmd byte, oid O32, mark M32) {
 		log.fatal("pkt: not enough space for v1 header")
 	}
 
-	pkt[V1_VER] = sig
+	pkt[V1_VER] = V1_SIG
 	pkt[V1_CMD] = cmd
 	pkt[V1_SRCQ] = 0
 	pkt[V1_DSTQ] = 0
 	be.PutUint32(pkt[V1_OID:V1_OID+4], uint32(oid))
 	be.PutUint32(pkt[V1_MARK:V1_MARK+4], uint32(mark))
-	be.PutUint32(pkt[V1_RESERVED:V1_RESERVED+4], 0)
+	pkt[V1_RESERVED] = 0
+	pkt[V1_ITEM_TYPE] = V1_TYPE_NONE
+	be.PutUint16(pkt[V1_NUM_ITEMS:V1_NUM_ITEMS+2], 0)
 }
 
 // Add buffer bytes to csum. Input csum and result are not inverted.
