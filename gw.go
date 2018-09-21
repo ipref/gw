@@ -169,39 +169,47 @@ func start_gw() {
 
 	con, err := raw.ListenPacket(&cli.ifc, EtherIPv4, &raw.Config{false, true, false})
 	if err != nil {
-		log.fatal("gw:  cannot get raw socket: %v", err)
+		log.fatal("gw: cannot get raw socket: %v", err)
 	}
 
-	// filter IPREF packets: UDP with src or dst equal to IPREF_PORT
+	/* filter IPREF packets: UDP with src or dst equal to IPREF_PORT
+
+	Kernel will still be forwarding these packets. Use netfilter to silently
+	drop them. For example, the following firewall-cmd rules could be used:
+
+	firewall-cmd --add-rich-rule 'rule source-port port=1045 protocol=udp drop'
+	firewall-cmd --add-rich-rule 'rule port port=1045 protocol=udp drop'
+
+	*/
 
 	filter, err := bpf.Assemble([]bpf.Instruction{
-		bpf.LoadAbsolute{Off: 12, Size: 2},
+		bpf.LoadAbsolute{Off: ETHER_TYPE, Size: 2},
 		bpf.JumpIf{Cond: bpf.JumpEqual, Val: EtherIPv4, SkipTrue: 1},
 		bpf.RetConstant{Val: 0}, // not IPv4 packet
-		bpf.LoadAbsolute{Off: 14 + IP_DST, Size: 4},
+		bpf.LoadAbsolute{Off: ETHER_HDRLEN + IP_DST, Size: 4},
 		bpf.JumpIf{Cond: bpf.JumpEqual, Val: uint32(cli.gw_ip), SkipTrue: 1},
 		bpf.RetConstant{Val: 0}, // not our gateway IP address
-		bpf.LoadAbsolute{Off: 14 + IP_PROTO, Size: 1},
+		bpf.LoadAbsolute{Off: ETHER_HDRLEN + IP_PROTO, Size: 1},
 		bpf.JumpIf{Cond: bpf.JumpEqual, Val: UDP, SkipTrue: 1},
 		bpf.RetConstant{Val: 0}, // not UDP
-		bpf.LoadMemShift{Off: 14 + IP_VER},
-		bpf.LoadIndirect{Off: 14 + UDP_SPORT, Size: 2},
+		bpf.LoadMemShift{Off: ETHER_HDRLEN + IP_VER},
+		bpf.LoadIndirect{Off: ETHER_HDRLEN + UDP_SPORT, Size: 2},
 		bpf.JumpIf{Cond: bpf.JumpNotEqual, Val: IPREF_PORT, SkipTrue: 1},
 		bpf.RetConstant{Val: uint32(cli.pktbuflen)}, // src port match, copy packet
-		bpf.LoadIndirect{Off: 14 + UDP_DPORT, Size: 2},
+		bpf.LoadIndirect{Off: ETHER_HDRLEN + UDP_DPORT, Size: 2},
 		bpf.JumpIf{Cond: bpf.JumpNotEqual, Val: IPREF_PORT, SkipTrue: 1},
 		bpf.RetConstant{Val: uint32(cli.pktbuflen)}, // dst port match, copy packet
 		bpf.RetConstant{Val: 0},                     // no match, ignore packet
 	})
 
 	if err != nil {
-		log.fatal("gw:  cannot assemble bpf filter: %v", err)
+		log.fatal("gw: cannot assemble bpf filter: %v", err)
 	}
 
 	err = con.SetBPF(filter)
 
 	if err != nil {
-		log.fatal("gw:  cannot set bpf filter: %v", err)
+		log.fatal("gw: cannot set bpf filter: %v", err)
 	}
 
 	go gw_sender(con)
