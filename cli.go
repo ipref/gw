@@ -25,6 +25,7 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	ea_mask   IP32
 	gw_ip     IP32
 	ifc       net.Interface
+	pktbuflen int
 	log_level uint
 }
 
@@ -124,6 +125,10 @@ ifc_loop:
 	if cli.ifc.Index == 0 {
 		log.fatal("cannot find interface with gw address %v", cli.gw_ip)
 	}
+
+	// deduce pktbuflen: MTU + Ethernet II header
+
+	cli.pktbuflen = cli.ifc.MTU + 6 + 6 + 2
 
 	// parse ea net
 

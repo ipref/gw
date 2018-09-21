@@ -320,7 +320,7 @@ func pkt_buffers() {
 			select {
 			case pb = <-retbuf:
 			default:
-				pb = &PktBuf{pkt: make([]byte, cli.ifc.MTU, cli.ifc.MTU)}
+				pb = &PktBuf{pkt: make([]byte, cli.pktbuflen, cli.pktbuflen)}
 				allocated += 1
 				log.debug("pkt: new PktBuf allocated, total(%v)", allocated)
 				if allocated == MAXBUF*80/100 {
