@@ -9,7 +9,12 @@ import (
 )
 
 const (
-	EtherIPv4 = 0x0800
+	EtherIPv4    = 0x0800
+	ETHER_HDRLEN = 6 + 6 + 2
+	// ETHER offsets
+	ETHER_DST_MAC = 0
+	ETHER_SRC_MAC = 6
+	ETHER_TYPE    = 12
 )
 
 var recv_gw chan *PktBuf
@@ -108,15 +113,53 @@ func gw_receiver(con net.PacketConn) {
 	for {
 
 		pb := <-getbuf
+		pb.data = 2 // make sure IP header is on 32 bit boundary
+		pkt := pb.pkt[pb.data:]
+		pktlen := 0
 
-		rlen, haddr, err := con.ReadFrom(pb.pkt[pb.data:])
-		log.debug("gw in: hdw addr: %v  rcvlen(%v)", haddr, rlen)
-		pb.tail = rlen
-		pb.pp_raw("gw_in:   ")
+		rlen, haddr, err := con.ReadFrom(pkt)
+		log.debug("gw in: src mac: %v  rcvlen(%v)", haddr, rlen)
 		if rlen == 0 {
-			log.debug("gw in: read failed: %v", err)
+			log.err("gw in: read failed: %v", err)
+			goto drop
 		}
 
+		if rlen < ETHER_HDRLEN+20 {
+			log.err("gw in: packet too short: %v bytes, dropping", rlen)
+			goto drop
+		}
+
+		if be.Uint16(pkt[ETHER_TYPE:ETHER_TYPE+2]) != EtherIPv4 ||
+			pkt[ETHER_HDRLEN+IP_VER]&0xf0 != 0x40 {
+
+			log.err("gw in: not an IPv4 packet, dropping")
+			goto drop
+		}
+
+		pktlen = int(be.Uint16(pkt[ETHER_HDRLEN+IP_LEN : ETHER_HDRLEN+IP_LEN+2]))
+		if len(pkt)-ETHER_HDRLEN < pktlen {
+			log.err("gw in: packet truncated, dropping")
+			goto drop
+		}
+
+		pb.data += ETHER_HDRLEN
+		pb.tail = pb.data + pktlen
+		pb.set_iphdr()
+
+		if cli.debug["gw"] || cli.debug["all"] {
+			log.debug("gw_in: %v", pb.pp_pkt())
+		}
+
+		if log.level <= TRACE {
+			pb.pp_net("gw_in:   ")
+			pb.pp_tran("gw_in:   ")
+			pb.pp_raw("gw_in:   ")
+		}
+
+		recv_gw <- pb
+		continue
+
+	drop:
 		retbuf <- pb
 	}
 
