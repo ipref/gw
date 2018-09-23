@@ -20,13 +20,14 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	hosts_path string
 	dns_path   string
 	// derived
-	debug     map[string]bool
-	ea_ip     IP32
-	ea_mask   IP32
-	gw_ip     IP32
-	ifc       net.Interface
-	pktbuflen int
-	log_level uint
+	debug      map[string]bool
+	ea_ip      IP32
+	ea_mask    IP32
+	ea_masklen int
+	gw_ip      IP32
+	ifc        net.Interface
+	pktbuflen  int
+	log_level  uint
 }
 
 func parse_cli() {
@@ -129,6 +130,8 @@ ifc_loop:
 	// deduce pktbuflen: MTU + Ethernet II header
 
 	cli.pktbuflen = cli.ifc.MTU + 6 + 6 + 2
+	cli.pktbuflen += 3
+	cli.pktbuflen &^= 3
 
 	// parse ea net
 
@@ -148,6 +151,7 @@ ifc_loop:
 
 	cli.ea_ip = IP32(be.Uint32(ipnet.IP.To4()))
 	cli.ea_mask = IP32(be.Uint32(net.IP(ipnet.Mask).To4()))
+	cli.ea_masklen = ones
 	cli.ea_ip &= cli.ea_mask
 
 	// normalize file paths

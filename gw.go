@@ -9,8 +9,10 @@ import (
 )
 
 const (
-	EtherIPv4    = 0x0800
 	ETHER_HDRLEN = 6 + 6 + 2
+	// ETHER types
+	ETHER_IPv4 = 0x0800
+	ETHER_IPv6 = 0x86dd
 	// ETHER offsets
 	ETHER_DST_MAC = 0
 	ETHER_SRC_MAC = 6
@@ -129,7 +131,7 @@ func gw_receiver(con net.PacketConn) {
 			goto drop
 		}
 
-		if be.Uint16(pkt[ETHER_TYPE:ETHER_TYPE+2]) != EtherIPv4 ||
+		if be.Uint16(pkt[ETHER_TYPE:ETHER_TYPE+2]) != ETHER_IPv4 ||
 			pkt[ETHER_HDRLEN+IP_VER]&0xf0 != 0x40 {
 
 			log.err("gw in: not an IPv4 packet, dropping")
@@ -167,7 +169,7 @@ func gw_receiver(con net.PacketConn) {
 
 func start_gw() {
 
-	con, err := raw.ListenPacket(&cli.ifc, EtherIPv4, &raw.Config{false, true, false})
+	con, err := raw.ListenPacket(&cli.ifc, ETHER_IPv4, &raw.Config{false, true, false})
 	if err != nil {
 		log.fatal("gw: cannot get raw socket: %v", err)
 	}
@@ -184,7 +186,7 @@ func start_gw() {
 
 	filter, err := bpf.Assemble([]bpf.Instruction{
 		bpf.LoadAbsolute{Off: ETHER_TYPE, Size: 2},
-		bpf.JumpIf{Cond: bpf.JumpEqual, Val: EtherIPv4, SkipTrue: 1},
+		bpf.JumpIf{Cond: bpf.JumpEqual, Val: ETHER_IPv4, SkipTrue: 1},
 		bpf.RetConstant{Val: 0}, // not IPv4 packet
 		bpf.LoadAbsolute{Off: ETHER_HDRLEN + IP_DST, Size: 4},
 		bpf.JumpIf{Cond: bpf.JumpEqual, Val: uint32(cli.gw_ip), SkipTrue: 1},
@@ -211,6 +213,8 @@ func start_gw() {
 	if err != nil {
 		log.fatal("gw: cannot set bpf filter: %v", err)
 	}
+
+	log.info("gw: gateway %v %v mtu(%v)", cli.gw_ip, cli.ifc.Name, cli.ifc.MTU)
 
 	go gw_sender(con)
 	go gw_receiver(con)

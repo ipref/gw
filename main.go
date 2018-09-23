@@ -3,12 +3,24 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 )
 
 var goexit chan (string)
+
+func shell(cmdline string, args ...interface{}) (string, string, error) {
+
+	cmd := fmt.Sprintf(cmdline, args...)
+	runcmd := exec.Command("/bin/sh", "-c", cmd)
+	runcmd.Dir = "/"
+	out, err := runcmd.CombinedOutput()
+	return cmd, strings.TrimSpace(string(out)), err
+}
 
 func catch_signals() {
 
@@ -26,7 +38,6 @@ func main() {
 	parse_cli() // also initializes log
 
 	log.info("START meadow")
-	log.info("gateway ip %v  ifc(%v):%v  mtu(%v)", cli.gw_ip, cli.ifc.Index, cli.ifc.Name, cli.ifc.MTU)
 
 	goexit = make(chan string)
 	go catch_signals()
@@ -70,9 +81,7 @@ func main() {
 	go fwd_to_tun()
 
 	start_gw()
-
-	go tun_receiver()
-	go tun_sender()
+	start_tun()
 
 	go timer_tick()
 	go purge_tick()

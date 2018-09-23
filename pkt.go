@@ -565,6 +565,8 @@ func pkt_buffers() {
 	var pb *PktBuf
 	allocated := 0 // num of allocated buffers
 
+	log.debug("pkt: packet buflen(%v)", cli.pktbuflen)
+
 	for {
 
 		if allocated < MAXBUF {
