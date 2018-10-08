@@ -12,6 +12,18 @@ import (
 	"strings"
 )
 
+/* ARP cache
+
+Raw packet send requires to supply destinatin mac address. Mac addresses are
+normally obtained through ARP. In this implementation, we take a short cut
+where we examine /proc arp entries instead. This is augmented with running
+arping utility to induce ARP query for destinations not listed in /proc.
+
+Since arping takes seconds to produce a result, we queue packets destined for
+the ip address being queried to allow other packets go through. Packets are
+released from the queue once arping completes.
+*/
+
 const (
 	ETHER_HDRLEN = 6 + 6 + 2
 	// ETHER types
@@ -21,10 +33,6 @@ const (
 	ETHER_DST_MAC = 0
 	ETHER_SRC_MAC = 6
 	ETHER_TYPE    = 12
-	// L2 hdw types
-	L2_ETHERNET = 0x01
-	// L2 flags
-	L2_COMPLETED = 0x02
 )
 
 const (
@@ -39,25 +47,104 @@ const (
 	ROUTE_FLAG_G = 0x02 // gateway
 )
 
-type L2Addr struct {
+const (
+	// columns in /proc/net/arp
+	ARP_IP     = 0
+	ARP_HWTYPE = 1
+	ARP_FLAGS  = 2
+	ARP_MAC    = 3
+	ARP_IFC    = 5
+	// hwtype
+	ARP_HW_ETHER = 0x1
+	// flags
+	ARP_FLAG_COMPLETED = 0x2
+	ARP_FLAG_PERMANENT = 0x4
+	ARP_FLAG_DONTKNOW  = 0x40 // nothing in proc (re-using DONTPUB)
+)
+
+type ArpRec struct {
 	hwtype byte
 	flags  byte
-	mac    string // mac address as a string f4:4d:30:61:54:da
+	mac    string    // mac address as a string f4:4d:30:61:54:da
+	pbq    []*PktBuf // packets waiting for mac address
 }
 
-func (l2 *L2Addr) Network() string {
-	return "raw"
+func (arprec *ArpRec) fill_from_proc(ip IP32) {
+
+	const fname = "/proc/net/arp"
+
+	fd, err := os.Open(fname)
+	if err != nil {
+		log.fatal("gw: cannot open %v", fname)
+	}
+	defer fd.Close()
+
+	arprec.hwtype = 0
+	arprec.flags = ARP_FLAG_DONTKNOW
+	ipstr := ip.String()
+
+	scanner := bufio.NewScanner(fd)
+	scanner.Scan() // skip header line
+	for scanner.Scan() {
+
+		line := scanner.Text()
+		toks := strings.Fields(line)
+		if len(toks) != 6 {
+			log.fatal("gw: expecting 6 columns in %v, got %v instead", fname, len(toks))
+		}
+
+		// match ip address and ifc
+
+		if toks[ARP_IP] != ipstr || toks[ARP_IFC] != cli.ifc.Name {
+			continue
+		}
+
+		// hw type
+
+		hwtype, err := strconv.ParseUint(toks[ARP_HWTYPE], 0, 8)
+		if err != nil {
+			log.fatal("gw: cannot parse hw type from %v: %v", fname, err)
+		}
+		arprec.hwtype = byte(hwtype)
+
+		// flags
+
+		flags, err := strconv.ParseUint(toks[ARP_FLAGS], 0, 8)
+		if err != nil {
+			log.fatal("gw: cannot parse flags from %v: %v", fname, err)
+		}
+		arprec.flags = byte(flags)
+
+		// mac
+
+		arprec.mac = toks[ARP_MAC]
+
+		log.info("gw: detected arp entry %-15v  %v  %v  %v  %v",
+			toks[ARP_IP], toks[ARP_HWTYPE], toks[ARP_FLAGS], toks[ARP_MAC], toks[ARP_IFC])
+
+		break
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.err("gw: error reading %v", fname)
+	}
+
 }
 
-func (l2 *L2Addr) String() string {
-	return l2.mac
+func (arprec *ArpRec) Network() string {
+	return cli.ifc.Name
 }
 
+func (arprec *ArpRec) String() string {
+	return arprec.mac
+}
+
+var arpcache map[IP32]*ArpRec
+var arping chan IP32
 var recv_gw chan *PktBuf
 var send_gw chan *PktBuf
-var slow_gw chan *PktBuf
 
-// deduce network on gw ifc and default next hop
+// deduce what network is configured on gw ifc and what default next hop is
 func get_gw_network() (net.IPNet, IP32) {
 
 	const fname = "/proc/net/route"
@@ -121,19 +208,28 @@ func get_gw_network() (net.IPNet, IP32) {
 	return gw_network, gw_nexthop
 }
 
-func gw_sender_slow() {
+func get_arprec(ip IP32) *ArpRec {
 
-	// find mac address of nexthop then put packet back onto send_gw queue
+	arprec, ok := arpcache[ip]
+	if !ok {
+		arprec = &ArpRec{0, 0, "00:00:00:00:00:00", make([]*PktBuf, 0, 5)}
+		arprec.fill_from_proc(ip)
+		arpcache[ip] = arprec
+	}
 
-	for pb := range slow_gw {
+	return arprec
+}
 
-		retbuf <- pb
+func gw_arping() {
+
+	for ip := range arping {
+		log.debug("gw: arping %v", ip)
 	}
 }
 
 func gw_sender(con net.PacketConn) {
 
-	arpcache := make(map[IP32]L2Addr)
+	arpcache = make(map[IP32]*ArpRec)
 
 	gw_network, gw_nexthop := get_gw_network()
 
@@ -149,27 +245,38 @@ func gw_sender(con net.PacketConn) {
 			continue
 		}
 
-		// send raw packet
+		// find next hop
 
+		nexthop := IP32(0)
 		dst := net.IP(pb.pkt[pb.iphdr+IP_DST : pb.iphdr+IP_DST+4])
 
 		if gw_network.Contains(dst) {
-			pb.nexthop = IP32(be.Uint32(dst))
+			nexthop = IP32(be.Uint32(dst))
 		} else if gw_nexthop == 0 {
 			icmpreq <- pb
 			continue // no route to destination
 		} else {
-			pb.nexthop = gw_nexthop
+			nexthop = gw_nexthop
 		}
 
-		l2addr, ok := arpcache[pb.nexthop]
+		// find next hop's mac address
 
-		if !ok {
-			slow_gw <- pb
+		arprec := get_arprec(nexthop)
+
+		if len(arprec.pbq) != 0 {
+			// already trying to get mac address, add pkt to the queue
+			arprec.pbq = append(arprec.pbq, pb)
 			continue
 		}
 
-		if l2addr.flags&L2_COMPLETED == 0 {
+		if arprec.flags&ARP_FLAG_DONTKNOW != 0 {
+			// nothing in proc, run arping
+			arprec.pbq = append(arprec.pbq, pb)
+			arping <- nexthop
+			continue
+		}
+
+		if arprec.flags&ARP_FLAG_COMPLETED == 0 {
 			icmpreq <- pb // no route to destination
 			continue
 		}
@@ -184,7 +291,7 @@ func gw_sender(con net.PacketConn) {
 			pb.pp_raw("gw out:  ")
 		}
 
-		con.WriteTo(pb.pkt[pb.iphdr:pb.tail], &l2addr)
+		con.WriteTo(pb.pkt[pb.iphdr:pb.tail], arprec)
 
 		// return buffer to the pool
 
@@ -298,7 +405,7 @@ func start_gw() {
 
 	log.info("gw: gateway %v %v mtu(%v)", cli.gw_ip, cli.ifc.Name, cli.ifc.MTU)
 
-	go gw_sender_slow()
 	go gw_sender(con)
 	go gw_receiver(con)
+	go gw_arping()
 }

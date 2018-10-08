@@ -134,14 +134,13 @@ type IcmpReq struct { // params for icmp requests
 	mtu  uint16
 }
 type PktBuf struct {
-	pkt     []byte
-	data    int
-	tail    int
-	iphdr   int
-	l4hdr   int
-	v1hdr   int
-	nexthop IP32
-	icmp    IcmpReq
+	pkt   []byte
+	data  int
+	tail  int
+	iphdr int
+	l4hdr int
+	v1hdr int
+	icmp  IcmpReq
 }
 
 func (pb *PktBuf) clear() {
@@ -151,7 +150,6 @@ func (pb *PktBuf) clear() {
 	pb.iphdr = 0
 	pb.l4hdr = 0
 	pb.v1hdr = 0
-	pb.nexthop = 0
 	pb.icmp = IcmpReq{0, 0, 0}
 }
 
