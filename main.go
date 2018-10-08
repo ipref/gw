@@ -61,6 +61,7 @@ func main() {
 	send_tun = make(chan *PktBuf, PKTQLEN)
 	recv_gw = make(chan *PktBuf, PKTQLEN)
 	send_gw = make(chan *PktBuf, PKTQLEN)
+	arping_gw = make(chan *PktBuf, PKTQLEN)
 
 	random_dns_ref = make(chan Ref, GENQLEN)
 	random_mapper_ref = make(chan Ref, GENQLEN)

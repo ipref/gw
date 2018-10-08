@@ -59,7 +59,6 @@ const (
 	// flags
 	ARP_FLAG_COMPLETED = 0x2
 	ARP_FLAG_PERMANENT = 0x4
-	ARP_FLAG_DONTKNOW  = 0x40 // nothing in proc (re-using DONTPUB)
 )
 
 type ArpRec struct {
@@ -80,7 +79,7 @@ func (arprec *ArpRec) fill_from_proc(ip IP32) {
 	defer fd.Close()
 
 	arprec.hwtype = 0
-	arprec.flags = ARP_FLAG_DONTKNOW
+	arprec.flags = 0
 	ipstr := ip.String()
 
 	scanner := bufio.NewScanner(fd)
@@ -119,7 +118,7 @@ func (arprec *ArpRec) fill_from_proc(ip IP32) {
 
 		arprec.mac = toks[ARP_MAC]
 
-		log.info("gw: detected arp entry %-15v  %v  %v  %v  %v",
+		log.info("gw: detected proc arp entry %-15v  %v  %v  %v  %v",
 			toks[ARP_IP], toks[ARP_HWTYPE], toks[ARP_FLAGS], toks[ARP_MAC], toks[ARP_IFC])
 
 		break
@@ -140,7 +139,7 @@ func (arprec *ArpRec) String() string {
 }
 
 var arpcache map[IP32]*ArpRec
-var arping chan IP32
+var arping_gw chan *PktBuf
 var recv_gw chan *PktBuf
 var send_gw chan *PktBuf
 
@@ -222,8 +221,26 @@ func get_arprec(ip IP32) *ArpRec {
 
 func gw_arping() {
 
-	for ip := range arping {
-		log.debug("gw: arping %v", ip)
+	for pb := range arping_gw {
+
+		pkt := pb.pkt[pb.v1hdr:pb.tail]
+
+		if len(pkt) != V1_HDR_LEN+4 ||
+			pkt[V1_VER] != V1_SIG ||
+			pkt[V1_CMD] != V1_RUN_ARPING ||
+			pkt[V1_ITEM_TYPE] != V1_TYPE_IPV4 {
+			log.fatal("gw arping: invalid V1 packet")
+		}
+
+		dst := IP32(be.Uint32(pkt[V1_HDR_LEN : V1_HDR_LEN+4]))
+		cmd, out, ret := shell("arping  -f -w 1 -I %v -s %v %v", cli.ifc.Name, cli.gw_ip, dst)
+		if ret < 0 {
+			log.fatal("gw arping: shell command failed: %v", cmd)
+		}
+
+		log.debug("gw arping: %v", out)
+
+		send_gw <- pb
 	}
 }
 
@@ -245,57 +262,92 @@ func gw_sender(con net.PacketConn) {
 			continue
 		}
 
-		// find next hop
+		var arprec *ArpRec
 
-		nexthop := IP32(0)
-		dst := net.IP(pb.pkt[pb.iphdr+IP_DST : pb.iphdr+IP_DST+4])
+		if pb.pkt[pb.data+V1_VER] == V1_SIG {
 
-		if gw_network.Contains(dst) {
-			nexthop = IP32(be.Uint32(dst))
-		} else if gw_nexthop == 0 {
-			icmpreq <- pb
-			continue // no route to destination
+			// release pkts from arp queue
+
+			ip := IP32(be.Uint32(pb.pkt[pb.v1hdr+V1_HDR_LEN : pb.v1hdr+V1_HDR_LEN+4]))
+			arprec = get_arprec(ip)
+			arprec.fill_from_proc(ip)
+
 		} else {
-			nexthop = gw_nexthop
-		}
 
-		// find next hop's mac address
+			// find next hop
 
-		arprec := get_arprec(nexthop)
+			nexthop := IP32(0)
+			dst := net.IP(pb.pkt[pb.iphdr+IP_DST : pb.iphdr+IP_DST+4])
 
-		if len(arprec.pbq) != 0 {
-			// already trying to get mac address, add pkt to the queue
+			if gw_network.Contains(dst) {
+				nexthop = IP32(be.Uint32(dst))
+			} else if gw_nexthop == 0 {
+				icmpreq <- pb
+				continue // no route to destination
+			} else {
+				nexthop = gw_nexthop
+			}
+
+			// find next hop's mac address
+
+			arprec = get_arprec(nexthop)
 			arprec.pbq = append(arprec.pbq, pb)
-			continue
-		}
 
-		if arprec.flags&ARP_FLAG_DONTKNOW != 0 {
-			// nothing in proc, run arping
-			arprec.pbq = append(arprec.pbq, pb)
-			arping <- nexthop
-			continue
+			if len(arprec.pbq) != 1 {
+				log.debug("gw out:  arping already running for %v, queuing packet", nexthop)
+				continue // more packets queued already
+			}
+
+			if arprec.flags&ARP_FLAG_COMPLETED == 0 {
+
+				// mac unavailable, run arping
+
+				pba := <-getbuf
+				pba.set_v1hdr()
+				pba.write_v1_header(V1_RUN_ARPING, 0, 0)
+				pba.tail = pb.v1hdr + V1_HDR_LEN + 4
+				pkta := pba.pkt[pba.v1hdr:pba.tail]
+				pkta[V1_ITEM_TYPE] = V1_TYPE_IPV4
+				be.PutUint16(pkta[V1_NUM_ITEMS:V1_NUM_ITEMS+2], 1)
+				off := V1_HDR_LEN
+				be.PutUint32(pkta[off:off+4], uint32(nexthop))
+
+				log.debug("gw out:  mac unavailable for %v, trying arping", nexthop)
+				arping_gw <- pba
+				continue
+			}
 		}
 
 		if arprec.flags&ARP_FLAG_COMPLETED == 0 {
-			icmpreq <- pb // no route to destination
-			continue
+
+			for ix, pb := range arprec.pbq {
+				if ix == 0 {
+					icmpreq <- pb // no route to destination, first packet on the queue
+				} else {
+					retbuf <- pb // drop the rest
+				}
+			}
+			arprec.pbq = arprec.pbq[0:0]
+
+		} else {
+
+			for _, pb := range arprec.pbq {
+
+				if cli.debug["gw"] || cli.debug["all"] {
+					log.debug("gw out:  %v", pb.pp_pkt())
+				}
+
+				if log.level <= TRACE {
+					pb.pp_net("gw out:  ")
+					pb.pp_tran("gw out:  ")
+					pb.pp_raw("gw out:  ")
+				}
+
+				con.WriteTo(pb.pkt[pb.iphdr:pb.tail], arprec)
+				retbuf <- pb
+			}
+			arprec.pbq = arprec.pbq[0:0]
 		}
-
-		if cli.debug["gw"] || cli.debug["all"] {
-			log.debug("gw out:  %v", pb.pp_pkt())
-		}
-
-		if log.level <= TRACE {
-			pb.pp_net("gw out:  ")
-			pb.pp_tran("gw out:  ")
-			pb.pp_raw("gw out:  ")
-		}
-
-		con.WriteTo(pb.pkt[pb.iphdr:pb.tail], arprec)
-
-		// return buffer to the pool
-
-		retbuf <- pb
 	}
 }
 

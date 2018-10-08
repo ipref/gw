@@ -51,6 +51,7 @@ const ( // v1 item types
 	V1_TYPE_NONE = iota
 	V1_TYPE_AREC
 	V1_TYPE_SOFT
+	V1_TYPE_IPV4
 )
 
 const ( // v1 commands
@@ -59,6 +60,7 @@ const ( // v1 commands
 	V1_SET_MARK
 	V1_SET_SOFT
 	V1_PURGE
+	V1_RUN_ARPING
 )
 
 const ( // packet handling verdicts
