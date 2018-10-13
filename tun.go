@@ -97,7 +97,7 @@ func start_tun() {
 
 	var cmd string
 	var out string
-	var err error
+	var ret int
 
 	// create tun device
 
@@ -126,22 +126,22 @@ func start_tun() {
 	ea_masklen := cli.ea_masklen
 	mtu := cli.ifc.MTU - OPTLEN
 
-	cmd, out, err = shell("ip l set %v mtu %v", ifcname, mtu)
-	if err != nil {
+	cmd, out, ret = shell("ip l set %v mtu %v", ifcname, mtu)
+	if ret != 0 {
 		log.debug("tun: %v", cmd)
 		log.debug("tun: %v", strings.TrimSpace(out))
 		log.fatal("tun: cannot set %v MTU: %v", ifcname, err)
 	}
 
-	cmd, out, err = shell("ip a add %v/%v dev %v", ea_ip, ea_masklen, ifcname)
-	if err != nil {
+	cmd, out, ret = shell("ip a add %v/%v dev %v", ea_ip, ea_masklen, ifcname)
+	if ret != 0 {
 		log.debug("tun: %v", cmd)
 		log.debug("tun: %v", strings.TrimSpace(out))
 		log.fatal("tun: cannot set address on %v: %v", ifcname, err)
 	}
 
-	cmd, out, err = shell("ip l set dev %v up", ifcname)
-	if err != nil {
+	cmd, out, ret = shell("ip l set dev %v up", ifcname)
+	if ret != 0 {
 		log.debug("tun: %v", cmd)
 		log.debug("tun: %v", strings.TrimSpace(out))
 		log.fatal("tun: cannot bring %v up: %v", ifcname, err)

@@ -7,19 +7,36 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 )
 
 var goexit chan (string)
 
-func shell(cmdline string, args ...interface{}) (string, string, error) {
+func shell(cmdline string, args ...interface{}) (string, string, int) {
 
+	ret := 0
 	cmd := fmt.Sprintf(cmdline, args...)
 	runcmd := exec.Command("/bin/sh", "-c", cmd)
 	runcmd.Dir = "/"
 	out, err := runcmd.CombinedOutput()
-	return cmd, strings.TrimSpace(string(out)), err
+
+	// find out exit code which should be non-negative
+	if err != nil {
+		toks := strings.Fields(err.Error())
+		if len(toks) == 3 && toks[0] == "exit" && toks[1] == "status" {
+			res, err := strconv.ParseInt(toks[2], 0, 0)
+			if err == nil {
+				ret = int(res)
+			} else {
+				ret = -1
+			}
+		} else {
+			ret = -1 // some other error, not an exit code
+		}
+	}
+	return cmd, strings.TrimSpace(string(out)), ret
 }
 
 func catch_signals() {
