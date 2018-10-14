@@ -140,7 +140,6 @@ type PktBuf struct {
 	data  int
 	tail  int
 	iphdr int
-	l4hdr int
 	icmp  IcmpReq
 }
 
@@ -149,7 +148,6 @@ func (pb *PktBuf) clear() {
 	pb.data = 0
 	pb.tail = 0
 	pb.iphdr = 0
-	pb.l4hdr = 0
 	pb.icmp = IcmpReq{0, 0, 0}
 }
 
@@ -162,7 +160,6 @@ func (pb *PktBuf) copy_from(pbo *PktBuf) {
 	pb.data = pbo.data
 	pb.tail = pbo.tail
 	pb.iphdr = pbo.iphdr
-	pb.l4hdr = pbo.l4hdr
 	pb.icmp = pbo.icmp
 
 	copy(pb.pkt[pb.data:pb.tail], pbo.pkt[pb.data:pb.tail])
@@ -404,12 +401,6 @@ func (pb *PktBuf) set_iphdr() int {
 
 func (pb *PktBuf) iphdr_len() int {
 	return int((pb.pkt[pb.iphdr] & 0x0f) * 4)
-}
-
-func (pb *PktBuf) set_l4hdr() int {
-
-	pb.l4hdr = pb.iphdr + pb.iphdr_len()
-	return pb.l4hdr
 }
 
 func (pb *PktBuf) len() int {
