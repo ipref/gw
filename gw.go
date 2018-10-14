@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 /* ARP cache
@@ -17,11 +18,12 @@ import (
 Raw packet send requires to supply destinatin mac address. Mac addresses are
 normally obtained through ARP. In this implementation, we take a short cut
 where we examine /proc arp entries instead. This is augmented with running
-arping utility to induce ARP query for destinations not listed in /proc.
+arping utility to induce ARP query for destinations not listed in /proc plus
+a periodic check for stale entries.
 
-Since arping takes seconds to produce a result, we queue packets destined for
-the ip address being queried to allow other packets go through. Packets are
-released from the queue once arping completes.
+Since arping may take seconds to produce a result, we queue packets destined
+for the ip address being queried to allow other packets go through. Packets
+are released from the queue once arping completes.
 */
 
 const (
@@ -61,11 +63,17 @@ const (
 	ARP_FLAG_PERMANENT = 0x4
 )
 
+const (
+	ARP_PROBE_IVL = 29 // [s] interval for probing arp entries
+	ARP_MAX_QUEUE = 10 // max packets on queue awaiting arp
+)
+
 type ArpRec struct {
 	hwtype byte
 	flags  byte
 	mac    string    // mac address as a string f4:4d:30:61:54:da
 	pbq    []*PktBuf // packets waiting for mac address
+	stamp  int64     // proc arp read time stamp
 }
 
 func (arprec *ArpRec) fill_from_proc(ip IP32) {
@@ -80,6 +88,7 @@ func (arprec *ArpRec) fill_from_proc(ip IP32) {
 
 	arprec.hwtype = 0
 	arprec.flags = 0
+	arprec.stamp = time.Now().Unix()
 	ipstr := ip.String()
 
 	scanner := bufio.NewScanner(fd)
@@ -139,7 +148,6 @@ func (arprec *ArpRec) String() string {
 }
 
 var arpcache map[IP32]*ArpRec
-var arping_gw chan *PktBuf
 var recv_gw chan *PktBuf
 var send_gw chan *PktBuf
 
@@ -211,7 +219,7 @@ func get_arprec(ip IP32) *ArpRec {
 
 	arprec, ok := arpcache[ip]
 	if !ok {
-		arprec = &ArpRec{0, 0, "00:00:00:00:00:00", make([]*PktBuf, 0, 5)}
+		arprec = &ArpRec{0, 0, "00:00:00:00:00:00", make([]*PktBuf, 0, 5), 0}
 		arprec.fill_from_proc(ip)
 		arpcache[ip] = arprec
 	}
@@ -219,29 +227,28 @@ func get_arprec(ip IP32) *ArpRec {
 	return arprec
 }
 
-func gw_arping() {
+// induce arp query
+func arping(nexthop IP32) {
 
-	for pb := range arping_gw {
-
-		pkt := pb.pkt[pb.v1hdr:pb.tail]
-
-		if len(pkt) != V1_HDR_LEN+4 ||
-			pkt[V1_VER] != V1_SIG ||
-			pkt[V1_CMD] != V1_RUN_ARPING ||
-			pkt[V1_ITEM_TYPE] != V1_TYPE_IPV4 {
-			log.fatal("gw arping: invalid V1 packet")
-		}
-
-		dst := IP32(be.Uint32(pkt[V1_HDR_LEN : V1_HDR_LEN+4]))
-		cmd, out, ret := shell("arping  -f -w 1 -I %v -s %v %v", cli.ifc.Name, cli.gw_ip, dst)
-		if ret < 0 {
-			log.fatal("gw arping: shell command failed: %v", cmd)
-		}
-
-		log.debug("gw arping: %v", out)
-
-		send_gw <- pb
+	cmd, out, ret := shell("arping  -f -w 1 -I %v -s %v %v", cli.ifc.Name, cli.gw_ip, nexthop)
+	if ret < 0 {
+		log.fatal("gw arping: shell command failed: %v", cmd)
 	}
+
+	log.debug("gw arping: %v", out)
+
+	pb := <-getbuf
+
+	pb.set_v1hdr()
+	pb.write_v1_header(V1_RUN_ARPING, 0, 0)
+	pb.tail = pb.v1hdr + V1_HDR_LEN + 4
+	pkt := pb.pkt[pb.v1hdr:pb.tail]
+	pkt[V1_ITEM_TYPE] = V1_TYPE_IPV4
+	be.PutUint16(pkt[V1_NUM_ITEMS:V1_NUM_ITEMS+2], 1)
+	off := V1_HDR_LEN
+	be.PutUint32(pkt[off:off+4], uint32(nexthop))
+
+	send_gw <- pb
 }
 
 func gw_sender(con net.PacketConn) {
@@ -266,7 +273,7 @@ func gw_sender(con net.PacketConn) {
 
 		if pb.pkt[pb.data+V1_VER] == V1_SIG {
 
-			// release pkts from arp queue
+			// update arprec following query
 
 			ip := IP32(be.Uint32(pb.pkt[pb.v1hdr+V1_HDR_LEN : pb.v1hdr+V1_HDR_LEN+4]))
 			arprec = get_arprec(ip)
@@ -291,29 +298,23 @@ func gw_sender(con net.PacketConn) {
 			// find next hop's mac address
 
 			arprec = get_arprec(nexthop)
-			arprec.pbq = append(arprec.pbq, pb)
 
-			if len(arprec.pbq) != 1 {
-				log.debug("gw out:  arping already running for %v, queuing packet", nexthop)
-				continue // more packets queued already
+			if len(arprec.pbq) != 0 {
+				if len(arprec.pbq) < ARP_MAX_QUEUE {
+					log.debug("gw out:  arping already running for %v, queuing packet", nexthop)
+					arprec.pbq = append(arprec.pbq, pb)
+				} else {
+					log.debug("gw out:  arping queue for %v full, dropping packet", nexthop)
+					retbuf <- pb
+				}
+				continue
 			}
 
+			arprec.pbq = append(arprec.pbq, pb)
+
 			if arprec.flags&ARP_FLAG_COMPLETED == 0 {
-
-				// mac unavailable, run arping
-
-				pba := <-getbuf
-				pba.set_v1hdr()
-				pba.write_v1_header(V1_RUN_ARPING, 0, 0)
-				pba.tail = pb.v1hdr + V1_HDR_LEN + 4
-				pkta := pba.pkt[pba.v1hdr:pba.tail]
-				pkta[V1_ITEM_TYPE] = V1_TYPE_IPV4
-				be.PutUint16(pkta[V1_NUM_ITEMS:V1_NUM_ITEMS+2], 1)
-				off := V1_HDR_LEN
-				be.PutUint32(pkta[off:off+4], uint32(nexthop))
-
 				log.debug("gw out:  mac unavailable for %v, trying arping", nexthop)
-				arping_gw <- pba
+				go arping(nexthop) // mac unavailable, run arping
 				continue
 			}
 		}
@@ -459,5 +460,4 @@ func start_gw() {
 
 	go gw_sender(con)
 	go gw_receiver(con)
-	go gw_arping()
 }
