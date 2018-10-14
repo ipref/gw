@@ -102,6 +102,7 @@ func main() {
 
 	go timer_tick()
 	go purge_tick()
+	go arp_tick()
 
 	msg := <-goexit
 

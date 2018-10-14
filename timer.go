@@ -9,8 +9,12 @@ import (
 )
 
 const (
-	TIMER_TICK = 16811           // [ms] avg  16.811 [s]
-	TIMER_FUZZ = TIMER_TICK / 7  // [ms]       2.401 [s]
+	TIMER_TICK = 16811          // [ms] avg  16.811 [s]
+	TIMER_FUZZ = TIMER_TICK / 7 // [ms]       2.401 [s]
+
+	ARP_TICK = TIMER_TICK / 3 // [ms] avg 5.603 [s]
+	ARP_FUZZ = ARP_TICK / 7   // [ms] avg 0.800 [s]
+
 	PURGE_TICK = TIMER_TICK / 11 // [ms] avg   1.528 [s]
 	PURGE_FUZZ = PURGE_TICK / 7  // [ms]       0.218 [s]
 	PURGE_NUM  = 17              // num of records to purge at a time
@@ -54,6 +58,17 @@ func get_timer_packet(cmd byte, mark M32) *PktBuf {
 	pb.tail = pb.v1hdr + V1_HDR_LEN
 
 	return pb
+}
+
+func arp_tick() {
+
+	for {
+		time.Sleep(time.Duration(ARP_TICK-ARP_FUZZ/2+prng.Intn(ARP_FUZZ)) * time.Millisecond)
+
+		mark := marker.now()
+		pb := get_timer_packet(V1_SET_MARK, mark)
+		send_gw <- pb
+	}
 }
 
 func purge_tick() {

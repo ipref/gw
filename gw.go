@@ -10,7 +10,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 )
 
 /* ARP cache
@@ -64,8 +63,8 @@ const (
 )
 
 const (
-	ARP_PROBE_IVL = 29 // [s] interval for probing arp entries
-	ARP_MAX_QUEUE = 10 // max packets on queue awaiting arp
+	ARP_REC_EXPIRE = 29 // [s] expiration time for arp records at TIMER_TICK granularity
+	ARP_MAX_QUEUE  = 10 // max packets on queue awaiting arp
 )
 
 type ArpRec struct {
@@ -73,7 +72,7 @@ type ArpRec struct {
 	flags  byte
 	mac    string    // mac address as a string f4:4d:30:61:54:da
 	pbq    []*PktBuf // packets waiting for mac address
-	stamp  int64     // proc arp read time stamp
+	expire M32       // proc arp expiration mark
 }
 
 func (arprec *ArpRec) fill_from_proc(ip IP32) {
@@ -88,7 +87,7 @@ func (arprec *ArpRec) fill_from_proc(ip IP32) {
 
 	arprec.hwtype = 0
 	arprec.flags = 0
-	arprec.stamp = time.Now().Unix()
+	arprec.expire = marker.now() + ARP_REC_EXPIRE
 	ipstr := ip.String()
 
 	scanner := bufio.NewScanner(fd)
@@ -127,8 +126,9 @@ func (arprec *ArpRec) fill_from_proc(ip IP32) {
 
 		arprec.mac = toks[ARP_MAC]
 
-		log.info("gw: detected proc arp entry %-15v  %v  %v  %v  %v",
-			toks[ARP_IP], toks[ARP_HWTYPE], toks[ARP_FLAGS], toks[ARP_MAC], toks[ARP_IFC])
+		log.info("gw: detected proc arp entry %-15v  %v  %v  %v  %v  expire(%v)",
+			toks[ARP_IP], toks[ARP_HWTYPE], toks[ARP_FLAGS], toks[ARP_MAC],
+			toks[ARP_IFC], arprec.expire)
 
 		break
 	}
@@ -260,6 +260,8 @@ func gw_sender(con net.PacketConn) {
 	log.info("gw network: %v", gw_network)
 	log.info("gw nexthop: %v", gw_nexthop)
 
+	now := marker.now()
+
 	for pb := range send_gw {
 
 		if len(pb.pkt)-int(pb.data) < MIN_PKT_LEN {
@@ -273,11 +275,30 @@ func gw_sender(con net.PacketConn) {
 
 		if pb.pkt[pb.data+V1_VER] == V1_SIG {
 
-			// update arprec following query
+			pb.set_v1hdr()
+			pkt := pb.pkt[pb.v1hdr:pb.tail]
 
-			ip := IP32(be.Uint32(pb.pkt[pb.v1hdr+V1_HDR_LEN : pb.v1hdr+V1_HDR_LEN+4]))
-			arprec = get_arprec(ip)
-			arprec.fill_from_proc(ip)
+			if pkt[V1_CMD] == V1_SET_MARK {
+
+				// update time mark
+
+				now = M32(be.Uint32(pkt[V1_MARK : V1_MARK+4]))
+				retbuf <- pb
+				continue
+
+			} else if pkt[V1_CMD] == V1_RUN_ARPING {
+
+				// update arprec following query
+
+				ip := IP32(be.Uint32(pb.pkt[pb.v1hdr+V1_HDR_LEN : pb.v1hdr+V1_HDR_LEN+4]))
+				arprec = get_arprec(ip)
+				arprec.fill_from_proc(ip)
+
+			} else {
+				log.err("gw out:  unknown v1 packet data/end(%v/%v), dropping", pb.data, len(pb.pkt))
+				retbuf <- pb
+				continue
+			}
 
 		} else {
 
@@ -316,6 +337,12 @@ func gw_sender(con net.PacketConn) {
 				log.debug("gw out:  mac unavailable for %v, trying arping", nexthop)
 				go arping(nexthop) // mac unavailable, run arping
 				continue
+			}
+
+			if arprec.expire < now {
+				arprec.expire = now + ARP_REC_EXPIRE
+				log.debug("gw out:  mac for %v, expired, probing", nexthop)
+				go arping(nexthop) // mac record expired, check if still there
 			}
 		}
 
