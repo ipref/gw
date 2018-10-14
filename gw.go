@@ -239,10 +239,10 @@ func arping(nexthop IP32) {
 
 	pb := <-getbuf
 
-	pb.set_v1hdr()
+	pb.set_iphdr()
 	pb.write_v1_header(V1_RUN_ARPING, 0, 0)
-	pb.tail = pb.v1hdr + V1_HDR_LEN + 4
-	pkt := pb.pkt[pb.v1hdr:pb.tail]
+	pb.tail = pb.iphdr + V1_HDR_LEN + 4
+	pkt := pb.pkt[pb.iphdr:pb.tail]
 	pkt[V1_ITEM_TYPE] = V1_TYPE_IPV4
 	be.PutUint16(pkt[V1_NUM_ITEMS:V1_NUM_ITEMS+2], 1)
 	off := V1_HDR_LEN
@@ -275,8 +275,8 @@ func gw_sender(con net.PacketConn) {
 
 		if pb.pkt[pb.data+V1_VER] == V1_SIG {
 
-			pb.set_v1hdr()
-			pkt := pb.pkt[pb.v1hdr:pb.tail]
+			pb.set_iphdr()
+			pkt := pb.pkt[pb.iphdr:pb.tail]
 
 			if pkt[V1_CMD] == V1_SET_MARK {
 
@@ -290,7 +290,7 @@ func gw_sender(con net.PacketConn) {
 
 				// update arprec following query
 
-				ip := IP32(be.Uint32(pb.pkt[pb.v1hdr+V1_HDR_LEN : pb.v1hdr+V1_HDR_LEN+4]))
+				ip := IP32(be.Uint32(pb.pkt[pb.iphdr+V1_HDR_LEN : pb.iphdr+V1_HDR_LEN+4]))
 				arprec = get_arprec(ip)
 				arprec.fill_from_proc(ip)
 

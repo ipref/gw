@@ -180,8 +180,8 @@ func send_soft_rec(soft SoftRec) {
 
 	pb := <-getbuf
 
-	pb.set_v1hdr()
-	pkt := pb.pkt[pb.v1hdr:]
+	pb.set_iphdr()
+	pkt := pb.pkt[pb.iphdr:]
 
 	pb.write_v1_header(V1_SET_SOFT, 0, 0)
 	pkt[V1_ITEM_TYPE] = V1_TYPE_SOFT
@@ -195,7 +195,7 @@ func send_soft_rec(soft SoftRec) {
 	pkt[off+V1_SOFT_HOPS] = soft.hops
 	be.PutUint16(pkt[off+V1_SOFT_RSVD:off+V1_SOFT_RSVD+2], 0)
 
-	pb.tail = pb.v1hdr + V1_HDR_LEN + V1_SOFT_LEN
+	pb.tail = pb.iphdr + V1_HDR_LEN + V1_SOFT_LEN
 
 	recv_tun <- pb
 }
@@ -209,8 +209,8 @@ func send_arec(pfx string, ea, ip, gw IP32, ref Ref, oid O32, mark M32, pktq cha
 		log.fatal("%v: not enough space for an address record", pfx) // paranoia
 	}
 
-	pb.set_v1hdr()
-	pkt := pb.pkt[pb.v1hdr:]
+	pb.set_iphdr()
+	pkt := pb.pkt[pb.iphdr:]
 
 	pb.write_v1_header(V1_SET_AREC, oid, mark)
 	pkt[V1_ITEM_TYPE] = V1_TYPE_AREC
@@ -368,7 +368,7 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 
 func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.v1hdr:pb.tail]
+	pkt := pb.pkt[pb.iphdr:pb.tail]
 	if len(pkt) < V1_HDR_LEN {
 		log.err("mgw: SET_AREC packet too short, dropping")
 		return DROP
@@ -438,7 +438,7 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 
 func (mgw *MapGw) set_new_mark(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.v1hdr:pb.tail]
+	pkt := pb.pkt[pb.iphdr:pb.tail]
 	if len(pkt) != V1_HDR_LEN || pkt[V1_CMD] != V1_SET_MARK {
 		log.err("mgw: invalid SET_MARK packet: PKT %08x data/tail(%v/%v), dropping",
 			be.Uint32(pb.pkt[pb.data:pb.data+4]), pb.data, pb.tail)
@@ -454,7 +454,7 @@ func (mgw *MapGw) set_new_mark(pb *PktBuf) int {
 
 func (mgw *MapGw) update_soft(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.v1hdr:pb.tail]
+	pkt := pb.pkt[pb.iphdr:pb.tail]
 
 	if len(pkt) != V1_HDR_LEN+V1_SOFT_LEN ||
 		pkt[V1_CMD] != V1_SET_SOFT ||
@@ -756,7 +756,7 @@ func (mtun *MapTun) get_src_ea(gw IP32, ref Ref) IP32 {
 
 func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.v1hdr:pb.tail]
+	pkt := pb.pkt[pb.iphdr:pb.tail]
 	if len(pkt) < V1_HDR_LEN {
 		log.err("mtun: SET_AREC packet too short, dropping")
 		return DROP
@@ -836,7 +836,7 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
 func (mtun *MapTun) set_new_mark(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.v1hdr:pb.tail]
+	pkt := pb.pkt[pb.iphdr:pb.tail]
 	if len(pkt) != V1_HDR_LEN || pkt[V1_CMD] != V1_SET_MARK {
 		log.err("mtun: invalid SET_MARK packet: PKT %08x data/tail(%v/%v), dropping",
 			be.Uint32(pb.pkt[pb.data:pb.data+4]), pb.data, pb.tail)

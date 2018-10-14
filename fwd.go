@@ -472,21 +472,20 @@ func fwd_to_gw() {
 		}
 
 		verdict := DROP
+		pb.set_iphdr()
 
 		switch {
 
-		case pb.pkt[pb.data]&0xf0 == 0x40:
+		case pb.pkt[pb.iphdr]&0xf0 == 0x40:
 
-			pb.set_iphdr()
 			verdict = insert_ipref_option(pb)
 			if verdict == ACCEPT {
 				send_gw <- pb
 			}
 
-		case pb.pkt[pb.data] == V1_SIG:
+		case pb.pkt[pb.iphdr] == V1_SIG:
 
-			pb.set_v1hdr()
-			switch pb.pkt[pb.v1hdr+V1_CMD] {
+			switch pb.pkt[pb.iphdr+V1_CMD] {
 			case V1_SET_AREC:
 				verdict = map_gw.set_new_address_records(pb)
 			case V1_SET_MARK:
@@ -496,7 +495,7 @@ func fwd_to_gw() {
 			case V1_PURGE:
 				verdict = map_gw.timer(pb)
 			default:
-				log.err("fwd_to_gw: unknown address records command: %v, ignoring", pb.pkt[pb.v1hdr+V1_CMD])
+				log.err("fwd_to_gw: unknown address records command: %v, ignoring", pb.pkt[pb.iphdr+V1_CMD])
 			}
 
 		default:
@@ -518,6 +517,7 @@ func fwd_to_tun() {
 		}
 
 		verdict := DROP
+		pb.set_iphdr()
 
 		switch {
 
@@ -525,17 +525,16 @@ func fwd_to_tun() {
 
 			log.err("fwd_to_tun in: short packet data/end(%v/%v), dropping", pb.data, len(pb.pkt))
 
-		case pb.pkt[pb.data]&0xf0 == 0x40:
+		case pb.pkt[pb.iphdr]&0xf0 == 0x40:
 
 			verdict = remove_ipref_option(pb)
 			if verdict == ACCEPT {
 				send_tun <- pb
 			}
 
-		case pb.pkt[pb.data] == V1_SIG:
+		case pb.pkt[pb.iphdr] == V1_SIG:
 
-			pb.set_v1hdr()
-			switch pb.pkt[pb.v1hdr+V1_CMD] {
+			switch pb.pkt[pb.iphdr+V1_CMD] {
 			case V1_SET_AREC:
 				verdict = map_tun.set_new_address_records(pb)
 			case V1_SET_MARK:
@@ -543,7 +542,7 @@ func fwd_to_tun() {
 			case V1_PURGE:
 				verdict = map_tun.timer(pb)
 			default:
-				log.err("fwd_to_tun: unknown address records command: %v, ignoring", pb.pkt[pb.v1hdr+V1_CMD])
+				log.err("fwd_to_tun: unknown address records command: %v, ignoring", pb.pkt[pb.iphdr+V1_CMD])
 			}
 
 		default:

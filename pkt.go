@@ -141,7 +141,6 @@ type PktBuf struct {
 	tail  int
 	iphdr int
 	l4hdr int
-	v1hdr int
 	icmp  IcmpReq
 }
 
@@ -151,7 +150,6 @@ func (pb *PktBuf) clear() {
 	pb.tail = 0
 	pb.iphdr = 0
 	pb.l4hdr = 0
-	pb.v1hdr = 0
 	pb.icmp = IcmpReq{0, 0, 0}
 }
 
@@ -165,7 +163,6 @@ func (pb *PktBuf) copy_from(pbo *PktBuf) {
 	pb.tail = pbo.tail
 	pb.iphdr = pbo.iphdr
 	pb.l4hdr = pbo.l4hdr
-	pb.v1hdr = pbo.v1hdr
 	pb.icmp = pbo.icmp
 
 	copy(pb.pkt[pb.data:pb.tail], pbo.pkt[pb.data:pb.tail])
@@ -447,12 +444,6 @@ func (pb *PktBuf) reflen(iphdr int) (reflen int) {
 	return
 }
 
-func (pb *PktBuf) set_v1hdr() int {
-
-	pb.v1hdr = pb.data
-	return pb.v1hdr
-}
-
 // calculate iphdr csum and l4 csum
 func (pb *PktBuf) verify_csum() (uint16, uint16) {
 
@@ -487,7 +478,7 @@ func (pb *PktBuf) verify_csum() (uint16, uint16) {
 
 func (pb *PktBuf) write_v1_header(cmd byte, oid O32, mark M32) {
 
-	pkt := pb.pkt[pb.v1hdr:]
+	pkt := pb.pkt[pb.iphdr:]
 
 	if len(pkt) < V1_HDR_LEN {
 		log.fatal("pkt: not enough space for v1 header")

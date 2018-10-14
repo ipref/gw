@@ -321,8 +321,8 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 
 		// v1 header
 
-		pb.set_v1hdr()
-		pkt := pb.pkt[pb.v1hdr:]
+		pb.set_iphdr()
+		pkt := pb.pkt[pb.iphdr:]
 
 		pb.write_v1_header(V1_SET_AREC, oid, mark)
 		pkt[V1_ITEM_TYPE] = V1_TYPE_AREC
@@ -449,9 +449,9 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 	pb := <-getbuf
 	pbb := <-getbuf
 
-	pb.set_v1hdr()
+	pb.set_iphdr()
 	pb.write_v1_header(V1_SET_MARK, oid, mark)
-	pb.tail = pb.v1hdr + V1_HDR_LEN
+	pb.tail = pb.iphdr + V1_HDR_LEN
 	pbb.copy_from(pb)
 
 	recv_tun <- pb
