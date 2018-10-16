@@ -507,6 +507,10 @@ func (mgw *MapGw) timer(pb *PktBuf) int {
 
 			mgw.purge.btree_enu, err = mgw.their_ipref.SeekFirst()
 			if err != nil {
+				if err == io.EOF {
+					mgw.purge.state = MGW_PURGE_OUR_IPREF_SEEK
+					continue
+				}
 				log.err("mgw: cannot get enumerator for their_ipref: %v", err)
 				return DROP
 			}
@@ -549,6 +553,10 @@ func (mgw *MapGw) timer(pb *PktBuf) int {
 
 			mgw.purge.btree_enu, err = mgw.our_ipref.SeekFirst()
 			if err != nil {
+				if err == io.EOF {
+					mgw.purge.state = MGW_PURGE_STOP
+					continue
+				}
 				log.err("mgw: cannot get enumerator for our_ipref: %v", err)
 				return DROP
 			}
@@ -869,6 +877,11 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 			mtun.purge.btree_enu, err = mtun.our_ip.SeekFirst()
 			if err != nil {
+				if err == io.EOF {
+					gw = 0
+					mtun.purge.state = MTUN_PURGE_OUR_EA_SEEK
+					continue
+				}
 				log.err("mtun: cannot get enumerator for our_ip: %v", err)
 				return DROP
 			}
@@ -904,6 +917,11 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 			mtun.purge.sbtree_enu, err = mtun.purge.sbtree.SeekFirst()
 			if err != nil {
+				if err == io.EOF {
+					gw = 0
+					mtun.purge.state = MTUN_PURGE_OUR_IP // go back to first level
+					continue
+				}
 				log.err("mtun: cannot get enumerator for our_ip subtree: %v", err)
 				return DROP
 			}
@@ -946,6 +964,11 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 			mtun.purge.btree_enu, err = mtun.our_ea.SeekFirst()
 			if err != nil {
+				if err == io.EOF {
+					gw = 0
+					mtun.purge.state = MTUN_PURGE_STOP
+					continue
+				}
 				log.err("mtun: cannot get enumerator for our_ea: %v", err)
 				return DROP
 			}
@@ -984,6 +1007,11 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 
 			mtun.purge.sbtree_enu, err = mtun.purge.sbtree.SeekFirst()
 			if err != nil {
+				if err == io.EOF {
+					gw = 0
+					mtun.purge.state = MTUN_PURGE_OUR_EA // go back to first level
+					continue
+				}
 				log.err("mtun: cannot get enumerator for our_ea subtree: %v", err)
 				return DROP
 			}
