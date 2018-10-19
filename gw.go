@@ -68,11 +68,11 @@ const (
 )
 
 type ArpRec struct {
-	hwtype byte
-	flags  byte
-	mac    string    // mac address as a string f4:4d:30:61:54:da
-	pbq    []*PktBuf // packets waiting for mac address
-	expire M32       // proc arp expiration mark
+	hwtype  byte
+	flags   byte
+	macaddr raw.Addr
+	pbq     []*PktBuf // packets waiting for mac address
+	expire  M32       // proc arp expiration mark
 }
 
 func (arprec *ArpRec) fill_from_proc(ip IP32) {
@@ -124,10 +124,14 @@ func (arprec *ArpRec) fill_from_proc(ip IP32) {
 
 		// mac
 
-		arprec.mac = toks[ARP_MAC]
+		mac, err := net.ParseMAC(toks[ARP_MAC])
+		if err != nil {
+			log.fatal("gw: cannot parse mac address from %v: %v", fname, err)
+		}
+		arprec.macaddr.HardwareAddr = mac
 
-		log.info("gw: detected proc arp entry %-15v  %v  %v  %v  %v  expire(%v)",
-			toks[ARP_IP], toks[ARP_HWTYPE], toks[ARP_FLAGS], toks[ARP_MAC],
+		log.info("gw: detected proc arp entry %-15v  0x%02x  0x%02x  %v  %v  expire(%v)",
+			toks[ARP_IP], arprec.hwtype, arprec.flags, arprec.macaddr.HardwareAddr,
 			toks[ARP_IFC], arprec.expire)
 
 		break
@@ -136,15 +140,6 @@ func (arprec *ArpRec) fill_from_proc(ip IP32) {
 	if err := scanner.Err(); err != nil {
 		log.err("gw: error reading %v", fname)
 	}
-
-}
-
-func (arprec *ArpRec) Network() string {
-	return cli.ifc.Name
-}
-
-func (arprec *ArpRec) String() string {
-	return arprec.mac
 }
 
 var arpcache map[IP32]*ArpRec
@@ -219,7 +214,7 @@ func get_arprec(ip IP32) *ArpRec {
 
 	arprec, ok := arpcache[ip]
 	if !ok {
-		arprec = &ArpRec{0, 0, "00:00:00:00:00:00", make([]*PktBuf, 0, 5), 0}
+		arprec = &ArpRec{0, 0, raw.Addr{[]byte{0, 0, 0, 0, 0, 0}}, make([]*PktBuf, 0, 5), 0}
 		arprec.fill_from_proc(ip)
 		arpcache[ip] = arprec
 	}
@@ -361,6 +356,15 @@ func gw_sender(con net.PacketConn) {
 
 			for _, pb := range arprec.pbq {
 
+				if pb.data < ETHER_HDRLEN {
+					log.fatal("gw out: not enough space for ether header data/tail(%v/%v)", pb.data, pb.tail)
+				}
+
+				pb.data -= ETHER_HDRLEN
+				copy(pb.pkt[pb.data+ETHER_DST_MAC:pb.data+ETHER_DST_MAC+6], arprec.macaddr.HardwareAddr)
+				copy(pb.pkt[pb.data+ETHER_SRC_MAC:pb.data+ETHER_SRC_MAC+6], cli.ifc.HardwareAddr)
+				be.PutUint16(pb.pkt[pb.data+ETHER_TYPE:pb.data+ETHER_TYPE+2], ETHER_IPv4)
+
 				if cli.debug["gw"] || cli.debug["all"] {
 					log.debug("gw out:  %v", pb.pp_pkt())
 				}
@@ -371,7 +375,11 @@ func gw_sender(con net.PacketConn) {
 					pb.pp_raw("gw out:  ")
 				}
 
-				con.WriteTo(pb.pkt[pb.iphdr:pb.tail], arprec)
+				wlen, err := con.WriteTo(pb.pkt[pb.data:pb.tail], &arprec.macaddr)
+				if err != nil || wlen != pb.tail-pb.data {
+					log.err("gw out:  raw pkt send to %v failed wlen(%v) data/tail(%v/%v)",
+						arprec.macaddr.HardwareAddr, wlen, pb.data, pb.tail)
+				}
 				retbuf <- pb
 			}
 			arprec.pbq = arprec.pbq[0:0]
