@@ -395,7 +395,7 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 			}
 
 			if rec.ip != 0 && ((rec.ref.l>>8)&0xFF) >= SECOND_BYTE {
-				log.err("dns watcher: address record second byte violation(ref): %%v %v %v %v, ignoring",
+				log.err("dns watcher: address record second byte violation(ref): %v %v %v %v, ignoring",
 					rec.ea, rec.ip, rec.gw, &rec.ref)
 				goto skip_record
 			}
