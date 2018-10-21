@@ -70,7 +70,7 @@ func main() {
 	map_tun.set_cur_mark(mapper_oid, mapper_mark)
 
 	getbuf = make(chan *PktBuf, 1)
-	retbuf = make(chan *PktBuf, MAXBUF)
+	retbuf = make(chan *PktBuf, cli.maxbuf)
 
 	icmpreq = make(chan *PktBuf, PKTQLEN)
 

@@ -19,6 +19,7 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	ea         string
 	hosts_path string
 	dns_path   string
+	maxbuf     int
 	// derived
 	debug      map[string]bool
 	ea_ip      IP32
@@ -32,13 +33,14 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 
 func parse_cli() {
 
-	flag.StringVar(&cli.debuglist, "debug", "", "enable debug in listed, comma separated files or 'all'")
+	flag.StringVar(&cli.debuglist, "debug", "", "enable debug in listed files, comma separated, or 'all'")
 	flag.BoolVar(&cli.trace, "trace", false, "enable packet trace")
 	flag.BoolVar(&cli.stamps, "time-stamps", false, "print logs with time stamps")
 	flag.StringVar(&cli.gw, "gateway", "", "ip address of the public network interface")
 	flag.StringVar(&cli.ea, "encode-net", "10.240.0.0/12", "private network for encoding external ipref addresses")
 	flag.StringVar(&cli.hosts_path, "hosts", "/etc/hosts", "host name lookup file")
 	flag.StringVar(&cli.dns_path, "dns", "", "dns file with IPREF addresses of local hosts")
+	flag.IntVar(&cli.maxbuf, "max-buffers", 64, "Max number of packet buffers")
 	flag.Usage = func() {
 		toks := strings.Split(os.Args[0], "/")
 		prog := toks[len(toks)-1]
@@ -158,6 +160,15 @@ ifc_loop:
 
 	cli.hosts_path = normalize(cli.hosts_path)
 	cli.dns_path = normalize(cli.dns_path)
+
+	// validate maxbuf
+
+	if cli.maxbuf < 16 {
+		cli.maxbuf = 16
+	}
+	if cli.maxbuf > 1024 {
+		cli.maxbuf = 1024
+	}
 }
 
 func normalize(path string) string {

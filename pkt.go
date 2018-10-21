@@ -10,10 +10,6 @@ import (
 	"strings"
 )
 
-const (
-	MAXBUF = 20
-)
-
 const ( // v1 constants
 
 	V1_SIG          = 0x11 // v1 signature
@@ -548,7 +544,7 @@ var retbuf chan (*PktBuf)
 
 We use getbuf channel of length 1. As soon as it gets empty we try to put
 a packet into it.  We try to get it from the retbuf but if not availale we
-allocate a new one but no more than MAXBUF in total. If we exceed this
+allocate a new one but no more than maxbuf in total. If we exceed this
 limit and no packets in retbuf, we wait until one is returned.
 */
 
@@ -561,18 +557,18 @@ func pkt_buffers() {
 
 	for {
 
-		if allocated < MAXBUF {
+		if allocated < cli.maxbuf {
 			select {
 			case pb = <-retbuf:
 			default:
 				pb = &PktBuf{pkt: make([]byte, cli.pktbuflen, cli.pktbuflen)}
 				allocated += 1
 				log.debug("pkt: new PktBuf allocated, total(%v)", allocated)
-				if allocated == MAXBUF*80/100 {
-					log.info("pkt: close to reaching limit of buffer allocation: %v of %v", allocated, MAXBUF)
+				if allocated == cli.maxbuf*80/100 {
+					log.info("pkt: close to reaching limit of buffer allocation: %v of %v", allocated, cli.maxbuf)
 				}
-				if allocated == MAXBUF {
-					log.info("pkt: reached limit of buffer allocation: %v of %v", allocated, MAXBUF)
+				if allocated == cli.maxbuf {
+					log.info("pkt: reached limit of buffer allocation: %v of %v", allocated, cli.maxbuf)
 				}
 			}
 		} else {
