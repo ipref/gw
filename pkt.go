@@ -172,7 +172,11 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 	// V1 SET_MARK(1)  mapper(1)  mark(12342)  data/tail(12/68)
 	// PKT 0532ab04 data/tail(18/20)
 
-	pkt := pb.pkt[pb.data:] // note: for debug it's from data to end (not from data to tail)
+	iphdr := pb.data // pb.iphdr may not be set, let's use pb.data instead
+	if pb.iphdr-pb.data == ETHER_HDRLEN {
+		iphdr = pb.iphdr // skip ether header
+	}
+	pkt := pb.pkt[iphdr:]
 
 	// data too far into the buffer
 
@@ -182,7 +186,7 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 		return
 	}
 
-	reflen := pb.reflen(pb.data)
+	reflen := pb.reflen(iphdr)
 
 	// IPREF packet
 
@@ -249,6 +253,8 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 			ss += fmt.Sprintf(" SET_SOFT(%v)", cmd)
 		case V1_PURGE:
 			ss += fmt.Sprintf(" PURGE(%v)", cmd)
+		case V1_INDUCE_ARP:
+			ss += fmt.Sprintf(" INDUCE_ARP(%v)", cmd)
 		default:
 			ss += fmt.Sprintf(" cmd(%v)", cmd)
 		}
@@ -272,7 +278,7 @@ func (pb *PktBuf) pp_raw(pfx string) {
 
 	// RAW  45 00 00 74 2e 52 40 00 40 11 d0 b6 0a fb 1b 6f c0 a8 54 5e 04 15 04 15 00 ..
 
-	const max = 128
+	const max = 128 + 32
 	var sb strings.Builder
 
 	pkt := pb.pkt[pb.data:pb.tail]
