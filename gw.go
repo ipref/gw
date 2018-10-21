@@ -377,8 +377,11 @@ func gw_sender(con net.PacketConn) {
 				}
 
 				wlen, err := con.WriteTo(pb.pkt[pb.data:pb.tail], &arprec.macaddr)
-				if err != nil || wlen != pb.tail-pb.data {
-					log.err("gw out:  raw pkt send to %v failed wlen(%v) data/tail(%v/%v)",
+				if err != nil {
+					log.err("gw out:  raw pkt send to %v failed: %v)",
+						arprec.macaddr.HardwareAddr, err)
+				} else if wlen != pb.tail-pb.data {
+					log.err("gw out:  raw pkt send to %v truncated wlen(%v) data/tail(%v/%v)",
 						arprec.macaddr.HardwareAddr, wlen, pb.data, pb.tail)
 				}
 				retbuf <- pb

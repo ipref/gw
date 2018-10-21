@@ -175,6 +175,8 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 	iphdr := pb.data // pb.iphdr may not be set, let's use pb.data instead
 	if pb.iphdr-pb.data == ETHER_HDRLEN {
 		iphdr = pb.iphdr // skip ether header
+	} else if pb.iphdr-pb.data == TUN_HDR_LEN {
+		iphdr = pb.iphdr // skip tun header
 	}
 	pkt := pb.pkt[iphdr:]
 

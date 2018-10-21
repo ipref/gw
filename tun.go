@@ -17,6 +17,15 @@ func tun_sender(fd *os.File) {
 
 	for pb := range send_tun {
 
+		if pb.data < TUN_HDR_LEN {
+			log.fatal("tun out: not enough space for tun header data/tail(%v/%v)", pb.data, pb.tail)
+		}
+
+		pb.data -= TUN_HDR_LEN
+
+		be.PutUint16(pb.pkt[pb.data+TUN_FLAGS:pb.data+TUN_FLAGS+2], TUN_IFF_TUN)
+		be.PutUint16(pb.pkt[pb.data+TUN_PROTO:pb.data+TUN_PROTO+2], TUN_IPv4)
+
 		if cli.debug["tun"] || cli.debug["all"] {
 			log.debug("tun out: %v", pb.pp_pkt())
 		}
@@ -26,6 +35,15 @@ func tun_sender(fd *os.File) {
 			pb.pp_tran("tun out: ")
 			pb.pp_raw("tun out: ")
 		}
+
+		wlen, err := fd.Write(pb.pkt[pb.data:pb.tail])
+		if err != nil {
+			log.err("tun out: send to tun interface failed: %v", err)
+		} else if wlen != pb.tail-pb.data {
+			log.err("tun out: send to tun interface truncated: wlen(%v) data/tail(%v/%v)",
+				wlen, pb.data, pb.tail)
+		}
+
 		retbuf <- pb
 	}
 }
@@ -44,9 +62,13 @@ func tun_receiver(fd *os.File) {
 		pb.data -= TUN_HDR_LEN
 		pkt := pb.pkt[pb.data:]
 
+		maxmsg := 3
 		for rlen, err = fd.Read(pkt); err != nil; {
 
-			log.err("tun in: error reading from tun interface: %v", err)
+			if maxmsg > 0 {
+				log.err("tun in: error reading from tun interface: %v", err)
+				maxmsg--
+			}
 			time.Sleep(769 * time.Millisecond)
 		}
 
