@@ -85,8 +85,7 @@ func (arprec *ArpRec) fill_from_proc(ip IP32) {
 	}
 	defer fd.Close()
 
-	arprec.hwtype = 0
-	arprec.flags = 0
+	arprec_changed := false
 	arprec.expire = marker.now() + ARP_REC_EXPIRE
 	ipstr := ip.String()
 
@@ -112,6 +111,9 @@ func (arprec *ArpRec) fill_from_proc(ip IP32) {
 		if err != nil {
 			log.fatal("gw: cannot parse hw type from %v: %v", fname, err)
 		}
+		if arprec.hwtype != byte(hwtype) {
+			arprec_changed = true
+		}
 		arprec.hwtype = byte(hwtype)
 
 		// flags
@@ -119,6 +121,9 @@ func (arprec *ArpRec) fill_from_proc(ip IP32) {
 		flags, err := strconv.ParseUint(toks[ARP_FLAGS], 0, 8)
 		if err != nil {
 			log.fatal("gw: cannot parse flags from %v: %v", fname, err)
+		}
+		if arprec.flags != byte(flags) {
+			arprec_changed = true
 		}
 		arprec.flags = byte(flags)
 
@@ -128,11 +133,16 @@ func (arprec *ArpRec) fill_from_proc(ip IP32) {
 		if err != nil {
 			log.fatal("gw: cannot parse mac address from %v: %v", fname, err)
 		}
+		if arprec.macaddr.HardwareAddr.String() != toks[ARP_MAC] {
+			arprec_changed = true
+		}
 		arprec.macaddr.HardwareAddr = mac
 
-		log.info("gw: detected proc arp entry %-15v  0x%02x  0x%02x  %v  %v  expire(%v)",
-			toks[ARP_IP], arprec.hwtype, arprec.flags, arprec.macaddr.HardwareAddr,
-			toks[ARP_IFC], arprec.expire)
+		if arprec_changed {
+			log.info("gw: arp entry update:  %-15v  0x%02x  0x%02x  %v  %v  expire(%v)",
+				toks[ARP_IP], arprec.hwtype, arprec.flags, arprec.macaddr.HardwareAddr,
+				toks[ARP_IFC], arprec.expire)
+		}
 
 		break
 	}
@@ -430,13 +440,13 @@ func gw_receiver(con net.PacketConn) {
 		pb.set_iphdr()
 
 		if cli.debug["gw"] || cli.debug["all"] {
-			log.debug("gw_in: %v", pb.pp_pkt())
+			log.debug("gw in: %v", pb.pp_pkt())
 		}
 
 		if log.level <= TRACE {
-			pb.pp_net("gw_in:   ")
-			pb.pp_tran("gw_in:   ")
-			pb.pp_raw("gw_in:   ")
+			pb.pp_net("gw in:   ")
+			pb.pp_tran("gw in:   ")
+			pb.pp_raw("gw in:   ")
 		}
 
 		recv_gw <- pb
@@ -496,7 +506,8 @@ func start_gw() {
 		log.fatal("gw: cannot set bpf filter: %v", err)
 	}
 
-	log.info("gw: gateway %v %v mtu(%v)", cli.gw_ip, cli.ifc.Name, cli.ifc.MTU)
+	log.info("gw: gateway %v %v mtu(%v) %v pkt buffers",
+		cli.gw_ip, cli.ifc.Name, cli.ifc.MTU, cli.maxbuf)
 
 	go gw_sender(con)
 	go gw_receiver(con)
