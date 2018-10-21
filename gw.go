@@ -16,13 +16,13 @@ import (
 
 Raw packet send requires to supply destinatin mac address. Mac addresses are
 normally obtained through ARP. In this implementation, we take a short cut
-where we examine /proc arp entries instead. This is augmented with running
-arping utility to induce ARP query for destinations not listed in /proc plus
-a periodic check for stale entries.
+where we examine /proc arp entries instead. This is augmented with inducing
+ARP queries for destinations not listed in /proc plus a periodic check for
+stale entries.
 
-Since arping may take seconds to produce a result, we queue packets destined
-for the ip address being queried to allow other packets go through. Packets
-are released from the queue once arping completes.
+Since inducing arp queries may take seconds to complete, we queue packets
+destined for the ip being queried to allow other packets go through. Packets
+are released from the queue once queries complete.
 */
 
 const (
@@ -222,20 +222,21 @@ func get_arprec(ip IP32) *ArpRec {
 	return arprec
 }
 
-// induce arp query
-func arping(nexthop IP32) {
+func induce_arp(nexthop IP32) {
 
-	cmd, out, ret := shell("arping  -f -w 1 -I %v -s %v %v", cli.ifc.Name, cli.gw_ip, nexthop)
+	cmd, out, ret := shell("ping -n4 -c1 -W 1 -I %v %v", cli.gw_ip, nexthop)
 	if ret < 0 {
-		log.fatal("gw arping: shell command failed: %v", cmd)
+		log.fatal("gw induce arp: shell command failed: %v", cmd)
 	}
 
-	log.debug("gw arping: %v", out)
+	if cli.debug["gw"] || cli.debug["all"] {
+		log.debug("gw induce arp: %v", strings.Split(out, "\n")[0])
+	}
 
 	pb := <-getbuf
 
 	pb.set_iphdr()
-	pb.write_v1_header(V1_RUN_ARPING, 0, 0)
+	pb.write_v1_header(V1_INDUCE_ARP, 0, 0)
 	pb.tail = pb.iphdr + V1_HDR_LEN + 4
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 	pkt[V1_ITEM_TYPE] = V1_TYPE_IPV4
@@ -281,7 +282,7 @@ func gw_sender(con net.PacketConn) {
 				retbuf <- pb
 				continue
 
-			} else if pkt[V1_CMD] == V1_RUN_ARPING {
+			} else if pkt[V1_CMD] == V1_INDUCE_ARP {
 
 				// update arprec following query
 
@@ -317,10 +318,10 @@ func gw_sender(con net.PacketConn) {
 
 			if len(arprec.pbq) != 0 {
 				if len(arprec.pbq) < ARP_MAX_QUEUE {
-					log.debug("gw out:  arping already running for %v, queuing packet", nexthop)
+					log.debug("gw out:  already incuding arp for %v, queuing packet", nexthop)
 					arprec.pbq = append(arprec.pbq, pb)
 				} else {
-					log.debug("gw out:  arping queue for %v full, dropping packet", nexthop)
+					log.debug("gw out:  queue waiting for %v arp full, dropping packet", nexthop)
 					retbuf <- pb
 				}
 				continue
@@ -329,15 +330,15 @@ func gw_sender(con net.PacketConn) {
 			arprec.pbq = append(arprec.pbq, pb)
 
 			if arprec.flags&ARP_FLAG_COMPLETED == 0 {
-				log.debug("gw out:  mac unavailable for %v, trying arping", nexthop)
-				go arping(nexthop) // mac unavailable, run arping
+				log.debug("gw out:  mac unavailable for %v, inducing arp", nexthop)
+				go induce_arp(nexthop)
 				continue
 			}
 
 			if arprec.expire < now {
 				arprec.expire = now + ARP_REC_EXPIRE
-				log.debug("gw out:  mac for %v, expired, probing", nexthop)
-				go arping(nexthop) // mac record expired, check if still there
+				log.debug("gw out:  mac for %v, expired, induce arp", nexthop)
+				go induce_arp(nexthop)
 			}
 		}
 
@@ -458,6 +459,7 @@ func start_gw() {
 
 	firewall-cmd --add-rich-rule 'rule source-port port=1045 protocol=udp drop'
 	firewall-cmd --add-rich-rule 'rule port port=1045 protocol=udp drop'
+	firewall-cmd --runtime-to-permanent
 
 	*/
 

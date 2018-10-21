@@ -60,7 +60,7 @@ const ( // v1 commands
 	V1_SET_MARK
 	V1_SET_SOFT
 	V1_PURGE
-	V1_RUN_ARPING
+	V1_INDUCE_ARP
 )
 
 const ( // packet handling verdicts
