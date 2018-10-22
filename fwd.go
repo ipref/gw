@@ -98,6 +98,7 @@ func insert_ipref_option(pb *PktBuf) int {
 		be.PutUint64(pkt[opt+OPT_SREF64:opt+OPT_SREF64+8], iprefsrc.ref.l)
 		be.PutUint64(pkt[opt+OPT_DREF64:opt+OPT_DREF64+8], iprefdst.ref.l)
 	}
+	be.PutUint16(pkt[opt+OPT_RSVD:opt+OPT_RSVD+2], 0)
 
 	// adjust layer 4 headers
 
@@ -403,9 +404,12 @@ func remove_ipref_option(pb *PktBuf) int {
 
 		// remove inner ipref option
 
-		copy(pkt[inner:], pkt[inner_opt+inner_optlen:])
+		copy(pkt[inner_opt:], pkt[inner_opt+inner_optlen:])
 		pb.tail -= inner_optlen
 		pkt = pb.pkt[pb.iphdr:pb.tail]
+
+		pktlen := be.Uint16(pkt[pb.iphdr+IP_LEN : pb.iphdr+IP_LEN+2])
+		be.PutUint16(pkt[pb.iphdr+IP_LEN:pb.iphdr+IP_LEN+2], pktlen-uint16(inner_optlen))
 
 		// get addresses
 
