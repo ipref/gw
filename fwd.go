@@ -58,7 +58,6 @@ func insert_ipref_option(pb *PktBuf) int {
 		return DROP
 	}
 
-	var csum uint16
 	var optlen int
 
 	iphdrlen := pb.iphdr_len()
@@ -108,20 +107,20 @@ func insert_ipref_option(pb *PktBuf) int {
 
 	case TCP: // subtract ip src/dst addresses from csum
 
-		csum = be.Uint16(pkt[l4+TCP_CSUM : l4+TCP_CSUM+2])
+		tcp_csum := be.Uint16(pkt[l4+TCP_CSUM : l4+TCP_CSUM+2])
 
-		if csum != 0 {
-			csum = csum_subtract(csum^0xffff, pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_DST+4])
-			be.PutUint16(pkt[l4+TCP_CSUM:l4+TCP_CSUM+2], csum^0xffff)
+		if tcp_csum != 0 {
+			tcp_csum = csum_subtract(tcp_csum^0xffff, pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_DST+4])
+			be.PutUint16(pkt[l4+TCP_CSUM:l4+TCP_CSUM+2], tcp_csum^0xffff)
 		}
 
 	case UDP: // subtract ip src/dst addresses from csum
 
-		csum = be.Uint16(pkt[l4+UDP_CSUM : l4+UDP_CSUM+2])
+		udp_csum := be.Uint16(pkt[l4+UDP_CSUM : l4+UDP_CSUM+2])
 
-		if csum != 0 {
-			csum = csum_subtract(csum^0xffff, pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_DST+4])
-			be.PutUint16(pkt[l4+UDP_CSUM:l4+UDP_CSUM+2], csum^0xffff)
+		if udp_csum != 0 {
+			udp_csum = csum_subtract(udp_csum^0xffff, pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_DST+4])
+			be.PutUint16(pkt[l4+UDP_CSUM:l4+UDP_CSUM+2], udp_csum^0xffff)
 		}
 
 	case ICMP: // replace inner ip addresses with their ipref equivalents
@@ -132,6 +131,8 @@ func insert_ipref_option(pb *PktBuf) int {
 			pkt[l4+ICMP_TYPE] != ICMP_SOURCE_QUENCH {
 			break
 		}
+
+		icmp_csum := be.Uint16(pkt[l4+ICMP_CSUM:l4+ICMP_CSUM+2]) ^ 0xffff
 
 		inner := l4 + ICMP_DATA
 
@@ -192,16 +193,53 @@ func insert_ipref_option(pb *PktBuf) int {
 
 		// adjust csum, in calculations ignore option because it will be removed
 
-		var inner_csum uint16
+		inner_l4 := inner_opt + inner_optlen
 
-		inner_csum = be.Uint16(pkt[inner+IP_CSUM:inner+IP_CSUM+2]) ^ 0xffff
+		switch pkt[inner+IP_PROTO] {
+
+		case TCP: // subtract inner ip addresses
+
+			if inner_l4+TCP_CSUM+2 <= pb.tail {
+
+				inner_tcp_csum := be.Uint16(pkt[inner_l4+TCP_CSUM : inner_l4+TCP_CSUM+2])
+
+				if inner_tcp_csum != 0 {
+
+					icmp_csum = csum_subtract(icmp_csum, pkt[inner_l4+TCP_CSUM:inner_l4+TCP_CSUM+2])
+
+					inner_tcp_csum = csum_subtract(inner_tcp_csum^0xffff, pkt[inner+IP_SRC:inner+IP_DST+4])
+					be.PutUint16(pkt[inner_l4+TCP_CSUM:inner_l4+TCP_CSUM+2], inner_tcp_csum^0xffff)
+
+					icmp_csum = csum_add(icmp_csum, pkt[inner_l4+TCP_CSUM:inner_l4+TCP_CSUM+2])
+				}
+			}
+
+		case UDP: // subtract inner ip addresses
+
+			if inner_l4+UDP_CSUM+2 <= pb.tail {
+
+				inner_udp_csum := be.Uint16(pkt[inner_l4+UDP_CSUM : inner_l4+UDP_CSUM+2])
+
+				if inner_udp_csum != 0 {
+
+					icmp_csum = csum_subtract(icmp_csum, pkt[inner_l4+UDP_CSUM:inner_l4+UDP_CSUM+2])
+
+					inner_udp_csum = csum_subtract(inner_udp_csum^0xffff, pkt[inner+IP_SRC:inner+IP_DST+4])
+					be.PutUint16(pkt[inner_l4+UDP_CSUM:inner_l4+UDP_CSUM+2], inner_udp_csum^0xffff)
+
+					icmp_csum = csum_add(icmp_csum, pkt[inner_l4+UDP_CSUM:inner_l4+UDP_CSUM+2])
+				}
+			}
+		}
+
+		inner_csum := be.Uint16(pkt[inner+IP_CSUM:inner+IP_CSUM+2]) ^ 0xffff
+
 		inner_csum = csum_subtract(inner_csum, pkt[inner+IP_VER:inner+IP_VER+2])
 		inner_csum = csum_subtract(inner_csum, pkt[inner+IP_SRC:inner+IP_DST+4])
 
-		csum = be.Uint16(pkt[l4+ICMP_CSUM:l4+ICMP_CSUM+2]) ^ 0xffff
-		csum = csum_subtract(csum, pkt[inner+IP_VER:inner+IP_VER+2])
-		csum = csum_subtract(csum, pkt[inner+IP_CSUM:inner+IP_CSUM+2])
-		csum = csum_subtract(csum, pkt[inner+IP_SRC:inner+IP_DST+4])
+		icmp_csum = csum_subtract(icmp_csum, pkt[inner+IP_VER:inner+IP_VER+2])
+		icmp_csum = csum_subtract(icmp_csum, pkt[inner+IP_CSUM:inner+IP_CSUM+2])
+		icmp_csum = csum_subtract(icmp_csum, pkt[inner+IP_SRC:inner+IP_DST+4])
 
 		pkt[inner+IP_VER] += byte(inner_optlen / 4)
 		be.PutUint32(pkt[inner+IP_SRC:inner+IP_SRC+4], uint32(inner_srcipref.ip))
@@ -211,11 +249,11 @@ func insert_ipref_option(pb *PktBuf) int {
 
 		be.PutUint16(pkt[inner+IP_CSUM:inner+IP_CSUM+2], inner_csum^0xffff)
 
-		csum = csum_add(csum, pkt[inner+IP_VER:inner+IP_VER+2])
-		csum = csum_add(csum, pkt[inner+IP_CSUM:inner+IP_CSUM+2])
-		csum = csum_add(csum, pkt[inner+IP_SRC:inner+IP_DST+4])
+		icmp_csum = csum_add(icmp_csum, pkt[inner+IP_VER:inner+IP_VER+2])
+		icmp_csum = csum_add(icmp_csum, pkt[inner+IP_CSUM:inner+IP_CSUM+2])
+		icmp_csum = csum_add(icmp_csum, pkt[inner+IP_SRC:inner+IP_DST+4])
 
-		be.PutUint16(pkt[l4+ICMP_CSUM:l4+ICMP_CSUM+2], csum^0xffff)
+		be.PutUint16(pkt[l4+ICMP_CSUM:l4+ICMP_CSUM+2], icmp_csum^0xffff)
 	}
 
 	// adjust ip header
@@ -226,8 +264,8 @@ func insert_ipref_option(pb *PktBuf) int {
 	be.PutUint32(pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_SRC+4], uint32(iprefsrc.ip))
 	be.PutUint32(pkt[pb.iphdr+IP_DST:pb.iphdr+IP_DST+4], uint32(iprefdst.ip))
 
-	csum = csum_add(0, pkt[pb.iphdr:pb.iphdr+iphdrlen])
-	be.PutUint16(pkt[pb.iphdr+IP_CSUM:pb.iphdr+IP_CSUM+2], csum^0xffff)
+	ip_csum := csum_add(0, pkt[pb.iphdr:pb.iphdr+iphdrlen])
+	be.PutUint16(pkt[pb.iphdr+IP_CSUM:pb.iphdr+IP_CSUM+2], ip_csum^0xffff)
 
 	if cli.debug["fwd"] || cli.debug["all"] {
 		log.debug("inserting opt: %v", pb.pp_pkt())
@@ -238,7 +276,7 @@ func insert_ipref_option(pb *PktBuf) int {
 
 func remove_ipref_option(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt
 	reflen := pb.reflen(pb.iphdr)
 
 	if reflen == 0 {
@@ -251,12 +289,13 @@ func remove_ipref_option(pb *PktBuf) int {
 	var sref Ref
 	var dref Ref
 
-	udp := pb.iphdr_len()
+	iphdrlen := pb.iphdr_len()
+	udp := pb.iphdr + iphdrlen
 	encap := udp + 8
 	opt := encap + 4
 
-	src := IP32(be.Uint32(pkt[IP_SRC : IP_SRC+4]))
-	dst := IP32(be.Uint32(pkt[IP_DST : IP_DST+4]))
+	src := IP32(be.Uint32(pkt[pb.iphdr+IP_SRC : pb.iphdr+IP_SRC+4]))
+	dst := IP32(be.Uint32(pkt[pb.iphdr+IP_DST : pb.iphdr+IP_DST+4]))
 
 	if reflen == IPREF_OPT128_LEN {
 		sref.h = be.Uint64(pkt[opt+OPT_SREF128 : opt+OPT_SREF128+8])
@@ -314,46 +353,42 @@ func remove_ipref_option(pb *PktBuf) int {
 
 	// adjust ip header
 
-	pktlen := be.Uint16(pkt[IP_LEN : IP_LEN+2])
+	pktlen := be.Uint16(pkt[pb.iphdr+IP_LEN : pb.iphdr+IP_LEN+2])
 	pktlen -= 8 + 4 + uint16(reflen)
 
-	be.PutUint16(pkt[IP_LEN:IP_LEN+2], pktlen)
-	pkt[IP_PROTO] = pkt[encap+ENCAP_PROTO]
-	be.PutUint32(pkt[IP_SRC:IP_SRC+4], uint32(src_ea))
-	be.PutUint32(pkt[IP_DST:IP_DST+4], uint32(dst_ip))
+	be.PutUint16(pkt[pb.iphdr+IP_LEN:pb.iphdr+IP_LEN+2], pktlen)
+	pkt[pb.iphdr+IP_PROTO] = pkt[encap+ENCAP_PROTO]
+	be.PutUint32(pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_SRC+4], uint32(src_ea))
+	be.PutUint32(pkt[pb.iphdr+IP_DST:pb.iphdr+IP_DST+4], uint32(dst_ip))
 
 	// strip option
 
-	iphdrlen := pb.iphdr_len()
 	pb.iphdr += 8 + 4 + reflen // udp header + encap + opt
-	copy(pb.pkt[pb.iphdr:pb.iphdr+iphdrlen], pb.pkt[pb.data:pb.data+iphdrlen])
+	copy(pkt[pb.iphdr:pb.iphdr+iphdrlen], pkt[pb.data:pb.data+iphdrlen])
 	pb.data = pb.iphdr
 
 	// adjust layer 4 headers
 
-	pkt = pb.pkt[pb.iphdr:pb.tail]
-	l4 := pb.iphdr_len()
+	l4 := pb.iphdr + iphdrlen
 
-	var csum uint16
-
-	switch pkt[IP_PROTO] {
+	switch pkt[pb.iphdr+IP_PROTO] {
 
 	case TCP: // add ip src/dst addresses to csum
 
-		csum = be.Uint16(pkt[l4+TCP_CSUM : l4+TCP_CSUM+2])
+		tcp_csum := be.Uint16(pkt[l4+TCP_CSUM : l4+TCP_CSUM+2])
 
-		if csum != 0 {
-			csum = csum_add(csum^0xffff, pkt[IP_SRC:IP_DST+4])
-			be.PutUint16(pkt[l4+TCP_CSUM:l4+TCP_CSUM+2], csum^0xffff)
+		if tcp_csum != 0 {
+			tcp_csum = csum_add(tcp_csum^0xffff, pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_DST+4])
+			be.PutUint16(pkt[l4+TCP_CSUM:l4+TCP_CSUM+2], tcp_csum^0xffff)
 		}
 
 	case UDP: // add ip src/dst addresses to csum
 
-		csum = be.Uint16(pkt[l4+UDP_CSUM : l4+UDP_CSUM+2])
+		udp_csum := be.Uint16(pkt[l4+UDP_CSUM : l4+UDP_CSUM+2])
 
-		if csum != 0 {
-			csum = csum_add(csum^0xffff, pkt[IP_SRC:IP_DST+4])
-			be.PutUint16(pkt[l4+UDP_CSUM:l4+UDP_CSUM+2], csum^0xffff)
+		if udp_csum != 0 {
+			udp_csum = csum_add(udp_csum^0xffff, pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_DST+4])
+			be.PutUint16(pkt[l4+UDP_CSUM:l4+UDP_CSUM+2], udp_csum^0xffff)
 		}
 
 	case ICMP: // replace inner ipref addresses with their ea/ip equivalents
@@ -364,6 +399,8 @@ func remove_ipref_option(pb *PktBuf) int {
 			pkt[l4+ICMP_TYPE] != ICMP_SOURCE_QUENCH {
 			break
 		}
+
+		icmp_csum := be.Uint16(pkt[l4+ICMP_CSUM:l4+ICMP_CSUM+2]) ^ 0xffff
 
 		inner := l4 + ICMP_DATA
 
@@ -406,7 +443,6 @@ func remove_ipref_option(pb *PktBuf) int {
 
 		copy(pkt[inner_opt:], pkt[inner_opt+inner_optlen:])
 		pb.tail -= inner_optlen
-		pkt = pb.pkt[pb.iphdr:pb.tail]
 
 		pktlen := be.Uint16(pkt[pb.iphdr+IP_LEN : pb.iphdr+IP_LEN+2])
 		be.PutUint16(pkt[pb.iphdr+IP_LEN:pb.iphdr+IP_LEN+2], pktlen-uint16(inner_optlen))
@@ -434,10 +470,9 @@ func remove_ipref_option(pb *PktBuf) int {
 		inner_csum = csum_subtract(inner_csum, pkt[inner+IP_VER:inner+IP_VER+2])
 		inner_csum = csum_subtract(inner_csum, pkt[inner+IP_SRC:inner+IP_DST+4])
 
-		csum = be.Uint16(pkt[l4+ICMP_CSUM:l4+ICMP_CSUM+2]) ^ 0xffff
-		csum = csum_subtract(csum, pkt[inner+IP_VER:inner+IP_VER+2])
-		csum = csum_subtract(csum, pkt[inner+IP_CSUM:inner+IP_CSUM+2])
-		csum = csum_subtract(csum, pkt[inner+IP_SRC:inner+IP_DST+4])
+		icmp_csum = csum_subtract(icmp_csum, pkt[inner+IP_VER:inner+IP_VER+2])
+		icmp_csum = csum_subtract(icmp_csum, pkt[inner+IP_CSUM:inner+IP_CSUM+2])
+		icmp_csum = csum_subtract(icmp_csum, pkt[inner+IP_SRC:inner+IP_DST+4])
 
 		pkt[inner+IP_VER] -= byte(inner_optlen / 4)
 		be.PutUint32(pkt[inner+IP_SRC:inner+IP_SRC+4], uint32(inner_src))
@@ -447,18 +482,57 @@ func remove_ipref_option(pb *PktBuf) int {
 
 		be.PutUint16(pkt[inner+IP_CSUM:inner+IP_CSUM+2], inner_csum^0xffff)
 
-		csum = csum_add(csum, pkt[inner+IP_VER:inner+IP_VER+2])
-		csum = csum_add(csum, pkt[inner+IP_CSUM:inner+IP_CSUM+2])
-		csum = csum_add(csum, pkt[inner+IP_SRC:inner+IP_DST+4])
+		icmp_csum = csum_add(icmp_csum, pkt[inner+IP_VER:inner+IP_VER+2])
+		icmp_csum = csum_add(icmp_csum, pkt[inner+IP_CSUM:inner+IP_CSUM+2])
+		icmp_csum = csum_add(icmp_csum, pkt[inner+IP_SRC:inner+IP_DST+4])
 
-		be.PutUint16(pkt[l4+ICMP_CSUM:l4+ICMP_CSUM+2], csum^0xffff)
+		inner_l4 := inner_opt
+
+		switch pkt[inner+IP_PROTO] {
+
+		case TCP: // add inner ip addresses
+
+			if inner_l4+TCP_CSUM+2 <= pb.tail {
+
+				inner_tcp_csum := be.Uint16(pkt[inner_l4+TCP_CSUM : inner_l4+TCP_CSUM+2])
+
+				if inner_tcp_csum != 0 {
+
+					icmp_csum = csum_subtract(icmp_csum, pkt[inner_l4+TCP_CSUM:inner_l4+TCP_CSUM+2])
+
+					inner_tcp_csum = csum_add(inner_tcp_csum^0xffff, pkt[inner+IP_SRC:inner+IP_DST+4])
+					be.PutUint16(pkt[inner_l4+TCP_CSUM:inner_l4+TCP_CSUM+2], inner_tcp_csum^0xffff)
+
+					icmp_csum = csum_add(icmp_csum, pkt[inner_l4+TCP_CSUM:inner_l4+TCP_CSUM+2])
+				}
+			}
+
+		case UDP: // add inner ip addresses
+
+			if inner_l4+UDP_CSUM+2 <= pb.tail {
+
+				inner_udp_csum := be.Uint16(pkt[inner_l4+UDP_CSUM : inner_l4+UDP_CSUM+2])
+
+				if inner_udp_csum != 0 {
+
+					icmp_csum = csum_subtract(icmp_csum, pkt[inner_l4+UDP_CSUM:inner_l4+UDP_CSUM+2])
+
+					inner_udp_csum = csum_add(inner_udp_csum^0xffff, pkt[inner+IP_SRC:inner+IP_DST+4])
+					be.PutUint16(pkt[inner_l4+UDP_CSUM:inner_l4+UDP_CSUM+2], inner_udp_csum^0xffff)
+
+					icmp_csum = csum_add(icmp_csum, pkt[inner_l4+UDP_CSUM:inner_l4+UDP_CSUM+2])
+				}
+			}
+		}
+
+		be.PutUint16(pkt[l4+ICMP_CSUM:l4+ICMP_CSUM+2], icmp_csum^0xffff)
 	}
 
 	// adjust ip header csum
 
-	be.PutUint16(pkt[IP_CSUM:IP_CSUM+2], 0)
-	csum = csum_add(0, pkt[:iphdrlen])
-	be.PutUint16(pkt[IP_CSUM:IP_CSUM+2], csum^0xffff)
+	be.PutUint16(pkt[pb.iphdr+IP_CSUM:pb.iphdr+IP_CSUM+2], 0)
+	ip_csum := csum_add(0, pkt[pb.iphdr:pb.iphdr+iphdrlen])
+	be.PutUint16(pkt[pb.iphdr+IP_CSUM:pb.iphdr+IP_CSUM+2], ip_csum^0xffff)
 
 	if cli.debug["fwd"] || cli.debug["all"] {
 		log.debug("removing opt:  %v", pb.pp_pkt())
