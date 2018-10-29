@@ -199,7 +199,6 @@ func get_gw_network() (net.IPNet, IP32) {
 
 		if flags&ROUTE_FLAG_G != 0 {
 			gw_nexthop = proc2ip(toks[ROUTE_GW])
-			log.debug("gw: detected default route next hop: %v", gw_nexthop)
 			continue
 		}
 
@@ -210,7 +209,6 @@ func get_gw_network() (net.IPNet, IP32) {
 
 		be.PutUint32(gw_network.IP, uint32(dst))
 		be.PutUint32(gw_network.Mask, uint32(mask))
-		log.debug("gw: detected gw ifc network: %v", gw_network)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -239,7 +237,7 @@ func induce_arp(nexthop IP32) {
 		log.fatal("gw induce arp: shell command failed: %v", cmd)
 	}
 
-	if cli.debug["gw"] || cli.debug["all"] {
+	if cli.debug_gw {
 		log.debug("gw induce arp: %v", strings.Split(out, "\n")[0])
 	}
 
@@ -328,10 +326,14 @@ func gw_sender(con net.PacketConn) {
 
 			if len(arprec.pbq) != 0 {
 				if len(arprec.pbq) < ARP_MAX_QUEUE {
-					log.debug("gw out:  already incuding arp for %v, queuing packet", nexthop)
+					if cli.debug_gw {
+						log.debug("gw out:  already incuding arp for %v, queuing packet", nexthop)
+					}
 					arprec.pbq = append(arprec.pbq, pb)
 				} else {
-					log.debug("gw out:  queue waiting for %v arp full, dropping packet", nexthop)
+					if cli.debug_gw {
+						log.debug("gw out:  queue waiting for %v arp full, dropping packet", nexthop)
+					}
 					retbuf <- pb
 				}
 				continue
@@ -340,14 +342,18 @@ func gw_sender(con net.PacketConn) {
 			arprec.pbq = append(arprec.pbq, pb)
 
 			if arprec.flags&ARP_FLAG_COMPLETED == 0 {
-				log.debug("gw out:  mac unavailable for %v, inducing arp", nexthop)
+				if cli.debug_gw {
+					log.debug("gw out:  mac unavailable for %v, inducing arp", nexthop)
+				}
 				go induce_arp(nexthop)
 				continue
 			}
 
 			if arprec.expire < now {
 				arprec.expire = now + ARP_REC_EXPIRE
-				log.debug("gw out:  mac for %v, expired, induce arp", nexthop)
+				if cli.debug_gw {
+					log.debug("gw out:  mac for %v, expired, induce arp", nexthop)
+				}
 				go induce_arp(nexthop)
 			}
 		}
@@ -376,11 +382,11 @@ func gw_sender(con net.PacketConn) {
 				copy(pb.pkt[pb.data+ETHER_SRC_MAC:pb.data+ETHER_SRC_MAC+6], cli.ifc.HardwareAddr)
 				be.PutUint16(pb.pkt[pb.data+ETHER_TYPE:pb.data+ETHER_TYPE+2], ETHER_IPv4)
 
-				if cli.debug["gw"] || cli.debug["all"] {
+				if cli.debug_gw {
 					log.debug("gw out:  %v", pb.pp_pkt())
 				}
 
-				if log.level <= TRACE {
+				if cli.trace {
 					pb.pp_net("gw out:  ")
 					pb.pp_tran("gw out:  ")
 					pb.pp_raw("gw out:  ")
@@ -411,7 +417,9 @@ func gw_receiver(con net.PacketConn) {
 		pktlen := 0
 
 		rlen, haddr, err := con.ReadFrom(pkt)
-		log.debug("gw in: src mac: %v  rcvlen(%v)", haddr, rlen)
+		if cli.debug_gw {
+			log.debug("gw in: src mac: %v  rcvlen(%v)", haddr, rlen)
+		}
 		if rlen == 0 {
 			log.err("gw in: read failed: %v", err)
 			goto drop
@@ -439,11 +447,11 @@ func gw_receiver(con net.PacketConn) {
 		pb.tail = pb.data + pktlen
 		pb.set_iphdr()
 
-		if cli.debug["gw"] || cli.debug["all"] {
+		if cli.debug_gw {
 			log.debug("gw in: %v", pb.pp_pkt())
 		}
 
-		if log.level <= TRACE {
+		if cli.trace {
 			pb.pp_net("gw in:   ")
 			pb.pp_tran("gw in:   ")
 			pb.pp_raw("gw in:   ")

@@ -26,11 +26,11 @@ func tun_sender(fd *os.File) {
 		be.PutUint16(pb.pkt[pb.data+TUN_FLAGS:pb.data+TUN_FLAGS+2], TUN_IFF_TUN)
 		be.PutUint16(pb.pkt[pb.data+TUN_PROTO:pb.data+TUN_PROTO+2], TUN_IPv4)
 
-		if cli.debug["tun"] || cli.debug["all"] {
+		if cli.debug_tun {
 			log.debug("tun out: %v", pb.pp_pkt())
 		}
 
-		if log.level <= TRACE {
+		if cli.trace {
 			pb.pp_net("tun out: ")
 			pb.pp_tran("tun out: ")
 			pb.pp_raw("tun out: ")
@@ -80,10 +80,12 @@ func tun_receiver(fd *os.File) {
 
 		proto := be.Uint16(pkt[TUN_PROTO : TUN_PROTO+2])
 		if proto != ETHER_IPv4 {
-			if proto == ETHER_IPv6 {
-				log.debug("tun: IPv6 packet, dropping")
-			} else {
-				log.debug("tun in: non-IP packet: %04x, dropping", proto)
+			if cli.debug_tun {
+				if proto == ETHER_IPv6 {
+					log.debug("tun: IPv6 packet, dropping")
+				} else {
+					log.debug("tun in: non-IP packet: %04x, dropping", proto)
+				}
 			}
 			retbuf <- pb
 			continue
@@ -101,11 +103,11 @@ func tun_receiver(fd *os.File) {
 
 		pb.set_iphdr()
 
-		if cli.debug["tun"] || cli.debug["all"] {
+		if cli.debug_tun {
 			log.debug("tun in: %v", pb.pp_pkt())
 		}
 
-		if log.level <= TRACE {
+		if cli.trace {
 			pb.pp_net("tun in:  ")
 			pb.pp_tran("tun in:  ")
 			pb.pp_raw("tun in:  ")

@@ -290,7 +290,9 @@ func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 
 	iprefrec, ok := mgw.their_ipref.Get(dst)
 	if !ok {
-		log.debug("mgw: dst ipref not found for: %v", dst)
+		if cli.debug_mapper {
+			log.debug("mgw: dst ipref not found for: %v", dst)
+		}
 		return IpRefRec{0, Ref{0, 0}, 0, 0} // not found
 	}
 
@@ -302,13 +304,17 @@ func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 	}
 
 	if rec.mark < mgw.cur_mark[rec.oid] {
-		log.debug("mgw: dst ipref expired for: %v", dst)
+		if cli.debug_mapper {
+			log.debug("mgw: dst ipref expired for: %v", dst)
+		}
 		return IpRefRec{0, Ref{0, 0}, 0, 0} // expired
 	}
 
 	if rec.oid == mgw.oid && rec.mark-mgw.cur_mark[mgw.oid] < MAPPER_REFRESH {
 
-		log.debug("mgw: refreshing dst ipref for: %v", dst)
+		if cli.debug_mapper {
+			log.debug("mgw: refreshing dst ipref for: %v", dst)
+		}
 		mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
 		rec.mark = mark
 		mgw.their_ipref.Set(dst, rec)                                           // bump up expiration
@@ -333,13 +339,17 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 
 		if rec.mark < mgw.cur_mark[rec.oid] {
 
-			log.debug("mgw: src ipref expired for: %v, reallocating", src)
+			if cli.debug_mapper {
+				log.debug("mgw: src ipref expired for: %v, reallocating", src)
+			}
 
 		} else {
 
 			if rec.oid == mgw.oid && rec.mark-mgw.cur_mark[mgw.oid] < MAPPER_REFRESH {
 
-				log.debug("mgw: refreshing src ipref for: %v", src)
+				if cli.debug_mapper {
+					log.debug("mgw: refreshing src ipref for: %v", src)
+				}
 				mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
 				rec.mark = mark
 				mgw.our_ipref.Set(src, rec)                                             // bump up expiration
@@ -353,7 +363,9 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 	// local host's ip does not have a map to ipref, create one
 
 	ref := <-random_mapper_ref
-	log.debug("mgw: no src ipref for: %v, allocating: %v", src, &ref)
+	if cli.debug_mapper {
+		log.debug("mgw: no src ipref for: %v, allocating: %v", src, &ref)
+	}
 	if ref.isZero() {
 		log.err("mgw: cannot get new reference for %v, ignoring record", src)
 		return IpRefRec{0, Ref{0, 0}, 0, 0}
@@ -413,7 +425,9 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 				continue
 			}
 
-			log.debug("mgw: set their_ipref  %v  ->  %v + %v", ea, gw, &ref)
+			if cli.debug_mapper {
+				log.debug("mgw: set their_ipref  %v  ->  %v + %v", ea, gw, &ref)
+			}
 			mgw.their_ipref.Set(ea, IpRefRec{gw, ref, oid, mark})
 
 		} else if ea == 0 && ip != 0 {
@@ -425,7 +439,9 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 				continue
 			}
 
-			log.debug("mgw: set our_ipref  %v  ->  %v + %v", ip, gw, &ref)
+			if cli.debug_mapper {
+				log.debug("mgw: set our_ipref  %v  ->  %v + %v", ip, gw, &ref)
+			}
 			mgw.our_ipref.Set(ip, IpRefRec{gw, ref, oid, mark})
 
 		} else {
@@ -446,7 +462,9 @@ func (mgw *MapGw) set_new_mark(pb *PktBuf) int {
 	}
 	oid := O32(be.Uint32(pkt[V1_OID : V1_OID+4]))
 	mark := M32(be.Uint32(pkt[V1_MARK : V1_MARK+4]))
-	log.debug("mgw: set mark %v(%v): %v", owners.name(oid), oid, mark)
+	if cli.debug_mapper {
+		log.debug("mgw: set mark %v(%v): %v", owners.name(oid), oid, mark)
+	}
 	mgw.set_cur_mark(oid, mark)
 
 	return DROP
@@ -478,11 +496,15 @@ func (mgw *MapGw) update_soft(pb *PktBuf) int {
 	soft.hops = pkt[off+V1_SOFT_HOPS]
 
 	if soft.port != 0 {
-		log.debug("mgw: update soft %v:%v mtu(%v) ttl/hops %v/%v", soft.gw, soft.port,
-			soft.mtu, soft.ttl, soft.hops)
+		if cli.debug_mapper {
+			log.debug("mgw: update soft %v:%v mtu(%v) ttl/hops %v/%v", soft.gw, soft.port,
+				soft.mtu, soft.ttl, soft.hops)
+		}
 		mgw.soft[soft.gw] = soft
 	} else {
-		log.debug("mgw: remove soft %v", soft.gw)
+		if cli.debug_mapper {
+			log.debug("mgw: remove soft %v", soft.gw)
+		}
 		delete(mgw.soft, soft.gw)
 	}
 
@@ -530,7 +552,7 @@ func (mgw *MapGw) timer(pb *PktBuf) int {
 						rec.oid, key.(IP32), rec.ip, &rec.ref, "invalid", rec.oid, rec.mark)
 					mgw.their_ipref.Delete(key)
 				} else if rec.mark < mgw.cur_mark[rec.oid] {
-					if cli.debug["mapper"] || cli.debug["all"] {
+					if cli.debug_mapper {
 						log.debug("mgw: purge THEIR_IPREF mark(%v), removing %v 0.0.0.0 %v %v %v(%v):%v",
 							mgw.cur_mark[rec.oid], key.(IP32), rec.ip, &rec.ref,
 							owners.name(rec.oid), rec.oid, rec.mark)
@@ -576,7 +598,7 @@ func (mgw *MapGw) timer(pb *PktBuf) int {
 						rec.oid, key.(IP32), rec.ip, &rec.ref, "invalid", rec.oid, rec.mark)
 					mgw.our_ipref.Delete(key)
 				} else if rec.mark < mgw.cur_mark[rec.oid] {
-					if cli.debug["mapper"] || cli.debug["all"] {
+					if cli.debug_mapper {
 						log.debug("mgw: purge OUR_IPREF mark(%v), removing 0.0.0.0 %v %v %v %v(%v):%v",
 							mgw.cur_mark[rec.oid], key.(IP32), rec.ip, &rec.ref,
 							owners.name(rec.oid), rec.oid, rec.mark)
@@ -661,8 +683,10 @@ func (mtun *MapTun) set_cur_mark(oid O32, mark M32) {
 
 func (mtun *MapTun) set_soft(src IP32, soft SoftRec) {
 
-	log.debug("mtun: set soft %v:%v mtu(%v) ttl/hops %v/%v", soft.gw, soft.port,
-		soft.mtu, soft.ttl, soft.hops)
+	if cli.debug_mapper {
+		log.debug("mtun: set soft %v:%v mtu(%v) ttl/hops %v/%v", soft.gw, soft.port,
+			soft.mtu, soft.ttl, soft.hops)
+	}
 
 	mtun.soft[src] = soft
 
@@ -691,13 +715,17 @@ func (mtun *MapTun) get_dst_ip(gw IP32, ref Ref) IP32 {
 	}
 
 	if rec.mark < mtun.cur_mark[rec.oid] {
-		log.debug("mtun: dst ip expired for: %v + %v", gw, &ref)
+		if cli.debug_mapper {
+			log.debug("mtun: dst ip expired for: %v + %v", gw, &ref)
+		}
 		return 0 // expired
 	}
 
 	if rec.oid == mtun.oid && rec.mark-mtun.cur_mark[mtun.oid] < MAPPER_REFRESH {
 
-		log.debug("mtun: refreshing dst ip for: %v + %v", gw, &ref)
+		if cli.debug_mapper {
+			log.debug("mtun: refreshing dst ip for: %v + %v", gw, &ref)
+		}
 		mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
 		rec.mark = mark
 		our_refs.(*b.Tree).Set(ref, rec)                                     // bump up expiration
@@ -729,13 +757,17 @@ func (mtun *MapTun) get_src_ea(gw IP32, ref Ref) IP32 {
 
 		if rec.mark < mtun.cur_mark[rec.oid] {
 
-			log.debug("mtun: src ea expired for: %v + %v, reallocating", gw, &ref)
+			if cli.debug_mapper {
+				log.debug("mtun: src ea expired for: %v + %v, reallocating", gw, &ref)
+			}
 
 		} else {
 
 			if rec.oid == mtun.oid && rec.mark-mtun.cur_mark[mtun.oid] < MAPPER_REFRESH {
 
-				log.debug("mtun: refreshing src ea for: %v + %v", gw, ref)
+				if cli.debug_mapper {
+					log.debug("mtun: refreshing src ea for: %v + %v", gw, ref)
+				}
 				mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
 				rec.mark = mark
 				their_refs.(*b.Tree).Set(ref, rec)                                   // bump up expiration
@@ -749,7 +781,9 @@ func (mtun *MapTun) get_src_ea(gw IP32, ref Ref) IP32 {
 	// no ea for this remote host, allocate one
 
 	ea := <-random_mapper_ea
-	log.debug("mtun: no src ea for: %v + %v, allocating: %v", gw, &ref, ea)
+	if cli.debug_mapper {
+		log.debug("mtun: no src ea for: %v + %v, allocating: %v", gw, &ref, ea)
+	}
 	if ea == 0 {
 		log.err("mtun: cannot get new ea for %v + %v, ignoring record", gw, &ref)
 		return 0 // cannot get new ea
@@ -814,7 +848,9 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 				their_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
 				mtun.our_ea.Set(gw, their_refs)
 			}
-			log.debug("mtun: set their_refs  %v  ->  %v  ->  %v", gw, &ref, ea)
+			if cli.debug_mapper {
+				log.debug("mtun: set their_refs  %v  ->  %v  ->  %v", gw, &ref, ea)
+			}
 			their_refs.(*b.Tree).Set(ref, IpRec{ea, oid, mark})
 
 		} else if ea == 0 && ip != 0 {
@@ -831,7 +867,9 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 				our_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
 				mtun.our_ip.Set(gw, our_refs)
 			}
-			log.debug("mtun: set our_refs  %v  ->  %v  ->  %v", gw, &ref, ip)
+			if cli.debug_mapper {
+				log.debug("mtun: set our_refs  %v  ->  %v  ->  %v", gw, &ref, ip)
+			}
 			our_refs.(*b.Tree).Set(ref, IpRec{ip, oid, mark})
 
 		} else {
@@ -852,7 +890,9 @@ func (mtun *MapTun) set_new_mark(pb *PktBuf) int {
 	}
 	oid := O32(be.Uint32(pkt[V1_OID : V1_OID+4]))
 	mark := M32(be.Uint32(pkt[V1_MARK : V1_MARK+4]))
-	log.debug("mtun: set mark %v(%v): %v", owners.name(oid), oid, mark)
+	if cli.debug_mapper {
+		log.debug("mtun: set mark %v(%v): %v", owners.name(oid), oid, mark)
+	}
 	mtun.set_cur_mark(oid, mark)
 
 	return DROP
@@ -906,7 +946,9 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 			gw = key.(IP32)
 			mtun.purge.sbtree = val.(*b.Tree)
 			if mtun.purge.sbtree.Len() == 0 {
-				log.debug("mtun: purge OUR_IP empty subtree for gw %v, removing gw", gw)
+				if cli.debug_mapper {
+					log.debug("mtun: purge OUR_IP empty subtree for gw %v, removing gw", gw)
+				}
 				mtun.our_ip.Delete(key)
 				continue
 			}
@@ -950,7 +992,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 					rec.oid, rec.ip, gw, &ref, "invalid", rec.oid, rec.mark)
 				mtun.purge.sbtree.Delete(key)
 			} else if rec.mark < mtun.cur_mark[rec.oid] {
-				if cli.debug["mapper"] || cli.debug["all"] {
+				if cli.debug_mapper {
 					log.debug("mtun: purge OUR_IP_SUB mark(%v), removing 0.0.0.0 %v %v %v %v(%v):%v",
 						mtun.cur_mark[rec.oid], rec.ip, gw, &ref,
 						owners.name(rec.oid), rec.oid, rec.mark)
@@ -993,7 +1035,9 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 			gw = key.(IP32)
 			mtun.purge.sbtree = val.(*b.Tree)
 			if mtun.purge.sbtree.Len() == 0 {
-				log.debug("mtun: purge OUR_EA empty subtree for gw %v, removing gw and its soft record", gw)
+				if cli.debug_mapper {
+					log.debug("mtun: purge OUR_EA empty subtree for gw %v, removing gw and its soft record", gw)
+				}
 				// remove soft, tell mgw about it, then remove the key last
 				delete(mtun.soft, gw)
 				send_soft_rec(SoftRec{gw, 0, 0, 0, 0}) // port == 0 means remove record
@@ -1040,7 +1084,7 @@ func (mtun *MapTun) timer(pb *PktBuf) int {
 					rec.oid, rec.ip, gw, &ref, "invalid", rec.oid, rec.mark)
 				mtun.purge.sbtree.Delete(key)
 			} else if rec.mark < mtun.cur_mark[rec.oid] {
-				if cli.debug["mapper"] || cli.debug["all"] {
+				if cli.debug_mapper {
 					log.debug("mtun: purge OUR_EA_SUB mark(%v), removing %v 0.0.0.0 %v %v %v(%v) %v",
 						mtun.cur_mark[rec.oid], rec.ip, gw, &ref,
 						owners.name(rec.oid), rec.oid, rec.mark)

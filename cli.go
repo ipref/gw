@@ -12,14 +12,17 @@ import (
 )
 
 var cli struct { // no locks, once setup in cli, never modified thereafter
-	debuglist  string
-	trace      bool
-	stamps     bool
-	gw         string
-	ea         string
-	hosts_path string
-	dns_path   string
-	maxbuf     int
+	debuglist    string
+	debug_gw     bool
+	debug_mapper bool
+	debug_tun    bool
+	trace        bool
+	stamps       bool
+	gw           string
+	ea           string
+	hosts_path   string
+	dns_path     string
+	maxbuf       int
 	// derived
 	debug      map[string]bool
 	ea_ip      IP32
@@ -72,6 +75,14 @@ func parse_cli() {
 			eix = ix
 		}
 		cli.debug[fname[bix:eix]] = true
+		switch fname[bix:eix] {
+		case "gw":
+			cli.debug_gw = true
+		case "mapper":
+			cli.debug_mapper = true
+		case "tun":
+			cli.debug_tun = true
+		}
 	}
 
 	if cli.trace {

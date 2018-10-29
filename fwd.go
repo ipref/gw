@@ -267,10 +267,6 @@ func insert_ipref_option(pb *PktBuf) int {
 	ip_csum := csum_add(0, pkt[pb.iphdr:pb.iphdr+iphdrlen])
 	be.PutUint16(pkt[pb.iphdr+IP_CSUM:pb.iphdr+IP_CSUM+2], ip_csum^0xffff)
 
-	if cli.debug["fwd"] || cli.debug["all"] {
-		log.debug("inserting opt: %v", pb.pp_pkt())
-	}
-
 	return ACCEPT
 }
 
@@ -534,20 +530,12 @@ func remove_ipref_option(pb *PktBuf) int {
 	ip_csum := csum_add(0, pkt[pb.iphdr:pb.iphdr+iphdrlen])
 	be.PutUint16(pkt[pb.iphdr+IP_CSUM:pb.iphdr+IP_CSUM+2], ip_csum^0xffff)
 
-	if cli.debug["fwd"] || cli.debug["all"] {
-		log.debug("removing opt:  %v", pb.pp_pkt())
-	}
-
 	return ACCEPT
 }
 
 func fwd_to_gw() {
 
 	for pb := range recv_tun {
-
-		if cli.debug["fwd"] || cli.debug["all"] {
-			log.debug("fwd_to_gw  in: %v", pb.pp_pkt())
-		}
 
 		verdict := DROP
 		pb.set_iphdr()
@@ -589,10 +577,6 @@ func fwd_to_gw() {
 func fwd_to_tun() {
 
 	for pb := range recv_gw {
-
-		if cli.debug["fwd"] || cli.debug["all"] {
-			log.debug("fwd_to_tun in: %v", pb.pp_pkt())
-		}
 
 		verdict := DROP
 		pb.set_iphdr()
