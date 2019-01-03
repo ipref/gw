@@ -1,19 +1,16 @@
-/* Copyright (c) 2018 Waldemar Augustyn */
+/* Copyright (c) 2018-2019 Waldemar Augustyn */
 
 package main
 
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"github.com/fsnotify/fsnotify"
+	"github.com/ipref/ref"
 	"io"
 	"io/ioutil"
 	"net"
 	"path/filepath"
-	"regexp"
-	//"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -21,10 +18,6 @@ import (
 const (
 	DEBOUNCE = time.Duration(4765 * time.Millisecond) // [s] file event debounce time
 )
-
-var re_hexref *regexp.Regexp
-var re_decref *regexp.Regexp
-var re_dotref *regexp.Regexp
 
 /* Parsing DNS files
 
@@ -37,84 +30,6 @@ rapid file events is reduced to a single timer event.
 type DnsFunc struct {
 	gofunc func(string, *time.Timer)
 	timer  *time.Timer
-}
-
-func compile_regex() {
-	re_hexref = regexp.MustCompile(`^[0-9a-fA-F]+([-][0-9a-fA-F]+)*$`)
-	re_decref = regexp.MustCompile(`^[0-9]+([,][0-9]+)+$`)
-	re_dotref = regexp.MustCompile(`^([1-9]?[0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])([.]([1-9]?[0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]))+$`)
-}
-
-// parse reference
-func parse_ref(sss string) (Ref, error) {
-
-	var ref Ref
-	var err error
-	var val uint64 // go does not allow ref.l, err := something(), need intermediate variable
-
-	// hex
-
-	if re_hexref.MatchString(sss) {
-		hex := strings.Replace(sss, "-", "", -1)
-		hexlen := len(hex)
-		if hexlen < 17 {
-			ref.h = 0
-			val, err = strconv.ParseUint(hex, 16, 64)
-			if err != nil {
-				return ref, err
-			}
-			ref.l = val
-			return ref, nil
-		} else {
-			val, err = strconv.ParseUint(hex[:hexlen-16], 16, 64)
-			if err != nil {
-				return ref, err
-			}
-			ref.h = val
-			val, err = strconv.ParseUint(hex[hexlen-16:hexlen], 16, 64)
-			if err != nil {
-				return ref, err
-			}
-			ref.l = val
-			return ref, nil
-		}
-	}
-
-	// decimal
-
-	if re_decref.MatchString(sss) {
-		decstr := strings.Replace(sss, ",", "", -1)
-		ref.h = 0
-		val, err = strconv.ParseUint(decstr, 10, 64)
-		if err != nil {
-			return ref, err
-		}
-		ref.l = val
-		return ref, nil
-	}
-
-	// dotted decimal
-
-	if re_dotref.MatchString(sss) {
-		dot := strings.Split(sss, ".")
-		dotlen := len(dot)
-		for ii := 0; ii < dotlen; ii++ {
-			dec, err := strconv.ParseUint(dot[ii], 10, 8)
-			if err != nil {
-				return ref, err
-			}
-			if ii < (dotlen - 8) {
-				ref.h <<= 8
-				ref.h += uint64(dec)
-			} else {
-				ref.l <<= 8
-				ref.l += uint64(dec)
-			}
-		}
-		return ref, nil
-	}
-
-	return ref, fmt.Errorf("invalid format")
 }
 
 // parse file formatted as /etc/hosts
@@ -229,13 +144,14 @@ func parse_hosts_file(fname string, input io.Reader) map[IP32]AddrRec {
 				continue
 			}
 
-			ref, err := parse_ref(reftoks[0])
+			ref, err := ref.Parse(reftoks[0])
 			if err != nil {
 				log.err("dns watcher: %v(%v): invalid reference: %v: %v", fname, lno, reftoks[0], err)
 				continue
 			}
 
-			arec.ref = ref
+			arec.ref.h = ref.H
+			arec.ref.l = ref.L
 		}
 
 		// build string showing gw + ref
@@ -496,8 +412,6 @@ func dns_watcher() {
 	if len(cli.hosts_path) == 0 && len(cli.dns_path) == 0 {
 		log.info("dns watcher: nothing to watch, exiting")
 	}
-
-	compile_regex()
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
