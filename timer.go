@@ -8,6 +8,33 @@ import (
 	"time"
 )
 
+/* Markers and owner ids
+
+Every mapper record has a marker and an owner id (oid) associated with it. An
+oid is an arbitrary integer identifying the owner of the record.  A marker is
+a time value which determines whether a record is active. Each marker has a
+corresponding cur_mark value per each oid. A record is active if its mark is
+not less than the related cur_mark.
+
+Mapper records that are dynamically created by the forwarders expire after a set
+amount of time. This is accomplished by incrementing cur_mark value as time
+passes. In this way mark values of dynamic records eventually fall below the
+cur_mark values. If a record is used in mapping, its expiration is extended,
+ie. its mark is incremented. If a record is not used for an extened amount of
+time, it expires.
+
+Mapper records that are created by DNS agents also use mark values to determine
+their status. Unlike dynamic mapper records, their curr_mark values are not
+incremented with time but with successive updates. Each new update carries a new
+mark value which is then set as the new curr_mark. In this way, old records are
+immediately expired whenever a new set becomes available.
+
+Expired records are collected by a purge timer. A purge timer periodically scans
+mapper records and removes those whose mark is less than the related curr_mark
+regardless of whether they are dynamic records created by forwarders or static
+records created by DNS agents.
+*/
+
 const (
 	TIMER_TICK = 16811          // [ms] avg  16.811 [s]
 	TIMER_FUZZ = TIMER_TICK / 7 // [ms]       2.401 [s]
