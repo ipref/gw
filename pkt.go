@@ -1,4 +1,4 @@
-/* Copyright (c) 2018 Waldemar Augustyn */
+/* Copyright (c) 2018-2019 Waldemar Augustyn */
 
 package main
 
@@ -44,19 +44,20 @@ const ( // v1 constants
 
 const ( // v1 item types
 
-	V1_TYPE_NONE = iota
-	V1_TYPE_AREC
-	V1_TYPE_SOFT
-	V1_TYPE_IPV4
+	V1_TYPE_NONE   = 0
+	V1_TYPE_AREC   = 1
+	V1_TYPE_SOFT   = 2
+	V1_TYPE_IPV4   = 3
+	V1_TYPE_STRING = 4
 )
 
 const ( // v1 commands
 
-	V1_SET_AREC = iota + 1
-	V1_SET_MARK
-	V1_SET_SOFT
-	V1_PURGE
-	V1_INDUCE_ARP
+	V1_SET_AREC   = 1
+	V1_SET_MARK   = 2
+	V1_SET_SOFT   = 3
+	V1_PURGE      = 4
+	V1_INDUCE_ARP = 5
 )
 
 const ( // packet handling verdicts
