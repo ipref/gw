@@ -1,4 +1,4 @@
-+# IPREF gw
+# IPREF gw
 IPREF&#8482; is an IP addressing system where hosts are referred to by a combination of an IP address and a reference, hence ipref. It is used for communication between private networks. The IP portion of an IPREF address is usually an address of one of the gateways to a local network. The reference is an opaque unsigned integer assigned by that local network. References have no meaning beyond the local network they were assigned in. A local network _address mapper_ makes use of them to produce valid local IP addresses.
 
 IPREF is for local networks wishing to exchange information with other local networks. It is about local-to-local, there is no intention to provide IPREF support for communication between local networks and public Internet. However, one may notice that virtually all services appearing on public Internet are actually hosted on local networks and then made public via Network Address Translation (NAT). IPREF allows to reach those same services on their local, private networks without NAT. It works with IPv4 and IPv6, or a mix thereof. IPREF is a better Internet.
