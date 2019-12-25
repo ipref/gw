@@ -22,7 +22,7 @@ Conceptualy, every address record is a relation between four elements:
 
     (ea, ip, gw, ref)
 
-In the meadow implementation of IPREF, where local network host addresses are
+In this implementation of the gateway, where local network host addresses are
 never aliased by encoding addresses, the quad can be decomposed into two
 disjoined relations comprised of three elements:
 
@@ -52,9 +52,9 @@ by DNS watchers or timers.
 
 /* Soft state
 
-IPREF maintains soft state describing status of peer gateways. In the meadow
-implementation of IPREF, where local network has only one gateway, soft state
-is implemented as a simple map:
+IPREF maintains soft state describing status of peer gateways. In this
+implementation of the gateway, where local network has only one gateway,
+soft state is implemented as a simple map:
 
 	their_gw -> state
 

@@ -43,13 +43,12 @@ func parse_cli() {
 	flag.StringVar(&cli.ea, "encode-net", "10.240.0.0/12", "private network for encoding external ipref addresses")
 	flag.StringVar(&cli.hosts_path, "hosts", "/etc/hosts", "host name lookup file")
 	flag.StringVar(&cli.dns_path, "dns", "", "dns file with IPREF addresses of local hosts")
-	flag.IntVar(&cli.maxbuf, "max-buffers", 64, "Max number of packet buffers")
+	flag.IntVar(&cli.maxbuf, "max-buffers", 64, "max number of packet buffers")
 	flag.Usage = func() {
 		toks := strings.Split(os.Args[0], "/")
 		prog := toks[len(toks)-1]
-		fmt.Println("User space implementation of IPREF routing. It supports single router")
-		fmt.Println("configuration where all Internet traffic passes through it. It provides")
-		fmt.Println("IPREF packet processing for local networks.")
+		fmt.Println("User space implementation of IPREF gateway. It supports single gateway")
+		fmt.Println("configuration where all Internet traffic passes through it.")
 		fmt.Println("")
 		fmt.Println("   ", prog, "[FLAGS]")
 		fmt.Println("")

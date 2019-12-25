@@ -11,7 +11,7 @@ import (
 /* Address and reference allocation
 
 Local network encoded addresses and references may be allocated by the mapper
-or by a local DNS server. To avoid conflicts, meadow implementation imposes
+or by a local DNS server. To avoid conflicts, this implementation imposes
 a rule where the second to last byte of an allocated IP address or the second
 to last byte of an allocated reference must be 100 or higher if allocated
 by the mapper and it must be less than 100 if allocated by DNS server or

@@ -54,7 +54,7 @@ func main() {
 
 	parse_cli() // also initializes log
 
-	log.info("START meadow")
+	log.info("START ipref gateway")
 
 	goexit = make(chan string)
 	go catch_signals()
@@ -106,5 +106,5 @@ func main() {
 
 	msg := <-goexit
 
-	log.info("FINISH meadow: %v", msg)
+	log.info("FINISH ipref gateway: %v", msg)
 }
