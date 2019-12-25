@@ -468,7 +468,7 @@ func gw_receiver(con net.PacketConn) {
 
 func start_gw() {
 
-	con, err := raw.ListenPacket(&cli.ifc, ETHER_IPv4, &raw.Config{false, true, false})
+	con, err := raw.ListenPacket(&cli.ifc, ETHER_IPv4, &raw.Config{false, true, []bpf.RawInstruction{}, 0})
 	if err != nil {
 		log.fatal("gw: cannot get raw socket: %v", err)
 	}
