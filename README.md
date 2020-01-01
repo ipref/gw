@@ -86,7 +86,7 @@ Local DNS server is optional. It is used only if local networks wish to advertis
 
 ### External DNS servers
 
-External DNS servers are used to advertise IPREF addresses of local hosts for external access. If a local network wants to make some of its hosts available externally via IPREF addresses, it must setup an external DNS server listing these IPREF addresses. It must also setup a local DNS server that lists local standard IP addresses of the same hosts. Both servers are queried by the *DNS agent* which then passes related address information to the *address mapper*. External DNS servers are standard, unmodified DNS servers.
+External DNS servers are used to advertise IPREF addresses of local hosts for external access. If a local network wants to make some of its hosts available externally via IPREF addresses, it must setup an external DNS server listing these IPREF addresses. It must also setup a local DNS server that lists local standard IP addresses for the same hosts. Both servers are queried by the *DNS agent* which then passes related address information to the *address mapper*. External DNS servers are standard, unmodified DNS servers.
 
 ### Static address configuration
 
