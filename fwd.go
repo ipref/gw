@@ -1,4 +1,4 @@
-/* Copyright (c) 2018 Waldemar Augustyn */
+/* Copyright (c) 2018-2020 Waldemar Augustyn */
 
 package main
 
@@ -599,6 +599,8 @@ func fwd_to_tun() {
 			switch pb.pkt[pb.iphdr+V1_CMD] {
 			case V1_SET_AREC:
 				verdict = map_tun.set_new_address_records(pb)
+			case V1_REQ | V1_GET_EA:
+				verdict = map_tun.get_ea(pb)
 			case V1_SET_MARK:
 				verdict = map_tun.set_new_mark(pb)
 			case V1_PURGE:

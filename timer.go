@@ -1,4 +1,4 @@
-/* Copyright (c) 2018 Waldemar Augustyn */
+/* Copyright (c) 2018-2020 Waldemar Augustyn */
 
 package main
 
@@ -75,25 +75,20 @@ func (m *Mark) now() M32 {
 
 }
 
-func get_timer_packet(cmd byte, mark M32) *PktBuf {
-
-	pb := <-getbuf
-
-	pb.set_iphdr()
-	pb.write_v1_header(cmd, mapper_oid, mark)
-
-	pb.tail = pb.iphdr + V1_HDR_LEN
-
-	return pb
-}
-
 func arp_tick() {
 
 	for {
 		time.Sleep(time.Duration(ARP_TICK-ARP_FUZZ/2+prng.Intn(ARP_FUZZ)) * time.Millisecond)
 
 		mark := marker.now()
-		pb := get_timer_packet(V1_SET_MARK, mark)
+		pb := <-getbuf
+		pb.write_v1_header(V1_SET_MARK, 0)
+		pkt := pb.pkt[pb.iphdr:]
+		off := V1_HDR_LEN
+		copy(pkt[off+V1_OID:off+V1_OID+4], []byte{0, 0, 0, 0})
+		be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], uint32(mark))
+		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((V1_HDR_LEN+V1_MARK_LEN)/4))
+		pb.tail = V1_HDR_LEN + V1_MARK_LEN
 		send_gw <- pb
 	}
 }
@@ -103,7 +98,12 @@ func purge_tick() {
 	for {
 		time.Sleep(time.Duration(PURGE_TICK-PURGE_FUZZ/2+prng.Intn(PURGE_FUZZ)) * time.Millisecond)
 
-		pb := get_timer_packet(V1_PURGE, 0)
+		pb := <-getbuf
+		pb.write_v1_header(V1_PURGE, 0)
+		pkt := pb.pkt[pb.iphdr:]
+		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(V1_HDR_LEN/4))
+		pb.tail = pb.iphdr + V1_HDR_LEN
+
 		pbb := <-getbuf
 		pbb.copy_from(pb)
 
@@ -117,13 +117,29 @@ func timer_tick() {
 	for {
 		time.Sleep(time.Duration(TIMER_TICK-TIMER_FUZZ/2+prng.Intn(TIMER_FUZZ)) * time.Millisecond)
 
-		mark := marker.now() // the same mark for both timers
+		mark := marker.now()
 
-		pb := get_timer_packet(V1_SET_MARK, mark)
+		pb := <-getbuf
+		pb.peer = "timer"
+
+		pb.write_v1_header(V1_DATA|V1_SET_MARK, 0)
+		pkt := pb.pkt[pb.iphdr:]
+		off := V1_HDR_LEN
+		be.PutUint32(pkt[off+V1_OID:off+V1_OID+4], uint32(mapper_oid))
+		be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], uint32(mark))
+		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((V1_HDR_LEN+V1_MARK_LEN)/4))
+		pb.tail = pb.iphdr + V1_HDR_LEN + V1_MARK_LEN
+
 		pbb := <-getbuf
+		pbb.peer = "timer"
 		pbb.copy_from(pb)
+
+		pbc := <-getbuf
+		pbc.peer = "timer"
+		pbc.copy_from(pb)
 
 		recv_gw <- pb
 		recv_tun <- pbb
+		mbchan <- pbc
 	}
 }

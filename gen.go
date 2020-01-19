@@ -1,9 +1,10 @@
-/* Copyright (c) 2018 Waldemar Augustyn */
+/* Copyright (c) 2018-2020 Waldemar Augustyn */
 
 package main
 
 import (
 	"crypto/rand"
+	rff "github.com/ipref/ref"
 	"strings"
 	"sync"
 )
@@ -67,8 +68,8 @@ func (o *Owners) new_oid(name string) O32 {
 
 var owners Owners
 
-var random_dns_ref chan Ref
-var random_mapper_ref chan Ref
+var random_dns_ref chan rff.Ref
+var random_mapper_ref chan rff.Ref
 
 var random_dns_ea chan IP32
 var random_mapper_ea chan IP32
@@ -76,9 +77,9 @@ var random_mapper_ea chan IP32
 // generate random refs with second to last byte < SECOND_BYTE
 func gen_dns_refs() {
 
-	var ref Ref
-	refzero := Ref{0, 0}
-	allocated := make(map[Ref]bool)
+	var ref rff.Ref
+	refzero := rff.Ref{0, 0}
+	allocated := make(map[rff.Ref]bool)
 	creep := make([]byte, 16)
 	var err error
 
@@ -93,10 +94,10 @@ func gen_dns_refs() {
 
 			creep[14] %= SECOND_BYTE
 			creep[7] >>= 4 // make 64 bit refs happen more often
-			ref.h = be.Uint64(creep[:8])
-			ref.l = be.Uint64(creep[8:])
+			ref.H = be.Uint64(creep[:8])
+			ref.L = be.Uint64(creep[8:])
 
-			if ref.h == 0 && ref.l < MIN_REF {
+			if ref.H == 0 && ref.L < MIN_REF {
 				continue // reserved ref
 			}
 
@@ -115,9 +116,9 @@ func gen_dns_refs() {
 // generate random refs with second to last byte >= SECOND_BYTE
 func gen_mapper_refs() {
 
-	var ref Ref
-	refzero := Ref{0, 0}
-	allocated := make(map[Ref]bool)
+	var ref rff.Ref
+	refzero := rff.Ref{0, 0}
+	allocated := make(map[rff.Ref]bool)
 	creep := make([]byte, 16)
 	var err error
 
@@ -133,10 +134,10 @@ func gen_mapper_refs() {
 			creep[14] %= 256 - SECOND_BYTE
 			creep[14] += SECOND_BYTE
 			creep[7] >>= 4 // make 64 bit refs happen more often
-			ref.h = be.Uint64(creep[:8])
-			ref.l = be.Uint64(creep[8:])
+			ref.H = be.Uint64(creep[:8])
+			ref.L = be.Uint64(creep[8:])
 
-			if ref.h == 0 && ref.l < MIN_REF {
+			if ref.H == 0 && ref.L < MIN_REF {
 				continue // reserved ref
 			}
 

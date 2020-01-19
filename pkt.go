@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019 Waldemar Augustyn */
+/* Copyright (c) 2018-2020 Waldemar Augustyn */
 
 package main
 
@@ -6,27 +6,24 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	rff "github.com/ipref/ref"
 	"net"
 	"strings"
 )
 
 const ( // v1 constants
 
-	V1_SIG          = 0x11 // v1 signature
-	V1_HDR_LEN      = 16
-	V1_AREC_HDR_LEN = 4
-	V1_AREC_LEN     = 4 + 4 + 4 + 8 + 8     // ea + ip + gw + ref.h + ref.l
-	V1_SOFT_LEN     = 4 + 2 + 2 + 1 + 1 + 2 // gw + mtu + port + ttl + hops + rsvd
+	V1_SIG      = 0x11 // v1 signature
+	V1_HDR_LEN  = 8
+	V1_AREC_LEN = 4 + 4 + 4 + 8 + 8     // ea + ip + gw + ref.h + ref.l
+	V1_MARK_LEN = 4 + 4                 // oid + mark
+	V1_SOFT_LEN = 4 + 2 + 2 + 1 + 1 + 2 // gw + mtu + port + ttl + hops + rsvd
 	// v1 header offsets
-	V1_VER       = 0
-	V1_CMD       = 1
-	V1_SRCQ      = 2
-	V1_DSTQ      = 3
-	V1_OID       = 4
-	V1_MARK      = 8
-	V1_RESERVED  = 12
-	V1_ITEM_TYPE = 13
-	V1_NUM_ITEMS = 14
+	V1_VER      = 0
+	V1_CMD      = 1
+	V1_PKTID    = 2
+	V1_RESERVED = 4
+	V1_PKTLEN   = 6
 	// v1 arec offsets
 	V1_AREC_EA   = 0
 	V1_AREC_IP   = 4
@@ -40,24 +37,38 @@ const ( // v1 constants
 	V1_SOFT_TTL  = 8
 	V1_SOFT_HOPS = 9
 	V1_SOFT_RSVD = 10
+	// v1 mark offsets
+	V1_OID  = 0
+	V1_MARK = 4
 )
 
 const ( // v1 item types
 
-	V1_TYPE_NONE   = 0
-	V1_TYPE_AREC   = 1
-	V1_TYPE_SOFT   = 2
-	V1_TYPE_IPV4   = 3
+	//V1_TYPE_NONE   = 0
+	//V1_TYPE_AREC   = 1
+	//V1_TYPE_SOFT   = 2
+	//V1_TYPE_IPV4   = 3
 	V1_TYPE_STRING = 4
 )
 
 const ( // v1 commands
 
+	V1_NOOP       = 0
 	V1_SET_AREC   = 1
 	V1_SET_MARK   = 2
 	V1_SET_SOFT   = 3
 	V1_PURGE      = 4
 	V1_INDUCE_ARP = 5
+	V1_GET_EA     = 6
+	V1_MC_GET_EA  = 7
+)
+
+const ( // v1 command mode, top two bits
+
+	V1_DATA = 0x00
+	V1_REQ  = 0x40
+	V1_ACK  = 0x80
+	V1_NACK = 0xC0
 )
 
 const ( // packet handling verdicts
@@ -128,7 +139,7 @@ const (
 )
 
 type IcmpReq struct { // params for icmp requests
-	typ  byte // we want 'type' but it's a reserved keyword so we use Polish spelling
+	typ  byte // type is a reserved keyword so we use Polish spelling
 	code byte
 	mtu  uint16
 }
@@ -137,6 +148,8 @@ type PktBuf struct {
 	data  int
 	tail  int
 	iphdr int
+	peer  string         // peer or source name, human readable
+	schan chan<- *PktBuf // send to or source channel
 	icmp  IcmpReq
 }
 
@@ -145,13 +158,15 @@ func (pb *PktBuf) clear() {
 	pb.data = 0
 	pb.tail = 0
 	pb.iphdr = 0
+	pb.peer = ""
+	pb.schan = nil
 	pb.icmp = IcmpReq{0, 0, 0}
 }
 
 func (pb *PktBuf) copy_from(pbo *PktBuf) {
 
 	if len(pb.pkt) < int(pbo.tail) {
-		log.fatal("pkt: buffer to small to copy from another pkt")
+		log.fatal("pkt: buffer too small to copy from another pkt")
 	}
 
 	pb.data = pbo.data
@@ -162,10 +177,25 @@ func (pb *PktBuf) copy_from(pbo *PktBuf) {
 	copy(pb.pkt[pb.data:pb.tail], pbo.pkt[pb.data:pb.tail])
 }
 
+func ip_proto(proto byte) string {
+
+	switch proto {
+	case TCP:
+		return "tcp"
+	case UDP:
+		return "udp"
+	case ICMP:
+		return "icmp"
+	}
+	return fmt.Sprintf("%v", proto)
+}
+
 func (pb *PktBuf) pp_pkt() (ss string) {
 
 	// IP(udp)  192.168.84.97  192.168.84.98  len(60)  data/tail(0/60)
 	// IPREF(udp)  192.168.84.97 + 8af2819566  192.168.84.98 + 31fba013c  len(60) data/tail(48/158)
+	// V1 REQ GET_EA(6) 77.71.180.101 + 2bc-1859   vman.ipref.org
+	// V1 ACK GET_EA(6) 77.71.180.101 + 2bc-1859 = 10.254.192.127
 	// V1 SET_MARK(1)  mapper(1)  mark(12342)  data/tail(12/68)
 	// PKT 0532ab04 data/tail(18/20)
 
@@ -191,23 +221,23 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 
 	if reflen != 0 {
 
-		var sref Ref
-		var dref Ref
+		var sref rff.Ref
+		var dref rff.Ref
 
 		udp := int(pkt[IP_VER]&0xf) * 4
 		encap := udp + 8
 		opt := encap + 4
 
 		if reflen == IPREF_OPT128_LEN {
-			sref.h = be.Uint64(pkt[opt+OPT_SREF128 : opt+OPT_SREF128+8])
-			sref.l = be.Uint64(pkt[opt+OPT_SREF128+8 : opt+OPT_SREF128+8+8])
-			dref.h = be.Uint64(pkt[opt+OPT_DREF128 : opt+OPT_DREF128+8])
-			dref.l = be.Uint64(pkt[opt+OPT_DREF128+8 : opt+OPT_DREF128+8+8])
+			sref.H = be.Uint64(pkt[opt+OPT_SREF128 : opt+OPT_SREF128+8])
+			sref.L = be.Uint64(pkt[opt+OPT_SREF128+8 : opt+OPT_SREF128+8+8])
+			dref.H = be.Uint64(pkt[opt+OPT_DREF128 : opt+OPT_DREF128+8])
+			dref.L = be.Uint64(pkt[opt+OPT_DREF128+8 : opt+OPT_DREF128+8+8])
 		} else if reflen == IPREF_OPT64_LEN {
-			sref.h = 0
-			sref.l = be.Uint64(pkt[opt+OPT_SREF64 : opt+OPT_SREF64+8])
-			dref.h = 0
-			dref.l = be.Uint64(pkt[opt+OPT_DREF64 : opt+OPT_DREF64+8])
+			sref.H = 0
+			sref.L = be.Uint64(pkt[opt+OPT_SREF64 : opt+OPT_SREF64+8])
+			dref.H = 0
+			dref.L = be.Uint64(pkt[opt+OPT_DREF64 : opt+OPT_DREF64+8])
 		}
 
 		ss = fmt.Sprintf("IPREF(%v)  %v + %v  %v + %v  len(%v)  data/tail(%v/%v)",
@@ -242,26 +272,139 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 
 		ss = "V1"
 
+		pktlen := int(be.Uint16(pkt[V1_PKTLEN:V1_PKTLEN+2])) * 4
+		off := V1_HDR_LEN
+
+		var oid O32
+
 		cmd := pkt[V1_CMD]
 		switch cmd {
+		case V1_NOOP:
+			ss += fmt.Sprintf(" NOOP(%v)", cmd)
 		case V1_SET_AREC:
 			ss += fmt.Sprintf(" SET_AREC(%v)", cmd)
 		case V1_SET_MARK:
-			ss += fmt.Sprintf(" SET_MARK(%v)", cmd)
+
+			oid = O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
+			ss += fmt.Sprintf(" SET_MARK(%v) oid %v(%v) mark(%v)",
+				cmd, owners.name(oid), oid, be.Uint32(pkt[off+V1_MARK:off+V1_MARK+4]))
+
 		case V1_SET_SOFT:
 			ss += fmt.Sprintf(" SET_SOFT(%v)", cmd)
 		case V1_PURGE:
 			ss += fmt.Sprintf(" PURGE(%v)", cmd)
 		case V1_INDUCE_ARP:
 			ss += fmt.Sprintf(" INDUCE_ARP(%v)", cmd)
+		case V1_DATA | V1_GET_EA:
+			ss += fmt.Sprintf(" DATA GET_EA(%v) invalid", cmd&0x3f)
+		case V1_REQ | V1_GET_EA:
+
+			// V1  REQ GET_EA(6) oid mapper(1) pktid[058f] 77.71.180.101 + 2bc-1859
+
+			oid = O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
+
+			ss += fmt.Sprintf("  REQ GET_EA(%v) oid %v(%v) pktid[%04x]",
+				cmd&0x3f, owners.name(oid), oid, be.Uint16(pkt[V1_PKTID:V1_PKTID+2]))
+
+			off += V1_MARK_LEN
+
+			if pktlen-off < V1_AREC_LEN {
+				ss += fmt.Sprintf(" too short")
+			} else {
+
+				var ref rff.Ref
+				ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
+				ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+				ss += fmt.Sprintf(" %v + %v", net.IP(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4]).To4(), &ref)
+			}
+
+		case V1_ACK | V1_GET_EA:
+
+			// V1  ACK GET_EA(6) oid mapper(1) pktid[058f] 77.71.180.101 + 2bc-1859 = 10.254.11.8
+
+			oid = O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
+
+			ss += fmt.Sprintf("  ACK GET_EA(%v) oid %v(%v) pktid[%04x]",
+				cmd&0x3f, owners.name(oid), oid, be.Uint16(pkt[V1_PKTID:V1_PKTID+2]))
+
+			off += V1_MARK_LEN
+
+			if pktlen-off < V1_AREC_LEN {
+				ss += fmt.Sprintf(" too short")
+			} else {
+
+				var ref rff.Ref
+				ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
+				ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+				ss += fmt.Sprintf(" %v + %v", net.IP(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4]).To4(), &ref)
+				ss += fmt.Sprintf(" = %v", net.IP(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4]).To4())
+			}
+
+		case V1_NACK | V1_GET_EA:
+
+			// V1 NACK GET_EA(6) oid mapper(1) pktid[058f]
+
+			oid = O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
+
+			ss += fmt.Sprintf(" NACK GET_EA(%v) oid %v(%v) pktid[%04x]",
+				cmd&0x3f, owners.name(oid), oid, be.Uint16(pkt[V1_PKTID:V1_PKTID+2]))
+
+		case V1_DATA | V1_MC_GET_EA:
+			ss += fmt.Sprintf(" DATA MC_GET_EA(%v) invalid", cmd&0x3f)
+		case V1_REQ | V1_MC_GET_EA:
+
+			// V1  REQ MC_GET_EA(6) pktid[058f] 77.71.180.101 + 2bc-1859   vman.ipref.org
+
+			ss += fmt.Sprintf("  REQ MC_GET_EA(%v) pktid[%04x]",
+				cmd&0x3f, be.Uint16(pkt[V1_PKTID:V1_PKTID+2]))
+
+			if pktlen-off < V1_AREC_LEN {
+				ss += fmt.Sprintf(" too short")
+			} else {
+
+				var ref rff.Ref
+				ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
+				ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+				ss += fmt.Sprintf(" %v + %v", net.IP(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4]).To4(), &ref)
+
+				off += V1_AREC_LEN
+				if pktlen-off > 4 && pkt[off] == V1_TYPE_STRING && int(pkt[off+1]) <= pktlen-off-2 {
+					ss += fmt.Sprintf("   %v", string(pkt[off+2:off+2+int(pkt[off+1])]))
+				}
+			}
+		case V1_ACK | V1_MC_GET_EA:
+
+			// V1  ACK MC_GET_EA(6) pktid[058f] 77.71.180.101 + 2bc-1859 = 10.254.11.8
+
+			ss += fmt.Sprintf("  ACK MC_GET_EA(%v) pktid[%04x]",
+				cmd&0x3f, be.Uint16(pkt[V1_PKTID:V1_PKTID+2]))
+
+			if pktlen-off < V1_AREC_LEN {
+				ss += fmt.Sprintf(" too short")
+			} else {
+
+				var ref rff.Ref
+				ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
+				ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+				ss += fmt.Sprintf(" %v + %v", net.IP(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4]).To4(), &ref)
+				ss += fmt.Sprintf(" = %v", net.IP(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4]).To4())
+			}
+
+		case V1_NACK | V1_MC_GET_EA:
+
+			// V1 NACK MC_GET_EA(6) pktid[058f]
+
+			ss += fmt.Sprintf(" NACK MC_GET_EA(%v) pktid[%04x]",
+				cmd&0x3f, be.Uint16(pkt[V1_PKTID:V1_PKTID+2]))
+
 		default:
 			ss += fmt.Sprintf(" cmd(%v)", cmd)
 		}
 
-		oid := O32(be.Uint32(pkt[V1_OID : V1_OID+4]))
-		mark := M32(be.Uint32(pkt[V1_MARK : V1_MARK+4]))
-		ss += fmt.Sprintf("  %v(%v)  mark(%v)  data/tail(%v/%v)",
-			owners.name(oid), oid, mark, pb.data, pb.tail)
+		//oid := O32(be.Uint32(pkt[V1_OID : V1_OID+4]))
+		//mark := M32(be.Uint32(pkt[V1_MARK : V1_MARK+4]))
+		//ss += fmt.Sprintf("  %v(%v)  mark(%v)  data/tail(%v/%v)",
+		//	owners.name(oid), oid, mark, pb.data, pb.tail)
 
 		return
 	}
@@ -315,23 +458,23 @@ func (pb *PktBuf) pp_net(pfx string) {
 
 	if reflen == IPREF_OPT128_LEN || reflen == IPREF_OPT64_LEN {
 
-		var sref Ref
-		var dref Ref
+		var sref rff.Ref
+		var dref rff.Ref
 
 		udp := int(pkt[IP_VER]&0xf) * 4
 		encap := udp + 8
 		opt := encap + 4
 
 		if reflen == IPREF_OPT128_LEN {
-			sref.h = be.Uint64(pkt[opt+OPT_SREF128 : opt+OPT_SREF128+8])
-			sref.l = be.Uint64(pkt[opt+OPT_SREF128+8 : opt+OPT_SREF128+8+8])
-			dref.h = be.Uint64(pkt[opt+OPT_DREF128 : opt+OPT_DREF128+8])
-			dref.l = be.Uint64(pkt[opt+OPT_DREF128+8 : opt+OPT_DREF128+8+8])
+			sref.H = be.Uint64(pkt[opt+OPT_SREF128 : opt+OPT_SREF128+8])
+			sref.L = be.Uint64(pkt[opt+OPT_SREF128+8 : opt+OPT_SREF128+8+8])
+			dref.H = be.Uint64(pkt[opt+OPT_DREF128 : opt+OPT_DREF128+8])
+			dref.L = be.Uint64(pkt[opt+OPT_DREF128+8 : opt+OPT_DREF128+8+8])
 		} else if reflen == IPREF_OPT64_LEN {
-			sref.h = 0
-			sref.l = be.Uint64(pkt[opt+OPT_SREF64 : opt+OPT_SREF64+8])
-			dref.h = 0
-			dref.l = be.Uint64(pkt[opt+OPT_DREF64 : opt+OPT_DREF64+8])
+			sref.H = 0
+			sref.L = be.Uint64(pkt[opt+OPT_SREF64 : opt+OPT_SREF64+8])
+			dref.H = 0
+			dref.L = be.Uint64(pkt[opt+OPT_DREF64 : opt+OPT_DREF64+8])
 		}
 
 		log.trace("%vIPREF(%v)  %v + %v  %v + %v  len(%v) id(%v) ttl(%v) csum: %04x",
@@ -472,25 +615,6 @@ func (pb *PktBuf) verify_csum() (uint16, uint16) {
 	return iphdr_csum ^ 0xffff, l4_csum ^ 0xffff
 }
 
-func (pb *PktBuf) write_v1_header(cmd byte, oid O32, mark M32) {
-
-	pkt := pb.pkt[pb.iphdr:]
-
-	if len(pkt) < V1_HDR_LEN {
-		log.fatal("pkt: not enough space for v1 header")
-	}
-
-	pkt[V1_VER] = V1_SIG
-	pkt[V1_CMD] = cmd
-	pkt[V1_SRCQ] = 0
-	pkt[V1_DSTQ] = 0
-	be.PutUint32(pkt[V1_OID:V1_OID+4], uint32(oid))
-	be.PutUint32(pkt[V1_MARK:V1_MARK+4], uint32(mark))
-	pkt[V1_RESERVED] = 0
-	pkt[V1_ITEM_TYPE] = V1_TYPE_NONE
-	be.PutUint16(pkt[V1_NUM_ITEMS:V1_NUM_ITEMS+2], 0)
-}
-
 // Add buffer bytes to csum. Input csum and result are not inverted.
 func csum_add(csum uint16, buf []byte) uint16 {
 
@@ -523,17 +647,45 @@ func csum_subtract(csum uint16, buf []byte) uint16 {
 	return uint16(sum)
 }
 
-func ip_proto(proto byte) string {
+func (pb *PktBuf) write_v1_header(cmd byte, pktid uint16) {
 
-	switch proto {
-	case TCP:
-		return "tcp"
-	case UDP:
-		return "udp"
-	case ICMP:
-		return "icmp"
+	pkt := pb.pkt[pb.iphdr:]
+
+	if len(pkt) < V1_HDR_LEN {
+		log.fatal("pkt: not enough space for v1 header")
 	}
-	return fmt.Sprintf("%v", proto)
+
+	pkt[V1_VER] = V1_SIG
+	pkt[V1_CMD] = cmd
+	be.PutUint16(pkt[V1_PKTID:V1_PKTID+2], pktid)
+	copy(pkt[V1_RESERVED:V1_RESERVED+2], []byte{0, 0})
+	copy(pkt[V1_PKTLEN:V1_PKTLEN+2], []byte{0, 2})
+}
+
+func (pb *PktBuf) validate_v1_header(rlen int) error {
+
+	pb.tail = pb.iphdr + rlen
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+
+	if len(pkt) < V1_HDR_LEN {
+		return fmt.Errorf("pkt too short: %v bytes", rlen)
+	}
+
+	if pkt[V1_VER] != V1_SIG {
+		return fmt.Errorf("invalid signature: 0x%02x", pkt[V1_VER])
+	}
+
+	lenfield := int(be.Uint16(pkt[V1_PKTLEN : V1_PKTLEN+2]))
+	if len(pkt) != lenfield*4 {
+		return fmt.Errorf("pkt length(%v) does not match length field(%v)",
+			len(pkt), lenfield*4)
+	}
+
+	if pkt[V1_RESERVED] != 0 || pkt[V1_RESERVED+1] != 0 {
+		return fmt.Errorf("non-zero reserved field")
+	}
+
+	return nil
 }
 
 var be = binary.BigEndian
@@ -561,6 +713,7 @@ func pkt_buffers() {
 		if allocated < cli.maxbuf {
 			select {
 			case pb = <-retbuf:
+				pb.pkt[pb.iphdr] = 0xbd // corrupt IP header to detect reuse of freed pkt
 			default:
 				pb = &PktBuf{pkt: make([]byte, cli.pktbuflen, cli.pktbuflen)}
 				allocated += 1

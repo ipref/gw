@@ -1,4 +1,4 @@
-/* Copyright (c) 2018 Waldemar Augustyn */
+/* Copyright (c) 2018-2020 Waldemar Augustyn */
 
 package main
 
@@ -286,7 +286,9 @@ func gw_sender(con net.PacketConn) {
 
 				// update time mark
 
-				now = M32(be.Uint32(pkt[V1_MARK : V1_MARK+4]))
+				off := V1_HDR_LEN
+				now = M32(be.Uint32(pkt[off+V1_MARK : off+V1_MARK+4]))
+				//log.debug("gw out:  updated now mark(%v)", now)
 				retbuf <- pb
 				continue
 

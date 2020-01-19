@@ -1,9 +1,10 @@
-/* Copyright (c) 2018-2019 Waldemar Augustyn */
+/* Copyright (c) 2018-2020 Waldemar Augustyn */
 
 package main
 
 import (
 	"fmt"
+	rff "github.com/ipref/ref"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -54,7 +55,7 @@ func main() {
 
 	parse_cli() // also initializes log
 
-	log.info("START ipref gateway")
+	log.info("START ipref-mapper")
 
 	goexit = make(chan string)
 	go catch_signals()
@@ -62,7 +63,7 @@ func main() {
 	owners.init()
 	marker.init()
 
-	mapper_oid = owners.new_oid("mapper") // both mapper sets need the same oid and timer mark
+	mapper_oid = owners.new_oid("mapper")
 	map_gw.init(mapper_oid)
 	map_tun.init(mapper_oid)
 	mapper_mark := marker.now()
@@ -79,10 +80,14 @@ func main() {
 	recv_gw = make(chan *PktBuf, PKTQLEN)
 	send_gw = make(chan *PktBuf, PKTQLEN)
 
-	random_dns_ref = make(chan Ref, GENQLEN)
-	random_mapper_ref = make(chan Ref, GENQLEN)
+	random_dns_ref = make(chan rff.Ref, GENQLEN)
+	random_mapper_ref = make(chan rff.Ref, GENQLEN)
 	random_dns_ea = make(chan IP32, GENQLEN)
 	random_mapper_ea = make(chan IP32, GENQLEN)
+
+	mbchan = make(chan *PktBuf, PKTQLEN)
+
+	open_db()
 
 	go gen_dns_refs()
 	go gen_mapper_refs()
@@ -104,7 +109,12 @@ func main() {
 	go purge_tick()
 	go arp_tick()
 
-	msg := <-goexit
+	go mbroker_conn()
+	go mbroker()
 
-	log.info("FINISH ipref gateway: %v", msg)
+	msg := <-goexit
+	if db != nil {
+		db.Close()
+	}
+	log.info("FINISH ipref-mapper: %v", msg)
 }

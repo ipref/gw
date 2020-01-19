@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2019 Waldemar Augustyn */
+/* Copyright (c) 2018-2020 Waldemar Augustyn */
 
 package main
 
@@ -16,12 +16,14 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	debug_gw     bool
 	debug_mapper bool
 	debug_tun    bool
+	ticks        bool
 	trace        bool
 	stamps       bool
 	gw           string
 	ea           string
 	hosts_path   string
 	dns_path     string
+	sockname     string
 	maxbuf       int
 	// derived
 	debug      map[string]bool
@@ -37,9 +39,11 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 func parse_cli() {
 
 	flag.StringVar(&cli.debuglist, "debug", "", "enable debug in listed files, comma separated, or 'all'")
+	flag.BoolVar(&cli.ticks, "ticks", false, "include timer ticks in debug")
 	flag.BoolVar(&cli.trace, "trace", false, "enable packet trace")
 	flag.BoolVar(&cli.stamps, "time-stamps", false, "print logs with time stamps")
 	flag.StringVar(&cli.gw, "gateway", "", "ip address of the public network interface")
+	flag.StringVar(&cli.sockname, "mapper-socket", "/run/ipref/mapper.sock", "path to mapper unix socket")
 	flag.StringVar(&cli.ea, "encode-net", "10.240.0.0/12", "private network for encoding external ipref addresses")
 	flag.StringVar(&cli.hosts_path, "hosts", "/etc/hosts", "host name lookup file")
 	flag.StringVar(&cli.dns_path, "dns", "", "dns file with IPREF addresses of local hosts")
