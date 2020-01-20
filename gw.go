@@ -243,15 +243,14 @@ func induce_arp(nexthop IP32) {
 
 	pb := <-getbuf
 
-	pb.set_iphdr()
-	pb.write_v1_header(V1_INDUCE_ARP, 0, 0)
+	pb.write_v1_header(V1_INDUCE_ARP, 0)
 	pb.tail = pb.iphdr + V1_HDR_LEN + 4
 	pkt := pb.pkt[pb.iphdr:pb.tail]
-	pkt[V1_ITEM_TYPE] = V1_TYPE_IPV4
-	be.PutUint16(pkt[V1_NUM_ITEMS:V1_NUM_ITEMS+2], 1)
 	off := V1_HDR_LEN
 	be.PutUint32(pkt[off:off+4], uint32(nexthop))
+	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(len(pkt)/4))
 
+	pb.peer = "gw"
 	send_gw <- pb
 }
 
