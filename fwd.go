@@ -2,6 +2,8 @@
 
 package main
 
+import rff "github.com/ipref/ref"
+
 /* Packet flow
 
                ╭──────────╮     ┏━━━━━━━━━━━━┓     ╭──────────╮
@@ -62,7 +64,7 @@ func insert_ipref_option(pb *PktBuf) int {
 
 	iphdrlen := pb.iphdr_len()
 
-	if iprefsrc.ref.h == 0 && iprefdst.ref.h == 0 {
+	if iprefsrc.ref.H == 0 && iprefdst.ref.H == 0 {
 		pb.data = pb.iphdr - OPTLEN + 16 // both refs 64 bit
 		optlen = IPREF_OPT64_LEN
 	} else {
@@ -89,13 +91,13 @@ func insert_ipref_option(pb *PktBuf) int {
 	pkt[opt+OPT_OPT] = IPREF_OPT
 	pkt[opt+OPT_LEN] = byte(optlen)
 	if optlen == IPREF_OPT128_LEN {
-		be.PutUint64(pkt[opt+OPT_SREF128:opt+OPT_SREF128+8], iprefsrc.ref.h)
-		be.PutUint64(pkt[opt+OPT_SREF128+8:opt+OPT_SREF128+16], iprefsrc.ref.l)
-		be.PutUint64(pkt[opt+OPT_DREF128:opt+OPT_DREF128+8], iprefdst.ref.h)
-		be.PutUint64(pkt[opt+OPT_DREF128+8:opt+OPT_DREF128+16], iprefdst.ref.l)
+		be.PutUint64(pkt[opt+OPT_SREF128:opt+OPT_SREF128+8], iprefsrc.ref.H)
+		be.PutUint64(pkt[opt+OPT_SREF128+8:opt+OPT_SREF128+16], iprefsrc.ref.L)
+		be.PutUint64(pkt[opt+OPT_DREF128:opt+OPT_DREF128+8], iprefdst.ref.H)
+		be.PutUint64(pkt[opt+OPT_DREF128+8:opt+OPT_DREF128+16], iprefdst.ref.L)
 	} else {
-		be.PutUint64(pkt[opt+OPT_SREF64:opt+OPT_SREF64+8], iprefsrc.ref.l)
-		be.PutUint64(pkt[opt+OPT_DREF64:opt+OPT_DREF64+8], iprefdst.ref.l)
+		be.PutUint64(pkt[opt+OPT_SREF64:opt+OPT_SREF64+8], iprefsrc.ref.L)
+		be.PutUint64(pkt[opt+OPT_DREF64:opt+OPT_DREF64+8], iprefdst.ref.L)
 	}
 	be.PutUint16(pkt[opt+OPT_RSVD:opt+OPT_RSVD+2], 0)
 
@@ -160,7 +162,7 @@ func insert_ipref_option(pb *PktBuf) int {
 
 		var inner_optlen int
 
-		if inner_srcipref.ref.h == 0 && inner_dstipref.ref.h == 0 {
+		if inner_srcipref.ref.H == 0 && inner_dstipref.ref.H == 0 {
 			inner_optlen = IPREF_OPT64_LEN
 		} else {
 			inner_optlen = IPREF_OPT128_LEN
@@ -182,13 +184,13 @@ func insert_ipref_option(pb *PktBuf) int {
 		pkt[inner_opt+OPT_LEN] = byte(inner_optlen)
 		be.PutUint16(pkt[inner_opt+OPT_RSVD:inner_opt+OPT_RSVD+2], 0)
 		if inner_optlen == IPREF_OPT128_LEN {
-			be.PutUint64(pkt[inner_opt+OPT_SREF128:inner_opt+OPT_SREF128+8], inner_srcipref.ref.h)
-			be.PutUint64(pkt[inner_opt+OPT_SREF128+8:inner_opt+OPT_SREF128+16], inner_srcipref.ref.l)
-			be.PutUint64(pkt[inner_opt+OPT_DREF128:inner_opt+OPT_DREF128+8], inner_dstipref.ref.h)
-			be.PutUint64(pkt[inner_opt+OPT_DREF128+8:inner_opt+OPT_DREF128+16], inner_dstipref.ref.l)
+			be.PutUint64(pkt[inner_opt+OPT_SREF128:inner_opt+OPT_SREF128+8], inner_srcipref.ref.H)
+			be.PutUint64(pkt[inner_opt+OPT_SREF128+8:inner_opt+OPT_SREF128+16], inner_srcipref.ref.L)
+			be.PutUint64(pkt[inner_opt+OPT_DREF128:inner_opt+OPT_DREF128+8], inner_dstipref.ref.H)
+			be.PutUint64(pkt[inner_opt+OPT_DREF128+8:inner_opt+OPT_DREF128+16], inner_dstipref.ref.L)
 		} else {
-			be.PutUint64(pkt[inner_opt+OPT_SREF64:inner_opt+OPT_SREF64+8], inner_srcipref.ref.l)
-			be.PutUint64(pkt[inner_opt+OPT_DREF64:inner_opt+OPT_DREF64+8], inner_dstipref.ref.l)
+			be.PutUint64(pkt[inner_opt+OPT_SREF64:inner_opt+OPT_SREF64+8], inner_srcipref.ref.L)
+			be.PutUint64(pkt[inner_opt+OPT_DREF64:inner_opt+OPT_DREF64+8], inner_dstipref.ref.L)
 		}
 
 		// adjust csum, in calculations ignore option because it will be removed
@@ -282,8 +284,8 @@ func remove_ipref_option(pb *PktBuf) int {
 
 	// map addresses
 
-	var sref Ref
-	var dref Ref
+	var sref rff.Ref
+	var dref rff.Ref
 
 	iphdrlen := pb.iphdr_len()
 	udp := pb.iphdr + iphdrlen
@@ -294,15 +296,15 @@ func remove_ipref_option(pb *PktBuf) int {
 	dst := IP32(be.Uint32(pkt[pb.iphdr+IP_DST : pb.iphdr+IP_DST+4]))
 
 	if reflen == IPREF_OPT128_LEN {
-		sref.h = be.Uint64(pkt[opt+OPT_SREF128 : opt+OPT_SREF128+8])
-		sref.l = be.Uint64(pkt[opt+OPT_SREF128+8 : opt+OPT_SREF128+8+8])
-		dref.h = be.Uint64(pkt[opt+OPT_DREF128 : opt+OPT_DREF128+8])
-		dref.l = be.Uint64(pkt[opt+OPT_DREF128+8 : opt+OPT_DREF128+8+8])
+		sref.H = be.Uint64(pkt[opt+OPT_SREF128 : opt+OPT_SREF128+8])
+		sref.L = be.Uint64(pkt[opt+OPT_SREF128+8 : opt+OPT_SREF128+8+8])
+		dref.H = be.Uint64(pkt[opt+OPT_DREF128 : opt+OPT_DREF128+8])
+		dref.L = be.Uint64(pkt[opt+OPT_DREF128+8 : opt+OPT_DREF128+8+8])
 	} else if reflen == IPREF_OPT64_LEN {
-		sref.h = 0
-		sref.l = be.Uint64(pkt[opt+OPT_SREF64 : opt+OPT_SREF64+8])
-		dref.h = 0
-		dref.l = be.Uint64(pkt[opt+OPT_DREF64 : opt+OPT_DREF64+8])
+		sref.H = 0
+		sref.L = be.Uint64(pkt[opt+OPT_SREF64 : opt+OPT_SREF64+8])
+		dref.H = 0
+		dref.L = be.Uint64(pkt[opt+OPT_DREF64 : opt+OPT_DREF64+8])
 	} else {
 		log.err("removing opt: invalid ipref option length: %v, dropping", reflen)
 		return DROP
@@ -315,7 +317,11 @@ func remove_ipref_option(pb *PktBuf) int {
 		return DROP // drop silently
 	}
 
-	src_ea := map_tun.get_src_ea(src, sref)
+	src_ea := IP32(0)
+	if iprec := map_tun.get_src_iprec(src, sref); iprec != nil {
+		src_ea = iprec.ip
+	}
+
 	if src_ea == 0 {
 		log.err("removing opt:  unknown src ipref address  %v + %v  %v + %v, dropping",
 			src, &sref, dst, &dref)
@@ -421,15 +427,15 @@ func remove_ipref_option(pb *PktBuf) int {
 		inner_optlen := int(pkt[inner_opt+OPT_LEN])
 
 		if inner_optlen == IPREF_OPT128_LEN {
-			inner_srcipref.ref.h = be.Uint64(pkt[inner_opt+OPT_SREF128 : inner_opt+OPT_SREF128+8])
-			inner_srcipref.ref.l = be.Uint64(pkt[inner_opt+OPT_SREF128+8 : inner_opt+OPT_SREF128+16])
-			inner_dstipref.ref.h = be.Uint64(pkt[inner_opt+OPT_DREF128 : inner_opt+OPT_DREF128+8])
-			inner_dstipref.ref.l = be.Uint64(pkt[inner_opt+OPT_DREF128+8 : inner_opt+OPT_DREF128+16])
+			inner_srcipref.ref.H = be.Uint64(pkt[inner_opt+OPT_SREF128 : inner_opt+OPT_SREF128+8])
+			inner_srcipref.ref.L = be.Uint64(pkt[inner_opt+OPT_SREF128+8 : inner_opt+OPT_SREF128+16])
+			inner_dstipref.ref.H = be.Uint64(pkt[inner_opt+OPT_DREF128 : inner_opt+OPT_DREF128+8])
+			inner_dstipref.ref.L = be.Uint64(pkt[inner_opt+OPT_DREF128+8 : inner_opt+OPT_DREF128+16])
 		} else if inner_optlen == IPREF_OPT64_LEN {
-			inner_srcipref.ref.h = 0
-			inner_srcipref.ref.l = be.Uint64(pkt[inner_opt+OPT_SREF64 : inner_opt+OPT_SREF64+8])
-			inner_dstipref.ref.h = 0
-			inner_dstipref.ref.l = be.Uint64(pkt[inner_opt+OPT_DREF64 : inner_opt+OPT_DREF64+8])
+			inner_srcipref.ref.H = 0
+			inner_srcipref.ref.L = be.Uint64(pkt[inner_opt+OPT_SREF64 : inner_opt+OPT_SREF64+8])
+			inner_dstipref.ref.H = 0
+			inner_dstipref.ref.L = be.Uint64(pkt[inner_opt+OPT_DREF64 : inner_opt+OPT_DREF64+8])
 		} else {
 			log.err("removing opt: invalid inner ipref option length: %v, dropping", inner_optlen)
 			return DROP
@@ -445,12 +451,16 @@ func remove_ipref_option(pb *PktBuf) int {
 
 		// get addresses
 
-		inner_dst := map_tun.get_src_ea(inner_srcipref.ip, inner_srcipref.ref)
+		inner_dst := IP32(0)
+		if iprec := map_tun.get_src_iprec(inner_srcipref.ip, inner_srcipref.ref); iprec != nil {
+			inner_dst = iprec.ip
+		}
 		if inner_dst == 0 {
 			log.err("removing opt: cannot find ea for icmp inner src ipref: %v + %v, leaving as is",
 				inner_srcipref.ip, &inner_srcipref.ref)
 			break
 		}
+
 		inner_src := map_tun.get_dst_ip(inner_dstipref.ip, inner_dstipref.ref)
 		if inner_src == 0 {
 			log.err("removing opt: cannot find ip for icmp inner dst ipref: %v + %v, leaving as is",
