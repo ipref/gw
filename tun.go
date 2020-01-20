@@ -15,6 +15,10 @@ var send_tun chan (*PktBuf)
 
 func tun_sender(fd *os.File) {
 
+	if cli.mbroker {
+		return
+	}
+
 	for pb := range send_tun {
 
 		if pb.data < TUN_HDR_LEN {
@@ -49,6 +53,10 @@ func tun_sender(fd *os.File) {
 }
 
 func tun_receiver(fd *os.File) {
+
+	if cli.mbroker {
+		return
+	}
 
 	var rlen int
 	var err error
@@ -119,59 +127,65 @@ func tun_receiver(fd *os.File) {
 
 func start_tun() {
 
-	var cmd string
-	var out string
-	var ret int
+	var fd *os.File
 
-	// create tun device
+	if !cli.mbroker {
 
-	type IfReq struct {
-		name  [unix.IFNAMSIZ]byte
-		flags uint16
-		pad   [40 - unix.IFNAMSIZ - 2]byte
+		var cmd string
+		var out string
+		var ret int
+		var err error
+
+		// create tun device
+
+		type IfReq struct {
+			name  [unix.IFNAMSIZ]byte
+			flags uint16
+			pad   [40 - unix.IFNAMSIZ - 2]byte
+		}
+
+		fd, err = os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
+		if err != nil {
+			log.fatal("tun: cannot get tun device: %v", err)
+		}
+
+		ifreq := IfReq{flags: unix.IFF_TUN}
+
+		_, _, errno := unix.Syscall(unix.SYS_IOCTL, fd.Fd(), uintptr(unix.TUNSETIFF), uintptr(unsafe.Pointer(&ifreq)))
+		if errno != 0 {
+			log.fatal("tun: cannot setup tun device, errno(%v)", errno)
+		}
+
+		// bring tun device up
+
+		ifcname := strings.Trim(string(ifreq.name[:]), "\x00")
+		ea_ip := cli.ea_ip + 1 // hard code .1 as tun ip address
+		ea_masklen := cli.ea_masklen
+		mtu := cli.ifc.MTU - OPTLEN
+
+		cmd, out, ret = shell("ip l set %v mtu %v", ifcname, mtu)
+		if ret != 0 {
+			log.debug("tun: %v", cmd)
+			log.debug("tun: %v", strings.TrimSpace(out))
+			log.fatal("tun: cannot set %v MTU: %v", ifcname, err)
+		}
+
+		cmd, out, ret = shell("ip a add %v/%v dev %v", ea_ip, ea_masklen, ifcname)
+		if ret != 0 {
+			log.debug("tun: %v", cmd)
+			log.debug("tun: %v", strings.TrimSpace(out))
+			log.fatal("tun: cannot set address on %v: %v", ifcname, err)
+		}
+
+		cmd, out, ret = shell("ip l set dev %v up", ifcname)
+		if ret != 0 {
+			log.debug("tun: %v", cmd)
+			log.debug("tun: %v", strings.TrimSpace(out))
+			log.fatal("tun: cannot bring %v up: %v", ifcname, err)
+		}
+
+		log.info("tun: netifc %v %v mtu(%v)", ea_ip, ifcname, mtu)
 	}
-
-	fd, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
-	if err != nil {
-		log.fatal("tun: cannot get tun device: %v", err)
-	}
-
-	ifreq := IfReq{flags: unix.IFF_TUN}
-
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, fd.Fd(), uintptr(unix.TUNSETIFF), uintptr(unsafe.Pointer(&ifreq)))
-	if errno != 0 {
-		log.fatal("tun: cannot setup tun device, errno(%v)", errno)
-	}
-
-	// bring tun device up
-
-	ifcname := strings.Trim(string(ifreq.name[:]), "\x00")
-	ea_ip := cli.ea_ip + 1 // hard code .1 as tun ip address
-	ea_masklen := cli.ea_masklen
-	mtu := cli.ifc.MTU - OPTLEN
-
-	cmd, out, ret = shell("ip l set %v mtu %v", ifcname, mtu)
-	if ret != 0 {
-		log.debug("tun: %v", cmd)
-		log.debug("tun: %v", strings.TrimSpace(out))
-		log.fatal("tun: cannot set %v MTU: %v", ifcname, err)
-	}
-
-	cmd, out, ret = shell("ip a add %v/%v dev %v", ea_ip, ea_masklen, ifcname)
-	if ret != 0 {
-		log.debug("tun: %v", cmd)
-		log.debug("tun: %v", strings.TrimSpace(out))
-		log.fatal("tun: cannot set address on %v: %v", ifcname, err)
-	}
-
-	cmd, out, ret = shell("ip l set dev %v up", ifcname)
-	if ret != 0 {
-		log.debug("tun: %v", cmd)
-		log.debug("tun: %v", strings.TrimSpace(out))
-		log.fatal("tun: cannot bring %v up: %v", ifcname, err)
-	}
-
-	log.info("tun: netifc %v %v mtu(%v)", ea_ip, ifcname, mtu)
 
 	go tun_receiver(fd)
 	go tun_sender(fd)

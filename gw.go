@@ -258,10 +258,16 @@ func gw_sender(con net.PacketConn) {
 
 	arpcache = make(map[IP32]*ArpRec)
 
-	gw_network, gw_nexthop := get_gw_network()
+	var gw_network net.IPNet
+	var gw_nexthop IP32
 
-	log.info("gw network: %v", gw_network)
-	log.info("gw nexthop: %v", gw_nexthop)
+	if !cli.mbroker {
+
+		gw_network, gw_nexthop = get_gw_network()
+
+		log.info("gw network: %v", gw_network)
+		log.info("gw nexthop: %v", gw_nexthop)
+	}
 
 	now := marker.now()
 
@@ -410,6 +416,10 @@ func gw_sender(con net.PacketConn) {
 
 func gw_receiver(con net.PacketConn) {
 
+	if cli.mbroker {
+		return
+	}
+
 	for {
 
 		pb := <-getbuf
@@ -469,54 +479,61 @@ func gw_receiver(con net.PacketConn) {
 
 func start_gw() {
 
-	con, err := raw.ListenPacket(&cli.ifc, ETHER_IPv4, &raw.Config{false, true, []bpf.RawInstruction{}, 0})
-	if err != nil {
-		log.fatal("gw: cannot get raw socket: %v", err)
+	var con *raw.Conn
+
+	if !cli.mbroker {
+
+		var err error
+
+		con, err = raw.ListenPacket(&cli.ifc, ETHER_IPv4, &raw.Config{false, true, []bpf.RawInstruction{}, 0})
+		if err != nil {
+			log.fatal("gw: cannot get raw socket: %v", err)
+		}
+
+		/* filter IPREF packets: UDP with src or dst equal to IPREF_PORT
+
+		Kernel will still be forwarding these packets. Use netfilter to silently
+		drop them. For example, the following firewall-cmd rules could be used:
+
+		firewall-cmd --add-rich-rule 'rule source-port port=1045 protocol=udp drop'
+		firewall-cmd --add-rich-rule 'rule port port=1045 protocol=udp drop'
+		firewall-cmd --runtime-to-permanent
+
+		*/
+
+		filter, err := bpf.Assemble([]bpf.Instruction{
+			bpf.LoadAbsolute{Off: ETHER_TYPE, Size: 2},
+			bpf.JumpIf{Cond: bpf.JumpEqual, Val: ETHER_IPv4, SkipTrue: 1},
+			bpf.RetConstant{Val: 0}, // not IPv4 packet
+			bpf.LoadAbsolute{Off: ETHER_HDRLEN + IP_DST, Size: 4},
+			bpf.JumpIf{Cond: bpf.JumpEqual, Val: uint32(cli.gw_ip), SkipTrue: 1},
+			bpf.RetConstant{Val: 0}, // not our gateway IP address
+			bpf.LoadAbsolute{Off: ETHER_HDRLEN + IP_PROTO, Size: 1},
+			bpf.JumpIf{Cond: bpf.JumpEqual, Val: UDP, SkipTrue: 1},
+			bpf.RetConstant{Val: 0}, // not UDP
+			bpf.LoadMemShift{Off: ETHER_HDRLEN + IP_VER},
+			bpf.LoadIndirect{Off: ETHER_HDRLEN + UDP_SPORT, Size: 2},
+			bpf.JumpIf{Cond: bpf.JumpNotEqual, Val: IPREF_PORT, SkipTrue: 1},
+			bpf.RetConstant{Val: uint32(cli.pktbuflen)}, // src port match, copy packet
+			bpf.LoadIndirect{Off: ETHER_HDRLEN + UDP_DPORT, Size: 2},
+			bpf.JumpIf{Cond: bpf.JumpNotEqual, Val: IPREF_PORT, SkipTrue: 1},
+			bpf.RetConstant{Val: uint32(cli.pktbuflen)}, // dst port match, copy packet
+			bpf.RetConstant{Val: 0},                     // no match, ignore packet
+		})
+
+		if err != nil {
+			log.fatal("gw: cannot assemble bpf filter: %v", err)
+		}
+
+		err = con.SetBPF(filter)
+
+		if err != nil {
+			log.fatal("gw: cannot set bpf filter: %v", err)
+		}
+
+		log.info("gw: gateway %v %v mtu(%v) %v pkt buffers",
+			cli.gw_ip, cli.ifc.Name, cli.ifc.MTU, cli.maxbuf)
 	}
-
-	/* filter IPREF packets: UDP with src or dst equal to IPREF_PORT
-
-	Kernel will still be forwarding these packets. Use netfilter to silently
-	drop them. For example, the following firewall-cmd rules could be used:
-
-	firewall-cmd --add-rich-rule 'rule source-port port=1045 protocol=udp drop'
-	firewall-cmd --add-rich-rule 'rule port port=1045 protocol=udp drop'
-	firewall-cmd --runtime-to-permanent
-
-	*/
-
-	filter, err := bpf.Assemble([]bpf.Instruction{
-		bpf.LoadAbsolute{Off: ETHER_TYPE, Size: 2},
-		bpf.JumpIf{Cond: bpf.JumpEqual, Val: ETHER_IPv4, SkipTrue: 1},
-		bpf.RetConstant{Val: 0}, // not IPv4 packet
-		bpf.LoadAbsolute{Off: ETHER_HDRLEN + IP_DST, Size: 4},
-		bpf.JumpIf{Cond: bpf.JumpEqual, Val: uint32(cli.gw_ip), SkipTrue: 1},
-		bpf.RetConstant{Val: 0}, // not our gateway IP address
-		bpf.LoadAbsolute{Off: ETHER_HDRLEN + IP_PROTO, Size: 1},
-		bpf.JumpIf{Cond: bpf.JumpEqual, Val: UDP, SkipTrue: 1},
-		bpf.RetConstant{Val: 0}, // not UDP
-		bpf.LoadMemShift{Off: ETHER_HDRLEN + IP_VER},
-		bpf.LoadIndirect{Off: ETHER_HDRLEN + UDP_SPORT, Size: 2},
-		bpf.JumpIf{Cond: bpf.JumpNotEqual, Val: IPREF_PORT, SkipTrue: 1},
-		bpf.RetConstant{Val: uint32(cli.pktbuflen)}, // src port match, copy packet
-		bpf.LoadIndirect{Off: ETHER_HDRLEN + UDP_DPORT, Size: 2},
-		bpf.JumpIf{Cond: bpf.JumpNotEqual, Val: IPREF_PORT, SkipTrue: 1},
-		bpf.RetConstant{Val: uint32(cli.pktbuflen)}, // dst port match, copy packet
-		bpf.RetConstant{Val: 0},                     // no match, ignore packet
-	})
-
-	if err != nil {
-		log.fatal("gw: cannot assemble bpf filter: %v", err)
-	}
-
-	err = con.SetBPF(filter)
-
-	if err != nil {
-		log.fatal("gw: cannot set bpf filter: %v", err)
-	}
-
-	log.info("gw: gateway %v %v mtu(%v) %v pkt buffers",
-		cli.gw_ip, cli.ifc.Name, cli.ifc.MTU, cli.maxbuf)
 
 	go gw_sender(con)
 	go gw_receiver(con)

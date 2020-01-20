@@ -16,6 +16,7 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	debug_gw     bool
 	debug_mapper bool
 	debug_tun    bool
+	mbroker      bool
 	ticks        bool
 	trace        bool
 	stamps       bool
@@ -41,6 +42,7 @@ func parse_cli() {
 	flag.StringVar(&cli.debuglist, "debug", "", "enable debug in listed files, comma separated, or 'all'")
 	flag.BoolVar(&cli.ticks, "ticks", false, "include timer ticks in debug")
 	flag.BoolVar(&cli.trace, "trace", false, "enable packet trace")
+	flag.BoolVar(&cli.mbroker, "mbroker", false, "disable forwarding, run as standalone mapper broker for debugging")
 	flag.BoolVar(&cli.stamps, "time-stamps", false, "print logs with time stamps")
 	flag.StringVar(&cli.gw, "gateway", "", "ip address of the public network interface")
 	flag.StringVar(&cli.sockname, "mapper-socket", "/run/ipref/mapper.sock", "path to mapper unix socket")
@@ -96,51 +98,60 @@ func parse_cli() {
 
 	log.set(cli.log_level, cli.stamps)
 
-	// parse gw addresses
+	if cli.mbroker {
 
-	gw := net.ParseIP(cli.gw)
-	if gw == nil {
-		if len(cli.gw) == 0 {
-			log.fatal("missing gateway IP address")
-		} else {
-			log.fatal("invalid gateway IP address: %v", cli.gw)
+		cli.gw = "0.0.0.0"
+		cli.gw_ip = 0
+		cli.ifc.MTU = 1500
+
+	} else {
+
+		// parse gw addresses
+
+		gw := net.ParseIP(cli.gw)
+		if gw == nil {
+			if len(cli.gw) == 0 {
+				log.fatal("missing gateway IP address")
+			} else {
+				log.fatal("invalid gateway IP address: %v", cli.gw)
+			}
 		}
-	}
 
-	if !gw.IsGlobalUnicast() {
-		log.fatal("gateway IP address is not a valid unicast address: %v", cli.gw)
-	}
-	cli.gw_ip = IP32(be.Uint32(gw.To4()))
+		if !gw.IsGlobalUnicast() {
+			log.fatal("gateway IP address is not a valid unicast address: %v", cli.gw)
+		}
+		cli.gw_ip = IP32(be.Uint32(gw.To4()))
 
-	// deduce gw interface
+		// deduce gw interface
 
-	ifcs, err := net.Interfaces()
-	if err != nil {
-		log.fatal("cannot get interface data: %v", err)
-	}
-ifc_loop:
-	for _, ifc := range ifcs {
-		addrs, err := ifc.Addrs()
-		if err == nil {
-			for _, addr := range addrs {
-				ip := net.ParseIP(strings.Split(addr.String(), "/")[0]) // addr string: 192.168.80.10/24
-				if ip == nil {
-					continue
-				}
-				ip4 := ip.To4()
-				if ip4 == nil {
-					continue
-				}
-				if IP32(be.Uint32(ip4)) == cli.gw_ip {
-					cli.ifc = ifc
-					break ifc_loop
+		ifcs, err := net.Interfaces()
+		if err != nil {
+			log.fatal("cannot get interface data: %v", err)
+		}
+	ifc_loop:
+		for _, ifc := range ifcs {
+			addrs, err := ifc.Addrs()
+			if err == nil {
+				for _, addr := range addrs {
+					ip := net.ParseIP(strings.Split(addr.String(), "/")[0]) // addr string: 192.168.80.10/24
+					if ip == nil {
+						continue
+					}
+					ip4 := ip.To4()
+					if ip4 == nil {
+						continue
+					}
+					if IP32(be.Uint32(ip4)) == cli.gw_ip {
+						cli.ifc = ifc
+						break ifc_loop
+					}
 				}
 			}
 		}
-	}
 
-	if cli.ifc.Index == 0 {
-		log.fatal("cannot find interface with gw address %v", cli.gw_ip)
+		if cli.ifc.Index == 0 {
+			log.fatal("cannot find interface with gw address %v", cli.gw_ip)
+		}
 	}
 
 	// deduce pktbuflen: MTU + Ethernet II header
