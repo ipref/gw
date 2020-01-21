@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path"
 	"time"
 )
 
@@ -357,6 +358,7 @@ func mbroker_conn() {
 
 	log.info("mbroker opening socket: %v", cli.sockname)
 
+	os.MkdirAll(path.Dir(cli.sockname), 0775)
 	os.Remove(cli.sockname)
 	agent, err := net.ListenUnix("unixpacket", &net.UnixAddr{cli.sockname, "unixpacket"})
 	if err != nil {
