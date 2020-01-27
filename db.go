@@ -33,16 +33,25 @@ func db_listen() {
 	}
 }
 
-func stop_db() {
+func stop_db_restore() {
 
-	if db != nil {
-		db.Close()
-		db = nil
-	}
 	if rdb != nil {
+		log.info("closing restore DB: %v", rdbname)
 		rdb.Close()
 		rdb = nil
 	}
+	rdbpath := path.Join(cli.datadir, dbname + "~")
+	os.Remove(rdbpath)
+}
+
+func stop_db() {
+
+	if db != nil {
+		log.info("closing DB: %v", dbname)
+		db.Close()
+		db = nil
+	}
+	stop_db_restore()
 }
 
 func start_db() {

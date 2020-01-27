@@ -60,8 +60,15 @@ func main() {
 	goexit = make(chan string)
 	go catch_signals()
 
+	go pkt_buffers()
+
+	dbchan = make(chan *PktBuf, PKTQLEN)
+	start_db()
+
 	owners.init()
 	marker.init()
+
+	stop_db_restore()
 
 	mapper_oid = owners.new_oid("mapper")
 	map_gw.init(mapper_oid)
@@ -87,14 +94,11 @@ func main() {
 
 	mbchan = make(chan *PktBuf, PKTQLEN)
 
-	open_db()
-
 	go gen_dns_refs()
 	go gen_mapper_refs()
 	go gen_dns_eas()
 	go gen_mapper_eas()
 
-	go pkt_buffers()
 	go dns_watcher()
 
 	go icmp()
@@ -113,8 +117,6 @@ func main() {
 	go mbroker()
 
 	msg := <-goexit
-	if db != nil {
-		db.Close()
-	}
+	stop_db()
 	log.info("FINISH ipref-mapper: %v", msg)
 }

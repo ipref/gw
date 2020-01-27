@@ -20,6 +20,7 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	ticks        bool
 	trace        bool
 	stamps       bool
+	datadir      string
 	gw           string
 	ea           string
 	hosts_path   string
@@ -44,6 +45,7 @@ func parse_cli() {
 	flag.BoolVar(&cli.trace, "trace", false, "enable packet trace")
 	flag.BoolVar(&cli.mbroker, "mbroker", false, "disable forwarding, run as standalone mapper broker for debugging")
 	flag.BoolVar(&cli.stamps, "time-stamps", false, "print logs with time stamps")
+	flag.StringVar(&cli.gw, "data-directory", "/var/lib/ipref", "persistent data directory")
 	flag.StringVar(&cli.gw, "gateway", "", "ip address of the public network interface")
 	flag.StringVar(&cli.sockname, "mapper-socket", "/run/ipref/mapper.sock", "path to mapper unix socket")
 	flag.StringVar(&cli.ea, "encode-net", "10.240.0.0/12", "private network for encoding external ipref addresses")
@@ -181,10 +183,12 @@ func parse_cli() {
 	cli.ea_masklen = ones
 	cli.ea_ip &= cli.ea_mask
 
-	// normalize file paths
+	// validate file paths
 
-	cli.hosts_path = normalize(cli.hosts_path)
-	cli.dns_path = normalize(cli.dns_path)
+	cli.datadir = absolute("data directory path", cli.datadir)
+	cli.sockname = absolute("socket path", cli.sockname)
+	cli.hosts_path = normalize("host file path", cli.hosts_path)
+	cli.dns_path = normalize("dns file path", cli.dns_path)
 
 	// validate maxbuf
 
@@ -196,20 +200,24 @@ func parse_cli() {
 	}
 }
 
-func normalize(path string) string {
+func absolute(desc, path string) string {
 
 	if len(path) == 0 {
-		return path
+		log.fatal("missing %v", desc)
 	}
 
-	npath, err := filepath.Abs(path)
+	apath, err := filepath.Abs(path)
 	if err != nil {
-		log.fatal("invalid file path: %v: %v", path, err)
+		log.fatal("invalid %v: %v: %v", desc, path, err)
 	}
+	return apath
+}
 
-	npath, err = filepath.EvalSymlinks(npath)
+func normalize(desc, path string) string {
+
+	npath, err = filepath.EvalSymlinks(absolute(desc, path))
 	if err != nil {
-		log.fatal("invalid file path: %v: %v", path, err)
+		log.fatal("invalid %v: %v: %v", desc, path, err)
 	}
 
 	return npath
