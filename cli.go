@@ -11,6 +11,10 @@ import (
 	"strings"
 )
 
+const (
+	ddir = "/var/lib/ipref"
+)
+
 var cli struct { // no locks, once setup in cli, never modified thereafter
 	debuglist    string
 	debug_gw     bool
@@ -45,12 +49,12 @@ func parse_cli() {
 	flag.BoolVar(&cli.trace, "trace", false, "enable packet trace")
 	flag.BoolVar(&cli.mbroker, "mbroker", false, "disable forwarding, run as standalone mapper broker for debugging")
 	flag.BoolVar(&cli.stamps, "time-stamps", false, "print logs with time stamps")
-	flag.StringVar(&cli.gw, "data-directory", "/var/lib/ipref", "persistent data directory")
+	flag.StringVar(&cli.datadir, "data", ddir, "data directory")
 	flag.StringVar(&cli.gw, "gateway", "", "ip address of the public network interface")
 	flag.StringVar(&cli.sockname, "mapper-socket", "/run/ipref/mapper.sock", "path to mapper unix socket")
 	flag.StringVar(&cli.ea, "encode-net", "10.240.0.0/12", "private network for encoding external ipref addresses")
 	flag.StringVar(&cli.hosts_path, "hosts", "/etc/hosts", "host name lookup file")
-	flag.StringVar(&cli.dns_path, "dns", "", "dns file with IPREF addresses of local hosts")
+	flag.StringVar(&cli.dns_path, "dns", ddir+"/hosts", "dns file with IPREF addresses of local hosts")
 	flag.IntVar(&cli.maxbuf, "max-buffers", 64, "max number of packet buffers")
 	flag.Usage = func() {
 		toks := strings.Split(os.Args[0], "/")
@@ -187,8 +191,8 @@ func parse_cli() {
 
 	cli.datadir = absolute("data directory path", cli.datadir)
 	cli.sockname = absolute("socket path", cli.sockname)
-	cli.hosts_path = normalize("host file path", cli.hosts_path)
-	cli.dns_path = normalize("dns file path", cli.dns_path)
+	cli.hosts_path = absolute("host file path", cli.hosts_path)
+	cli.dns_path = absolute("dns file path", cli.dns_path)
 
 	// validate maxbuf
 
@@ -211,14 +215,4 @@ func absolute(desc, path string) string {
 		log.fatal("invalid %v: %v: %v", desc, path, err)
 	}
 	return apath
-}
-
-func normalize(desc, path string) string {
-
-	npath, err = filepath.EvalSymlinks(absolute(desc, path))
-	if err != nil {
-		log.fatal("invalid %v: %v: %v", desc, path, err)
-	}
-
-	return npath
 }

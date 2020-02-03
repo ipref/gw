@@ -392,7 +392,7 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 func parse_hosts(path string, timer *time.Timer) {
 
 	fname := filepath.Base(path)
-	oid := owners.new_oid(path)
+	oid := owners.get_oid(path)
 
 	for _ = range timer.C {
 
@@ -414,7 +414,7 @@ func parse_hosts(path string, timer *time.Timer) {
 func parse_dns(path string, timer *time.Timer) {
 
 	fname := filepath.Base(path)
-	oid := owners.new_oid(path)
+	oid := owners.get_oid(path)
 
 	for _ = range timer.C {
 		log.debug("dns watcher: oid(%v) parsing file: %v", oid, fname)

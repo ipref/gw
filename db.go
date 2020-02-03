@@ -25,9 +25,134 @@ var db *bolt.DB  // current DB
 var rdb *bolt.DB // restore DB
 var dbchan chan *PktBuf
 
+func db_restore_owners(o *Owners) {
+
+	if rdb == nil {
+		return
+	}
+
+	// key: oid		-- O32
+	// val: name    -- string
+	rdb.View(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(oidbkt))
+		if bkt == nil {
+			return nil
+		}
+		log.info("db: restoring owner ids")
+		bkt.ForEach(func(key, val []byte) error {
+
+			oid := O32(be.Uint32(key))
+			name := string(val)
+
+			if oid == 0 || len(name) == 0 {
+				log.info("db: restore unassigned owner id: %v(%v)", name, oid)
+			}
+
+			if int(oid) >= len(o.oids) {
+				o.oids = append(o.oids, make([]string, int(oid)-len(o.oids)+1)...)
+			}
+
+			if o.oids[oid] == name {
+				log.err("db: restore duplicate owner name: %v", name)
+			} else if o.oids[oid] != "" {
+				log.err("db: restore duplicate owner id: %v", oid)
+			} else {
+				log.debug("db: restore oid: %v(%v)", name, oid)
+				o.oids[oid] = name
+			}
+			return nil
+		})
+		return nil
+	})
+
+	// copy to new DB
+
+	var err error
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists([]byte(oidbkt))
+		return err
+	})
+	if err != nil {
+		log.fatal("db: restore owner ids: %v", err)
+	}
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(oidbkt))
+		key := []byte{0, 0, 0, 0}
+		for oid, name := range o.oids[1:] {
+			if len(name) != 0 { // skip over unassigned oids
+				be.PutUint32(key, uint32(oid))
+				err := bkt.Put(key, []byte(name))
+				if err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.fatal("db: restore owner id: %v", err)
+	}
+}
+
+func db_save_oid(pb *PktBuf) {
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+
+	if len(pkt) < V1_HDR_LEN+4+4 {
+		log.err("db: save oid: pktlen(%v) too short, dropping", len(pkt))
+		return
+	}
+	if pkt[V1_CMD] != V1_SAVE_OID {
+		log.err("db: save oid: non DATA mode [%02x], dropping", pkt[V1_CMD])
+		return
+	}
+
+	off := V1_HDR_LEN
+
+	oid := pkt[off : off+4]
+	name := pkt[off+4+2 : off+4+2+int(pkt[off+4+1])]
+
+	log.debug("db: save oid: %v(%v)", be.Uint32(oid), string(name))
+
+	err := db.Update(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(oidbkt))
+		err := bkt.Put(oid, name)
+		return err
+	})
+	if err != nil {
+		log.err("db: save oid: failed to save oid: %v", err)
+	}
+}
+
 func db_listen() {
 
 	for pb := range dbchan {
+
+		pkt := pb.pkt[pb.iphdr:pb.tail]
+
+		if err := pb.validate_v1_header(len(pkt)); err != nil {
+
+			log.err("db: invalid v1 packet from %v:  %v", pb.peer, err)
+			retbuf <- pb
+			continue
+		}
+
+		cmd := pkt[V1_CMD] & 0x3f
+
+		if cli.trace {
+			pb.pp_raw("db in:  ")
+		}
+
+		switch cmd {
+
+		case V1_NOOP:
+		case V1_SAVE_OID:
+			db_save_oid(pb)
+		default: // invalid
+			log.err("db: unrecognized v1 cmd: %v", cmd)
+		}
 
 		retbuf <- pb
 	}
@@ -36,11 +161,11 @@ func db_listen() {
 func stop_db_restore() {
 
 	if rdb != nil {
-		log.info("closing restore DB: %v", rdbname)
+		log.info("closing restore DB: %v", dbname+"~")
 		rdb.Close()
 		rdb = nil
 	}
-	rdbpath := path.Join(cli.datadir, dbname + "~")
+	rdbpath := path.Join(cli.datadir, dbname+"~")
 	os.Remove(rdbpath)
 }
 
@@ -72,11 +197,12 @@ func start_db() {
 	} else {
 		rdb, err = bolt.Open(rdbpath, 0666, &bolt.Options{Timeout: 1 * time.Second})
 		if err != nil {
-			log.fatal("cannot open %v: %v", rdbname, err)
+			log.fatal("cannot open %v: %v", dbname+"~", err)
 		}
 	}
 
-	db, err = bolt.Open(dbpath, 0666, &bolt.Options{Timeout: 1 * time.Second})
+	os.MkdirAll(cli.datadir, 0775)
+	db, err = bolt.Open(dbpath, 0664, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		log.fatal("cannot create %v: %v", dbname, err)
 	}

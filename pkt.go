@@ -61,6 +61,7 @@ const ( // v1 commands
 	V1_INDUCE_ARP = 5
 	V1_GET_EA     = 6
 	V1_MC_GET_EA  = 7
+	V1_SAVE_OID   = 8
 )
 
 const ( // v1 command mode, top two bits

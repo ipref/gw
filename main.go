@@ -62,7 +62,10 @@ func main() {
 
 	go pkt_buffers()
 
+	getbuf = make(chan *PktBuf, 1)
+	retbuf = make(chan *PktBuf, cli.maxbuf)
 	dbchan = make(chan *PktBuf, PKTQLEN)
+
 	start_db()
 
 	owners.init()
@@ -70,15 +73,12 @@ func main() {
 
 	stop_db_restore()
 
-	mapper_oid = owners.new_oid("mapper")
+	mapper_oid = owners.get_oid("mapper")
 	map_gw.init(mapper_oid)
 	map_tun.init(mapper_oid)
 	mapper_mark := marker.now()
 	map_gw.set_cur_mark(mapper_oid, mapper_mark)
 	map_tun.set_cur_mark(mapper_oid, mapper_mark)
-
-	getbuf = make(chan *PktBuf, 1)
-	retbuf = make(chan *PktBuf, cli.maxbuf)
 
 	icmpreq = make(chan *PktBuf, PKTQLEN)
 
