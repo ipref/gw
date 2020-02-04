@@ -410,21 +410,10 @@ func parse_hosts(path string, timer *time.Timer) {
 	}
 }
 
-// parse file with dns records
-func parse_dns(path string, timer *time.Timer) {
-
-	fname := filepath.Base(path)
-	oid := owners.get_oid(path)
-
-	for _ = range timer.C {
-		log.debug("dns watcher: oid(%v) parsing file: %v", oid, fname)
-	}
-}
-
 // watch files for DNS information
 func dns_watcher() {
 
-	if len(cli.hosts_path) == 0 && len(cli.dns_path) == 0 {
+	if len(cli.hosts_path) == 0 {
 		log.info("dns watcher: nothing to watch, exiting")
 	}
 
@@ -440,13 +429,6 @@ func dns_watcher() {
 	if len(cli.hosts_path) != 0 {
 		dns_funcs[cli.hosts_path] = DnsFunc{
 			parse_hosts,
-			time.NewTimer(1), // parse immediately
-		}
-	}
-
-	if len(cli.dns_path) != 0 {
-		dns_funcs[cli.dns_path] = DnsFunc{
-			parse_dns,
 			time.NewTimer(1), // parse immediately
 		}
 	}

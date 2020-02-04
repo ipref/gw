@@ -28,7 +28,6 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	gw           string
 	ea           string
 	hosts_path   string
-	dns_path     string
 	sockname     string
 	maxbuf       int
 	// derived
@@ -54,7 +53,6 @@ func parse_cli() {
 	flag.StringVar(&cli.sockname, "mapper-socket", "/run/ipref/mapper.sock", "path to mapper unix socket")
 	flag.StringVar(&cli.ea, "encode-net", "10.240.0.0/12", "private network for encoding external ipref addresses")
 	flag.StringVar(&cli.hosts_path, "hosts", "/etc/hosts", "host name lookup file")
-	flag.StringVar(&cli.dns_path, "dns", ddir+"/hosts", "dns file with IPREF addresses of local hosts")
 	flag.IntVar(&cli.maxbuf, "max-buffers", 64, "max number of packet buffers")
 	flag.Usage = func() {
 		toks := strings.Split(os.Args[0], "/")
@@ -192,7 +190,6 @@ func parse_cli() {
 	cli.datadir = absolute("data directory path", cli.datadir)
 	cli.sockname = absolute("socket path", cli.sockname)
 	cli.hosts_path = absolute("host file path", cli.hosts_path)
-	cli.dns_path = absolute("dns file path", cli.dns_path)
 
 	// validate maxbuf
 
