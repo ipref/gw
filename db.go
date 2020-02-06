@@ -114,9 +114,19 @@ func db_save_oid(pb *PktBuf) {
 	oid := pkt[off : off+4]
 	name := pkt[off+4+2 : off+4+2+int(pkt[off+4+1])]
 
-	log.debug("db: save oid: %v(%v)", be.Uint32(oid), string(name))
+	log.debug("db: save oid: %v(%v)", string(name), be.Uint32(oid))
 
-	err := db.Update(func(tx *bolt.Tx) error {
+	var err error
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists([]byte(oidbkt))
+		return err
+	})
+	if err != nil {
+		log.fatal("db: cannot create bucket %v: %v", oidbkt, err)
+	}
+
+	err = db.Update(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(oidbkt))
 		err := bkt.Put(oid, name)
 		return err
