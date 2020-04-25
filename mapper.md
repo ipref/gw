@@ -2,7 +2,7 @@
 
 Major components.
 
-```
+```DejaVu
                      ╭─────────────╮
                      │             │      ╔═════════════╗
                      │  ifc → udp ━┿━╸▷╺━╸║ ea -> ipref ║
@@ -64,13 +64,3 @@ When the fwd_to_tun() extends its mapping, it informs of that action the other p
 When the fwd_to_gw() extends its mapping, it only sends the message to the other forwarder fwd_to_tun(). It is then its responsibility to send proper messages to the other parties.
 
 ##### Restore from disk
-
-
-
-
-
-
-
-
-
-
