@@ -2,5 +2,6 @@ gw
 *~
 *.bak
 *.BAK
+*.swp
 site
 pushbin
