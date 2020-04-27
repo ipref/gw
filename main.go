@@ -55,7 +55,7 @@ func main() {
 
 	parse_cli() // also initializes log
 
-	log.info("START ipref-mapper")
+	log.info("START ipref gateway")
 
 	goexit = make(chan string)
 	go catch_signals()
@@ -118,5 +118,5 @@ func main() {
 
 	msg := <-goexit
 	stop_db()
-	log.info("FINISH ipref-mapper: %v", msg)
+	log.info("STOP ipref gateway: %v", msg)
 }
