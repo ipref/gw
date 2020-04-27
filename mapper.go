@@ -861,7 +861,9 @@ func (mtun *MapTun) get_ea(pb *PktBuf) int {
 		return DROP
 	}
 
-	log.debug("mtun: in from %v: %v", pb.peer, pb.pp_pkt())
+	if cli.debug_mapper {
+		log.debug("mtun: in from %v: %v", pb.peer, pb.pp_pkt())
+	}
 	if cli.trace {
 		pb.pp_raw("mtun in:  ")
 	}
