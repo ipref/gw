@@ -28,11 +28,6 @@ their status. Unlike dynamic mapper records, their curr_mark values are not
 incremented with time but with successive updates. Each new update carries a new
 mark value which is then set as the new curr_mark. In this way, old records are
 immediately expired whenever a new set becomes available.
-
-Expired records are collected by a purge timer. A purge timer periodically scans
-mapper records and removes those whose mark is less than the related curr_mark
-regardless of whether they are dynamic records created by forwarders or static
-records created by DNS agents.
 */
 
 const (
@@ -41,10 +36,6 @@ const (
 
 	ARP_TICK = TIMER_TICK / 3 // [ms] avg 5.603 [s]
 	ARP_FUZZ = ARP_TICK / 7   // [ms] avg 0.800 [s]
-
-	PURGE_TICK = TIMER_TICK / 11 // [ms] avg   1.528 [s]
-	PURGE_FUZZ = PURGE_TICK / 7  // [ms]       0.218 [s]
-	PURGE_NUM  = 17              // num of records to purge at a time
 )
 
 type Mark struct {
@@ -90,25 +81,6 @@ func arp_tick() {
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((V1_HDR_LEN+V1_MARK_LEN)/4))
 		pb.tail = V1_HDR_LEN + V1_MARK_LEN
 		send_gw <- pb
-	}
-}
-
-func purge_tick() {
-
-	for {
-		time.Sleep(time.Duration(PURGE_TICK-PURGE_FUZZ/2+prng.Intn(PURGE_FUZZ)) * time.Millisecond)
-
-		pb := <-getbuf
-		pb.write_v1_header(V1_PURGE, 0)
-		pkt := pb.pkt[pb.iphdr:]
-		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(V1_HDR_LEN/4))
-		pb.tail = pb.iphdr + V1_HDR_LEN
-
-		pbb := <-getbuf
-		pbb.copy_from(pb)
-
-		recv_gw <- pb
-		recv_tun <- pbb
 	}
 }
 

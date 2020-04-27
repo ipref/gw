@@ -110,7 +110,6 @@ func main() {
 	start_tun()
 
 	go timer_tick()
-	go purge_tick()
 	go arp_tick()
 
 	go mbroker_conn()

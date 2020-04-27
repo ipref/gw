@@ -57,7 +57,6 @@ const ( // v1 commands
 	V1_SET_AREC   = 1
 	V1_SET_MARK   = 2
 	V1_SET_SOFT   = 3
-	V1_PURGE      = 4
 	V1_INDUCE_ARP = 5
 	V1_GET_EA     = 6
 	V1_MC_GET_EA  = 7
@@ -292,8 +291,6 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 
 		case V1_SET_SOFT:
 			ss += fmt.Sprintf(" SET_SOFT(%v)", cmd)
-		case V1_PURGE:
-			ss += fmt.Sprintf(" PURGE(%v)", cmd)
 		case V1_INDUCE_ARP:
 			ss += fmt.Sprintf(" INDUCE_ARP(%v)", cmd)
 		case V1_DATA | V1_GET_EA:
