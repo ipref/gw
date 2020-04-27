@@ -44,18 +44,16 @@ func db_restore_owners(o *Owners) {
 			oid := O32(be.Uint32(key))
 			name := string(val)
 
-			if oid == 0 || len(name) == 0 {
-				log.info("db: restore unassigned owner id: %v(%v)", name, oid)
-			}
-
 			if int(oid) >= len(o.oids) {
 				o.oids = append(o.oids, make([]string, int(oid)-len(o.oids)+1)...)
 			}
 
-			if o.oids[oid] == name {
-				log.err("db: restore duplicate owner name: %v", name)
+			if oid == 0 || len(name) == 0 {
+				log.err("db: detected unassigned owner id: %v(%v), discarding", name, oid)
+			} else if o.oids[oid] == name {
+				log.err("db: detected duplicate owner name: %v(%v), discarding", name, oid)
 			} else if o.oids[oid] != "" {
-				log.err("db: restore duplicate owner id: %v", oid)
+				log.err("db: detected duplicate owner id: %v(%v), discarding", name, oid)
 			} else {
 				log.debug("db: restore oid: %v(%v)", name, oid)
 				o.oids[oid] = name
@@ -80,9 +78,10 @@ func db_restore_owners(o *Owners) {
 	err = db.Update(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(oidbkt))
 		key := []byte{0, 0, 0, 0}
-		for oid, name := range o.oids[1:] {
-			if len(name) != 0 { // skip over unassigned oids
+		for oid, name := range o.oids {
+			if oid != 0 && len(name) != 0 { // skip over unassigned oids
 				be.PutUint32(key, uint32(oid))
+				log.debug("db: re-save oid: %v(%v)", name, oid)
 				err := bkt.Put(key, []byte(name))
 				if err != nil {
 					return err

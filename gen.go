@@ -63,7 +63,7 @@ func (o *Owners) get_oid(name string) O32 {
 	}
 
 	o.mtx.Lock()
-	for ix, oname := range o.oids[1:] {
+	for ix, oname := range o.oids {
 		if oname == name {
 			o.mtx.Unlock()
 			return O32(ix)
