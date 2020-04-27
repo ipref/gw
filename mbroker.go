@@ -284,6 +284,7 @@ func mbroker() {
 			verdict = mb_mc_get_ea(pb)
 		default: // invalid
 			log.err("mb: invalid v1 cmd: %v", cmd)
+			verdict = DROP
 		}
 
 		if verdict == DROP {
