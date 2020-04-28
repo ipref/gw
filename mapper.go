@@ -179,14 +179,10 @@ func send_soft_rec(soft SoftRec) {
 	recv_tun <- pb
 }
 
-// send an address record
-func send_arec(pfx string, ea, ip, gw IP32, ref rff.Ref, oid O32, mark M32, pktq chan<- *PktBuf) {
+// get a packet with an address record
+func get_arec_pkt(ea, ip, gw IP32, ref rff.Ref, oid O32, mark M32) *PktBuf {
 
 	pb := <-getbuf
-
-	if len(pb.pkt)-pb.data < V1_HDR_LEN+V1_AREC_LEN {
-		log.fatal("%v: not enough space for an address record", pfx) // paranoia
-	}
 
 	pkt := pb.pkt[pb.iphdr:]
 
@@ -210,7 +206,7 @@ func send_arec(pfx string, ea, ip, gw IP32, ref rff.Ref, oid O32, mark M32, pktq
 	pb.tail = off
 	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
 
-	pktq <- pb
+	return pb
 }
 
 // -- mapper variables ---------------------------------------------------------
@@ -301,8 +297,13 @@ func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 		}
 		mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
 		rec.mark = mark
-		mgw.their_ipref.Set(dst, rec)                                           // bump up expiration
-		send_arec(mgw.pfx, dst, 0, rec.ip, rec.ref, rec.oid, rec.mark, recv_gw) // tell mtun
+		mgw.their_ipref.Set(dst, rec) // bump up expiration
+		pb := get_arec_pkt(dst, 0, rec.ip, rec.ref, rec.oid, rec.mark)
+		pbb := <-getbuf
+		pbb.copy_from(pb)
+		recv_gw <- pb // tell mtun
+		dbchan <- pbb // tell db
+
 	}
 
 	return rec
@@ -336,8 +337,12 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 				}
 				mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
 				rec.mark = mark
-				mgw.our_ipref.Set(src, rec)                                             // bump up expiration
-				send_arec(mgw.pfx, 0, src, rec.ip, rec.ref, rec.oid, rec.mark, recv_gw) // tell mtun
+				mgw.our_ipref.Set(src, rec) // bump up expiration
+				pb := get_arec_pkt(0, src, rec.ip, rec.ref, rec.oid, rec.mark)
+				pbb := <-getbuf
+				pbb.copy_from(pb)
+				recv_gw <- pb // tell mtun
+				dbchan <- pbb // tell db
 			}
 
 			return rec
@@ -356,8 +361,12 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 	}
 	mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
 	rec := IpRefRec{cli.gw_ip, ref, mgw.oid, mark}
-	mgw.our_ipref.Set(src, rec)                                             // add new record
-	send_arec(mgw.pfx, 0, src, rec.ip, rec.ref, rec.oid, rec.mark, recv_gw) // tell mtun
+	mgw.our_ipref.Set(src, rec) // add new record
+	pb := get_arec_pkt(0, src, rec.ip, rec.ref, rec.oid, rec.mark)
+	pbb := <-getbuf
+	pbb.copy_from(pb)
+	recv_gw <- pb // tell mtun
+	dbchan <- pbb // tell db
 
 	return rec
 }
@@ -587,8 +596,12 @@ func (mtun *MapTun) get_dst_ip(gw IP32, ref rff.Ref) IP32 {
 		}
 		mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
 		rec.mark = mark
-		our_refs.(*b.Tree).Set(ref, rec)                                     // bump up expiration
-		send_arec(mtun.pfx, 0, rec.ip, gw, ref, rec.oid, rec.mark, recv_tun) // tell mgw
+		our_refs.(*b.Tree).Set(ref, rec) // bump up expiration
+		pb := get_arec_pkt(0, rec.ip, gw, ref, rec.oid, rec.mark)
+		pbb := <-getbuf
+		pbb.copy_from(pb)
+		recv_tun <- pb // tell mgw
+		dbchan <- pbb  // tell db
 	}
 
 	return rec.ip
@@ -629,8 +642,12 @@ func (mtun *MapTun) get_src_iprec(gw IP32, ref rff.Ref) *IpRec {
 				}
 				mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
 				rec.mark = mark
-				their_refs.(*b.Tree).Set(ref, rec)                                   // bump up expiration
-				send_arec(mtun.pfx, rec.ip, 0, gw, ref, rec.oid, rec.mark, recv_tun) // tell mgw
+				their_refs.(*b.Tree).Set(ref, rec) // bump up expiration
+				pb := get_arec_pkt(rec.ip, 0, gw, ref, rec.oid, rec.mark)
+				pbb := <-getbuf
+				pbb.copy_from(pb)
+				recv_tun <- pb // tell mgw
+				dbchan <- pbb  // tell db
 			}
 
 			return &rec
@@ -650,7 +667,11 @@ func (mtun *MapTun) get_src_iprec(gw IP32, ref rff.Ref) *IpRec {
 	mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
 	rec := IpRec{ea, mtun.oid, mark}
 	their_refs.(*b.Tree).Set(ref, rec)
-	send_arec(mtun.pfx, rec.ip, 0, gw, ref, rec.oid, rec.mark, recv_tun) // tell mgw
+	pb := get_arec_pkt(rec.ip, 0, gw, ref, rec.oid, rec.mark)
+	pbb := <-getbuf
+	pbb.copy_from(pb)
+	recv_tun <- pb // tell mgw
+	dbchan <- pbb  // tell db
 
 	return &rec
 }
