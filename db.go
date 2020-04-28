@@ -135,6 +135,9 @@ func db_save_oid(pb *PktBuf) {
 	}
 }
 
+func db_restore_eas(gea *GenEA) {
+}
+
 func db_listen() {
 
 	for pb := range dbchan {

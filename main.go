@@ -70,6 +70,7 @@ func main() {
 
 	owners.init()
 	marker.init()
+	gen_ea.init()
 
 	stop_db_restore()
 
@@ -89,15 +90,12 @@ func main() {
 
 	random_dns_ref = make(chan rff.Ref, GENQLEN)
 	random_mapper_ref = make(chan rff.Ref, GENQLEN)
-	random_dns_ea = make(chan IP32, GENQLEN)
-	random_mapper_ea = make(chan IP32, GENQLEN)
 
 	mbchan = make(chan *PktBuf, PKTQLEN)
 
 	go gen_dns_refs()
 	go gen_mapper_refs()
-	go gen_dns_eas()
-	go gen_mapper_eas()
+	gen_ea.start()
 
 	go dns_watcher()
 

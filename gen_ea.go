@@ -4,20 +4,33 @@ package main
 
 import (
 	"crypto/rand"
-	"strings"
 	"sync"
 )
 
+type GenEA struct {
+	allocated map[IP32]bool
+	mtx       sync.Mutex
+	bcast     IP32
+}
 
+var gen_ea GenEA
+
+var recover_ea chan *PktBuf
 var random_dns_ea chan IP32
 var random_mapper_ea chan IP32
 
+// try to recover allocated eas if expired
+func (gea *GenEA) check_for_expired() {
+}
+
+// listen to messages sent in response to queries for expired eas
+func (gea *GenEA) recover_expired() {
+}
+
 // generate random eas with second to last byte < SECOND_BYTE
-func gen_dns_eas() {
+func (gea *GenEA) gen_dns_eas() {
 
 	var ea IP32
-	allocated := make(map[IP32]bool)
-	bcast := 0xffffffff &^ cli.ea_mask
 	creep := make([]byte, 4)
 	var err error
 
@@ -34,15 +47,15 @@ func gen_dns_eas() {
 			ea = IP32(be.Uint32(creep))
 
 			ea &^= cli.ea_mask
-			if ea == 0 || ea == bcast {
+			if ea == 0 || ea == gea.bcast {
 				continue // zero address or broadcast address, try another
 			}
 			ea |= cli.ea_ip
-			_, ok := allocated[ea]
+			_, ok := gea.allocated[ea]
 			if ok {
 				continue // already allocated
 			}
-			allocated[ea] = true
+			gea.allocated[ea] = true
 			break
 		}
 		random_dns_ea <- ea
@@ -50,11 +63,9 @@ func gen_dns_eas() {
 }
 
 // generate random eas with second to last byte >= SECOND_BYTE
-func gen_mapper_eas() {
+func (gea *GenEA) gen_mapper_eas() {
 
 	var ea IP32
-	allocated := make(map[IP32]bool)
-	bcast := 0xffffffff &^ cli.ea_mask
 	creep := make([]byte, 4)
 	var err error
 
@@ -72,17 +83,40 @@ func gen_mapper_eas() {
 			ea = IP32(be.Uint32(creep))
 
 			ea &^= cli.ea_mask
-			if ea == 0 || ea == bcast {
+			if ea == 0 || ea == gea.bcast {
 				continue // zero address or broadcast address, try another
 			}
+
 			ea |= cli.ea_ip
-			_, ok := allocated[ea]
-			if ok {
-				continue // already allocated
+
+			gea.mtx.Lock()
+			_, ok := gea.allocated[ea]
+			if !ok {
+				gea.allocated[ea] = true
 			}
-			allocated[ea] = true
-			break
+			gea.mtx.Unlock()
+
+			if !ok {
+				break // allocated new ea
+			}
 		}
 		random_mapper_ea <- ea
 	}
+}
+
+func (gea *GenEA) start() {
+
+	go gea.gen_dns_eas()
+	go gea.gen_mapper_eas()
+	go gea.check_for_expired()
+	go gea.recover_expired()
+}
+
+func (gea *GenEA) init() {
+	gea.bcast = 0xffffffff &^ cli.ea_mask
+	gea.allocated = make(map[IP32]bool)
+	recover_ea = make(chan *PktBuf, PKTQLEN)
+	random_dns_ea = make(chan IP32, GENQLEN)
+	random_mapper_ea = make(chan IP32, GENQLEN)
+	db_restore_eas(gea)
 }
