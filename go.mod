@@ -8,4 +8,5 @@ require (
 	go.etcd.io/bbolt v1.3.4
 	golang.org/x/net v0.0.0-20191209160850-c0dbc17a3553
 	golang.org/x/sys v0.0.0-20200202164722-d101bd2416d5
+	modernc.org/b v1.0.0
 )

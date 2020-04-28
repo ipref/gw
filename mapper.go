@@ -3,8 +3,8 @@
 package main
 
 import (
-	"github.com/cznic/b"
 	rff "github.com/ipref/ref"
+	"modernc.org/b"
 	"net"
 )
 
