@@ -4,11 +4,12 @@ package main
 
 import (
 	"crypto/rand"
+	"modernc.org/b"
 	"sync"
 )
 
 type GenEA struct {
-	allocated map[IP32]bool
+	allocated *b.Tree
 	mtx       sync.Mutex
 	bcast     IP32
 }
@@ -29,37 +30,38 @@ func (gea *GenEA) recover_expired() {
 
 // generate random eas with second to last byte < SECOND_BYTE
 func (gea *GenEA) gen_dns_eas() {
+	/*
+		var ea IP32
+		creep := make([]byte, 4)
+		var err error
 
-	var ea IP32
-	creep := make([]byte, 4)
-	var err error
+		for {
+			// clear ea before incrementing ii
+			for ii := 0; ii < MAXTRIES; ii, ea = ii+1, 0 {
 
-	for {
-		// clear ea before incrementing ii
-		for ii := 0; ii < MAXTRIES; ii, ea = ii+1, 0 {
+				_, err = rand.Read(creep[1:])
+				if err != nil {
+					continue // cannot get random number
+				}
 
-			_, err = rand.Read(creep[1:])
-			if err != nil {
-				continue // cannot get random number
+				creep[2] %= SECOND_BYTE
+				ea = IP32(be.Uint32(creep))
+
+				ea &^= cli.ea_mask
+				if ea == 0 || ea == gea.bcast {
+					continue // zero address or broadcast address, try another
+				}
+				ea |= cli.ea_ip
+				_, ok := gea.allocated[ea]
+				if ok {
+					continue // already allocated
+				}
+				gea.allocated[ea] = true
+				break
 			}
-
-			creep[2] %= SECOND_BYTE
-			ea = IP32(be.Uint32(creep))
-
-			ea &^= cli.ea_mask
-			if ea == 0 || ea == gea.bcast {
-				continue // zero address or broadcast address, try another
-			}
-			ea |= cli.ea_ip
-			_, ok := gea.allocated[ea]
-			if ok {
-				continue // already allocated
-			}
-			gea.allocated[ea] = true
-			break
+			random_dns_ea <- ea
 		}
-		random_dns_ea <- ea
-	}
+	*/
 }
 
 // generate random eas with second to last byte >= SECOND_BYTE
@@ -68,6 +70,7 @@ func (gea *GenEA) gen_mapper_eas() {
 	var ea IP32
 	creep := make([]byte, 4)
 	var err error
+	var added bool
 
 	for {
 		// clear ea before incrementing ii
@@ -90,13 +93,14 @@ func (gea *GenEA) gen_mapper_eas() {
 			ea |= cli.ea_ip
 
 			gea.mtx.Lock()
-			_, ok := gea.allocated[ea]
-			if !ok {
-				gea.allocated[ea] = true
-			}
+
+			_, added = gea.allocated.Put(ea, func(old interface{}, exists bool) (interface{}, bool) {
+				return M32(0), !exists
+			})
+
 			gea.mtx.Unlock()
 
-			if !ok {
+			if added {
 				break // allocated new ea
 			}
 		}
@@ -114,7 +118,7 @@ func (gea *GenEA) start() {
 
 func (gea *GenEA) init() {
 	gea.bcast = 0xffffffff &^ cli.ea_mask
-	gea.allocated = make(map[IP32]bool)
+	gea.allocated = b.TreeNew(b.Cmp(addr_cmp))
 	recover_ea = make(chan *PktBuf, PKTQLEN)
 	random_dns_ea = make(chan IP32, GENQLEN)
 	random_mapper_ea = make(chan IP32, GENQLEN)
