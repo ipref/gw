@@ -32,10 +32,8 @@ immediately expired whenever a new set becomes available.
 
 const (
 	TIMER_TICK = 16811          // [ms] avg  16.811 [s]
-	TIMER_FUZZ = TIMER_TICK / 7 // [ms]       2.401 [s]
-
-	ARP_TICK = TIMER_TICK / 3 // [ms] avg 5.603 [s]
-	ARP_FUZZ = ARP_TICK / 7   // [ms] avg 0.800 [s]
+	ARP_TICK   = TIMER_TICK / 3 // [ms] avg   5.603 [s]
+	TIMER_FUZZ = 7
 )
 
 type Mark struct {
@@ -66,10 +64,14 @@ func (m *Mark) now() M32 {
 
 }
 
+func sleep(dly, fuzz int) {
+	time.Sleep(time.Duration(dly-fuzz/2+prng.Intn(fuzz)) * time.Millisecond)
+}
+
 func arp_tick() {
 
 	for {
-		time.Sleep(time.Duration(ARP_TICK-ARP_FUZZ/2+prng.Intn(ARP_FUZZ)) * time.Millisecond)
+		sleep(ARP_TICK, ARP_TICK/TIMER_FUZZ)
 
 		mark := marker.now()
 		pb := <-getbuf
@@ -87,7 +89,7 @@ func arp_tick() {
 func timer_tick() {
 
 	for {
-		time.Sleep(time.Duration(TIMER_TICK-TIMER_FUZZ/2+prng.Intn(TIMER_FUZZ)) * time.Millisecond)
+		sleep(TIMER_TICK, TIMER_TICK/TIMER_FUZZ)
 
 		mark := marker.now()
 
