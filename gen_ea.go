@@ -148,14 +148,14 @@ func (gen *GenEA) recover_expired() {
 
 	for pb := range recover_ea {
 
-		pkt := pb.pkt[pb.iphdr:pb.tail]
-
-		if err := pb.validate_v1_header(len(pkt)); err != nil {
+		if err := pb.validate_v1_header(pb.len()); err != nil {
 
 			log.err("recover ea: invalid v1 packet from %v:  %v", pb.peer, err)
 			retbuf <- pb
 			continue
 		}
+
+		pkt := pb.pkt[pb.iphdr:pb.tail]
 
 		cmd := pkt[V1_CMD]
 

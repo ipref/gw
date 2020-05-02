@@ -561,15 +561,24 @@ func fwd_to_gw() {
 
 		case pb.pkt[pb.iphdr] == V1_SIG:
 
-			switch pb.pkt[pb.iphdr+V1_CMD] {
-			case V1_SET_AREC:
-				verdict = map_gw.set_new_address_records(pb)
-			case V1_SET_MARK:
-				verdict = map_gw.set_new_mark(pb)
-			case V1_SET_SOFT:
-				verdict = map_gw.update_soft(pb)
-			default:
-				log.err("fwd_to_gw: unknown address records command: %v, ignoring", pb.pkt[pb.iphdr+V1_CMD])
+			if err := pb.validate_v1_header(pb.len()); err != nil {
+
+				log.err("fwd_to_gw: invalid v1 packet from %v:  %v", pb.peer, err)
+
+			} else {
+
+				switch pb.pkt[pb.iphdr+V1_CMD] {
+				case V1_SET_AREC:
+					verdict = map_gw.set_new_address_records(pb)
+				case V1_SET_MARK:
+					verdict = map_gw.set_new_mark(pb)
+				case V1_SET_SOFT:
+					verdict = map_gw.update_soft(pb)
+				case V1_REQ | V1_RECOVER_EA:
+					verdict = map_gw.check_for_expired_eas(pb)
+				default:
+					log.err("fwd_to_gw: unknown address records command: %v, ignoring", pb.pkt[pb.iphdr+V1_CMD])
+				}
 			}
 
 		default:
@@ -604,15 +613,22 @@ func fwd_to_tun() {
 
 		case pb.pkt[pb.iphdr] == V1_SIG:
 
-			switch pb.pkt[pb.iphdr+V1_CMD] {
-			case V1_SET_AREC:
-				verdict = map_tun.set_new_address_records(pb)
-			case V1_REQ | V1_GET_EA:
-				verdict = map_tun.get_ea(pb)
-			case V1_SET_MARK:
-				verdict = map_tun.set_new_mark(pb)
-			default:
-				log.err("fwd_to_tun: unknown address records command: %v, ignoring", pb.pkt[pb.iphdr+V1_CMD])
+			if err := pb.validate_v1_header(pb.len()); err != nil {
+
+				log.err("fwd_to_tun: invalid v1 packet from %v:  %v", pb.peer, err)
+
+			} else {
+
+				switch pb.pkt[pb.iphdr+V1_CMD] {
+				case V1_SET_AREC:
+					verdict = map_tun.set_new_address_records(pb)
+				case V1_REQ | V1_GET_EA:
+					verdict = map_tun.get_ea(pb)
+				case V1_SET_MARK:
+					verdict = map_tun.set_new_mark(pb)
+				default:
+					log.err("fwd_to_tun: unknown address records command: %v, ignoring", pb.pkt[pb.iphdr+V1_CMD])
+				}
 			}
 
 		default:

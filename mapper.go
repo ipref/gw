@@ -497,6 +497,72 @@ func (mgw *MapGw) update_soft(pb *PktBuf) int {
 	return DROP
 }
 
+func (mgw *MapGw) check_for_expired_eas(pb *PktBuf) int {
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pktlen := len(pkt)
+
+	off := V1_HDR_LEN
+
+	if off+4 > pktlen {
+		log.err("mgw: ea expiration query pkt too short")
+		return DROP
+	}
+
+	oid := O32(be.Uint32(pkt[off : off+4]))
+
+	if oid != mgw.oid {
+		log.err("mgw: ea expiration query oid(%v) does not match mgw oid(%v)", oid, mgw.oid)
+		return DROP
+	}
+
+	off += 4
+
+	if (pktlen-off)%8 != 0 {
+		log.err("mgw: corrupted ea expiration query packet")
+		return DROP
+	}
+
+	for ; off < pktlen; off += 8 {
+
+		ea := IP32(be.Uint32(pkt[off : off+4]))
+
+		iprefrec, ok := mgw.their_ipref.Get(ea)
+
+		if !ok {
+			// not found, treat as expired
+			copy(pkt[off+4:off+8], []byte{0, 0, 0, 0})
+			continue
+		}
+
+		rec := iprefrec.(IpRefRec)
+
+		if rec.oid != oid {
+			// oid mismatch, clear ea
+			copy(pkt[off:off+4], []byte{0, 0, 0, 0})
+			continue
+		}
+
+		if rec.mark < mgw.cur_mark[rec.oid] {
+			// expired
+			copy(pkt[off+4:off+8], []byte{0, 0, 0, 0})
+			continue
+		}
+
+		// in use
+
+		be.PutUint32(pkt[off+4:off+8], uint32(rec.mark))
+	}
+
+	pkt[V1_CMD] &= 0x3f
+	pkt[V1_CMD] |= V1_ACK
+
+	pb.peer = "mgw"
+	pb.schan <- pb
+
+	return ACCEPT
+}
+
 // -- MapTun -------------------------------------------------------------------
 
 const ( // purge states
