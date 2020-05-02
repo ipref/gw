@@ -222,15 +222,6 @@ var map_tun MapTun // exclusively owned by fwd_to_tun
 
 // -- MapGw --------------------------------------------------------------------
 
-const ( // purge states
-	MGW_PURGE_START = iota + 1
-	MGW_PURGE_THEIR_IPREF_SEEK
-	MGW_PURGE_THEIR_IPREF
-	MGW_PURGE_OUR_IPREF_SEEK
-	MGW_PURGE_OUR_IPREF
-	MGW_PURGE_STOP
-)
-
 type MapGw struct {
 	their_ipref *b.Tree // map[uint32]IpRefRec		our_ea -> (their_gw, their_ref)
 	our_ipref   *b.Tree // map[uint32]IpRefRec		our_ip -> (our_gw,   our_ref)
@@ -238,10 +229,6 @@ type MapGw struct {
 	cur_mark    []M32   // current mark per oid
 	soft        map[IP32]SoftRec
 	pfx         string // prefix for printing messages
-	purge       struct {
-		state     int
-		btree_enu *b.Enumerator
-	}
 }
 
 func (mgw *MapGw) init(oid O32) {
@@ -252,7 +239,6 @@ func (mgw *MapGw) init(oid O32) {
 	mgw.oid = oid
 	mgw.cur_mark = make([]M32, 2)
 	mgw.soft = make(map[IP32]SoftRec)
-	mgw.purge.state = MGW_PURGE_START
 }
 
 func (mgw *MapGw) set_cur_mark(oid O32, mark M32) {
@@ -565,19 +551,6 @@ func (mgw *MapGw) check_for_expired_eas(pb *PktBuf) int {
 
 // -- MapTun -------------------------------------------------------------------
 
-const ( // purge states
-	MTUN_PURGE_START = iota + 1
-	MTUN_PURGE_OUR_IP_SEEK
-	MTUN_PURGE_OUR_IP
-	MTUN_PURGE_OUR_IP_SUB_SEEK
-	MTUN_PURGE_OUR_IP_SUB
-	MTUN_PURGE_OUR_EA_SEEK
-	MTUN_PURGE_OUR_EA
-	MTUN_PURGE_OUR_EA_SUB_SEEK
-	MTUN_PURGE_OUR_EA_SUB
-	MTUN_PURGE_STOP
-)
-
 type MapTun struct {
 	our_ip   *b.Tree // map[uint32]map[Ref]IpRec		our_gw   -> our_ref   -> our_ip
 	our_ea   *b.Tree // map[uint32]map[Ref]IpRec		their_gw -> their_ref -> our_ea
@@ -585,12 +558,6 @@ type MapTun struct {
 	cur_mark []M32   // current mark per oid
 	soft     map[IP32]SoftRec
 	pfx      string
-	purge    struct {
-		state      int
-		btree_enu  *b.Enumerator // first level btree enumerator
-		sbtree     *b.Tree       // second level btree
-		sbtree_enu *b.Enumerator // second level btree enumerator
-	}
 }
 
 func (mtun *MapTun) init(oid O32) {
@@ -601,7 +568,6 @@ func (mtun *MapTun) init(oid O32) {
 	mtun.oid = oid
 	mtun.cur_mark = make([]M32, 2)
 	mtun.soft = make(map[IP32]SoftRec)
-	mtun.purge.state = MTUN_PURGE_START
 }
 
 func (mtun *MapTun) set_cur_mark(oid O32, mark M32) {
