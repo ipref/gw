@@ -112,8 +112,13 @@ func timer_tick() {
 		pbc.peer = "timer"
 		pbc.copy_from(pb)
 
+		pbd := <-getbuf
+		pbd.peer = "timer"
+		pbd.copy_from(pb)
+
 		recv_gw <- pb
 		recv_tun <- pbb
 		mbchan <- pbc
+		dbchan <- pbd
 	}
 }

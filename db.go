@@ -18,11 +18,11 @@ sending v1 packets to DB channel.
 */
 
 const (
-	dbname    = "mapper.db"
-	eabkt     = "ea"     // ea  -> db_arec
-	refbkt    = "ref"    // ref -> db_arec
-	markerbkt = "marker" // oid -> marker
-	oidbkt    = "oid"    // oid -> name
+	dbname  = "mapper.db"
+	eabkt   = "ea"   // ea  -> db_arec
+	refbkt  = "ref"  // ref -> db_arec
+	markbkt = "mark" // oid -> mark
+	oidbkt  = "oid"  // oid -> name
 )
 
 var db *bolt.DB  // current DB
@@ -144,7 +144,40 @@ func db_save_oid(pb *PktBuf) {
 	}
 }
 
-func db_save_marker(pb *PktBuf) {
+func db_save_mark(pb *PktBuf) {
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+
+	if len(pkt) < V1_HDR_LEN+V1_MARK_LEN {
+		log.err("db save mark: pktlen(%v) too short, dropping", len(pkt))
+		return
+	}
+
+	off := V1_HDR_LEN
+
+	if zero(pkt[off+V1_OID:off+V1_OID+4]) || zero(pkt[off+V1_MARK:off+V1_MARK+4]) {
+		log.err("db save mark: invalid oid or mark, ignoring")
+		return
+	}
+
+	var err error
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists([]byte(markbkt))
+		return err
+	})
+	if err != nil {
+		log.fatal("db save mark: cannot create bucket %v: %v", markbkt, err)
+	}
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(markbkt))
+		err := bkt.Put(pkt[off+V1_OID:off+V1_OID+4], pkt[off+V1_MARK:off+V1_MARK+4])
+		return err
+	})
+	if err != nil {
+		log.err("db save mark: failed to save mark: %v", err)
+	}
 }
 
 func db_restore_eas(gea *GenEA) {
@@ -270,7 +303,7 @@ func db_listen() {
 		case V1_DATA | V1_SET_AREC:
 			db_save_arec(pb)
 		case V1_DATA | V1_SET_MARK:
-			db_save_marker(pb)
+			db_save_mark(pb)
 		case V1_DATA | V1_SAVE_OID:
 			db_save_oid(pb)
 		default: // invalid
