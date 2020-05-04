@@ -38,7 +38,7 @@ func zero(slice []byte) bool {
 	return true
 }
 
-func db_restore_owners(o *Owners) {
+func (o *Owners) db_restore() {
 
 	if rdb == nil {
 		return
