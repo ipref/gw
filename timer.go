@@ -53,9 +53,7 @@ func (m *Mark) init() {
 	}
 	prng.Seed(int64(be.Uint32(creep)))
 
-	// init marker making sure it's always > 0
-
-	m.base = time.Now().Add(-time.Second)
+	m.db_restore()
 }
 
 func (m *Mark) now() M32 {
