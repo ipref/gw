@@ -272,5 +272,4 @@ func (gen *GenEA) init() {
 	recover_ea = make(chan *PktBuf, PKTQLEN)
 	//random_dns_ea = make(chan IP32, GENQLEN)
 	random_mapper_ea = make(chan IP32, GENQLEN)
-	db_restore_eas(gen)
 }

@@ -3,7 +3,7 @@
 package main
 
 import (
-	//rff "github.com/ipref/ref"
+	rff "github.com/ipref/ref"
 	bolt "go.etcd.io/bbolt"
 	"os"
 	"path"
@@ -187,6 +187,87 @@ func (m *Mark) db_restore() {
 	}
 }
 
+// restore address records from the ea bucket
+func (mgw *MapGw) db_restore() {
+
+	if rdb == nil {
+		return
+	}
+
+	rdb.View(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(eabkt))
+		if bkt == nil {
+			return nil
+		}
+		log.info("db restoring ea records")
+		bkt.ForEach(func(key, val []byte) error {
+
+			// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
+
+			oid := O32(be.Uint32(val[:4]))
+			mark := M32(be.Uint32(val[4:8]))
+			ea := IP32(be.Uint32(val[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4]))
+
+			if oid == 0 || mark == 0 {
+				log.err("db restore ea: %v invalid oid(mark): %v(%v), discarding", ea, owners.name(oid), mark)
+			} else if oid == mgw.oid && mark < mgw.cur_mark[oid] {
+				log.debug("db restore ea: %v expired, discarding", ea)
+			} else {
+				log.debug("db restore ea: %v restore", ea)
+
+				mgw.insert_record(oid, mark, val[V1_MARK_LEN:])
+				map_tun.insert_record(oid, mark, val[V1_MARK_LEN:])
+				db_insert_record(val)
+			}
+			return nil
+		})
+		return nil
+	})
+}
+
+// restore address records from the ref bucket
+func (mtun *MapTun) db_restore() {
+
+	if rdb == nil {
+		return
+	}
+
+	rdb.View(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(refbkt))
+		if bkt == nil {
+			return nil
+		}
+		log.info("db restoring ea records")
+		bkt.ForEach(func(key, val []byte) error {
+
+			// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
+
+			oid := O32(be.Uint32(val[:4]))
+			mark := M32(be.Uint32(val[4:8]))
+			var ref rff.Ref
+			ref.H = be.Uint64(val[V1_MARK_LEN+V1_AREC_REFH : V1_MARK_LEN+V1_AREC_REFH+8])
+			ref.L = be.Uint64(val[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
+
+			if oid == 0 || mark == 0 {
+				log.err("db restore ref: %v invalid oid(mark): %v(%v), discarding", ref, owners.name(oid), mark)
+			} else if oid == mtun.oid && mark < mtun.cur_mark[oid] {
+				log.debug("db restore ref: %v expired, discarding", ref)
+			} else {
+				log.debug("db restore ref: %v restore", ref)
+
+				mtun.insert_record(oid, mark, val[V1_MARK_LEN:])
+				map_gw.insert_record(oid, mark, val[V1_MARK_LEN:])
+				db_insert_record(val)
+			}
+			return nil
+		})
+		return nil
+	})
+}
+
+func (gen *GenEA) db_restore() {
+}
+
 func db_save_oid(pb *PktBuf) {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
@@ -259,7 +340,63 @@ func db_save_mark(pb *PktBuf) {
 	}
 }
 
-func db_restore_eas(gea *GenEA) {
+func db_insert_record(db_arec []byte) {
+
+	if zero(db_arec[V1_MARK_LEN+V1_AREC_GW:V1_MARK_LEN+V1_AREC_GW+4]) || zero(db_arec[V1_MARK_LEN+V1_AREC_REFH:V1_MARK_LEN+V1_AREC_REFL+8]) {
+		log.err("db insert arec: null gw + ref, ignoring")
+		return
+	}
+
+	var err error
+
+	ea_zero := zero(db_arec[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4])
+	ip_zero := zero(db_arec[V1_MARK_LEN+V1_AREC_IP : V1_MARK_LEN+V1_AREC_IP+4])
+
+	if !ea_zero && ip_zero {
+
+		log.debug("db insert arec: ea -> db_arec")
+
+		err = db.Update(func(tx *bolt.Tx) error {
+			_, err := tx.CreateBucketIfNotExists([]byte(eabkt))
+			return err
+		})
+		if err != nil {
+			log.fatal("db insert arec: cannot create bucket %v: %v", eabkt, err)
+		}
+
+		err = db.Update(func(tx *bolt.Tx) error {
+			bkt := tx.Bucket([]byte(eabkt))
+			err := bkt.Put(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4], db_arec)
+			return err
+		})
+		if err != nil {
+			log.err("db insert arec: failed to save arec: %v", err)
+		}
+
+	} else if ea_zero && !ip_zero {
+
+		log.debug("db insert arec: ref -> db_arec")
+
+		err = db.Update(func(tx *bolt.Tx) error {
+			_, err := tx.CreateBucketIfNotExists([]byte(refbkt))
+			return err
+		})
+		if err != nil {
+			log.fatal("db insert arec: cannot create bucket %v: %v", refbkt, err)
+		}
+
+		err = db.Update(func(tx *bolt.Tx) error {
+			bkt := tx.Bucket([]byte(refbkt))
+			err := bkt.Put(db_arec[V1_MARK_LEN+V1_AREC_REFH:V1_MARK_LEN+V1_AREC_REFL+8], db_arec)
+			return err
+		})
+		if err != nil {
+			log.err("db insert arec: failed to save arec: %v", err)
+		}
+
+	} else {
+		log.err("db insert arec: invalid address record, ignoring")
+	}
 }
 
 func db_save_arec(pb *PktBuf) {
@@ -283,10 +420,10 @@ func db_save_arec(pb *PktBuf) {
 		return
 	}
 
-	// db_arec is a slice that contains the entire arec plus oid and mark
+	// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
 
-	db_arec := make([]byte, V1_AREC_LEN+V1_MARK_LEN, V1_AREC_LEN+V1_MARK_LEN)
-	copy(db_arec[V1_AREC_LEN:], pkt[off+V1_OID:off+V1_MARK+4])
+	db_arec := make([]byte, V1_MARK_LEN+V1_AREC_LEN, V1_MARK_LEN+V1_AREC_LEN)
+	copy(db_arec, pkt[off+V1_OID:off+V1_MARK+4])
 
 	off += V1_MARK_LEN
 
@@ -295,65 +432,9 @@ func db_save_arec(pb *PktBuf) {
 		return
 	}
 
-	var err error
-
 	for ; off < pktlen; off += V1_AREC_LEN {
-
-		if zero(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4]) || zero(pkt[off+V1_AREC_REFH:off+V1_AREC_REFL+8]) {
-			log.err("db save arec: null gw + ref, ignoring")
-			continue
-		}
-
-		ea_zero := zero(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4])
-		ip_zero := zero(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4])
-
-		copy(db_arec, pkt[off:off+V1_AREC_LEN])
-
-		if !ea_zero && ip_zero {
-
-			log.debug("db save arec: ea -> db_arec")
-
-			err = db.Update(func(tx *bolt.Tx) error {
-				_, err := tx.CreateBucketIfNotExists([]byte(eabkt))
-				return err
-			})
-			if err != nil {
-				log.fatal("db save arec: cannot create bucket %v: %v", eabkt, err)
-			}
-
-			err = db.Update(func(tx *bolt.Tx) error {
-				bkt := tx.Bucket([]byte(eabkt))
-				err := bkt.Put(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], db_arec)
-				return err
-			})
-			if err != nil {
-				log.err("db save arec: failed to save arec: %v", err)
-			}
-
-		} else if ea_zero && !ip_zero {
-
-			log.debug("db save arec: ref -> db_arec")
-
-			err = db.Update(func(tx *bolt.Tx) error {
-				_, err := tx.CreateBucketIfNotExists([]byte(refbkt))
-				return err
-			})
-			if err != nil {
-				log.fatal("db save arec: cannot create bucket %v: %v", refbkt, err)
-			}
-
-			err = db.Update(func(tx *bolt.Tx) error {
-				bkt := tx.Bucket([]byte(refbkt))
-				err := bkt.Put(pkt[off+V1_AREC_REFH:off+V1_AREC_REFL+8], db_arec)
-				return err
-			})
-			if err != nil {
-				log.err("db save arec: failed to save arec: %v", err)
-			}
-
-		} else {
-			log.err("db save arec: invalid address record, ignoring")
-		}
+		copy(db_arec[V1_MARK_LEN:], pkt[off:off+V1_AREC_LEN])
+		db_insert_record(db_arec)
 	}
 }
 

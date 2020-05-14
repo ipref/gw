@@ -17,7 +17,6 @@ var owners Owners
 func (o *Owners) init() {
 	o.oids = make([]string, 1, 16)
 	o.oids[0] = "none"
-	o.db_restore()
 }
 
 // return name associated with an oid

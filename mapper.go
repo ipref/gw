@@ -357,6 +357,54 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 	return rec
 }
 
+func (mgw *MapGw) insert_record(oid O32, mark M32, arec []byte) {
+
+	var ref rff.Ref
+	ea := IP32(be.Uint32(arec[V1_AREC_EA : V1_AREC_EA+4]))
+	ip := IP32(be.Uint32(arec[V1_AREC_IP : V1_AREC_IP+4]))
+	gw := IP32(be.Uint32(arec[V1_AREC_GW : V1_AREC_GW+4]))
+	ref.H = be.Uint64(arec[V1_AREC_REFH : V1_AREC_REFH+8])
+	ref.L = be.Uint64(arec[V1_AREC_REFL : V1_AREC_REFL+8])
+
+	if gw == 0 || ref.IsZero() {
+		log.err("mgw: unexpected null gw + ref, %v %v %v %v, dropping record", ea, ip, gw, &ref)
+		return
+	}
+
+	if ea != 0 && ip == 0 {
+
+		if (oid == mgw.oid && arec[V1_AREC_EA+2] < SECOND_BYTE) ||
+			(oid != mgw.oid && arec[V1_AREC_EA+2] >= SECOND_BYTE) {
+
+			log.err("mgw: %v(%v): second byte rule violation(ea), %v %v %v %v, dropping record",
+				owners.name(oid), oid, ea, ip, gw, &ref)
+			return
+		}
+
+		if cli.debug_mapper {
+			log.debug("mgw: set their_ipref  %v  ->  %v + %v", ea, gw, &ref)
+		}
+		mgw.their_ipref.Set(ea, IpRefRec{gw, ref, oid, mark})
+
+	} else if ea == 0 && ip != 0 {
+
+		if (oid == mgw.oid && arec[V1_AREC_REFL+6] < SECOND_BYTE) ||
+			(oid != mgw.oid && arec[V1_AREC_REFL+6] >= SECOND_BYTE) {
+			log.err("mgw: %v(%v): second byte rule violation(ref), %v %v %v %v, dropping record",
+				owners.name(oid), oid, ea, ip, gw, &ref)
+			return
+		}
+
+		if cli.debug_mapper {
+			log.debug("mgw: set our_ipref  %v  ->  %v + %v", ip, gw, &ref)
+		}
+		mgw.our_ipref.Set(ip, IpRefRec{gw, ref, oid, mark})
+
+	} else {
+		log.err("mgw: invalid address record, %v %v %v %v, dropping record", ea, ip, gw, &ref)
+	}
+}
+
 func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
@@ -376,51 +424,7 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 	mark := M32(be.Uint32(pkt[off+V1_MARK : off+V1_MARK+4]))
 
 	for off += V1_MARK_LEN; off < pktlen; off += V1_AREC_LEN {
-
-		var ref rff.Ref
-		ea := IP32(be.Uint32(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4]))
-		ip := IP32(be.Uint32(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4]))
-		gw := IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
-		ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-		ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
-
-		if gw == 0 || ref.IsZero() {
-			log.err("mgw: unexpected null gw + ref, %v %v %v %v, dropping record", ea, ip, gw, &ref)
-			continue
-		}
-
-		if ea != 0 && ip == 0 {
-
-			if (oid == mgw.oid && pkt[off+V1_AREC_EA+2] < SECOND_BYTE) ||
-				(oid != mgw.oid && pkt[off+V1_AREC_EA+2] >= SECOND_BYTE) {
-
-				log.err("mgw: %v(%v): second byte rule violation(ea), %v %v %v %v, dropping record",
-					owners.name(oid), oid, ea, ip, gw, &ref)
-				continue
-			}
-
-			if cli.debug_mapper {
-				log.debug("mgw: set their_ipref  %v  ->  %v + %v", ea, gw, &ref)
-			}
-			mgw.their_ipref.Set(ea, IpRefRec{gw, ref, oid, mark})
-
-		} else if ea == 0 && ip != 0 {
-
-			if (oid == mgw.oid && pkt[off+V1_AREC_REFL+6] < SECOND_BYTE) ||
-				(oid != mgw.oid && pkt[off+V1_AREC_REFL+6] >= SECOND_BYTE) {
-				log.err("mgw: %v(%v): second byte rule violation(ref), %v %v %v %v, dropping record",
-					owners.name(oid), oid, ea, ip, gw, &ref)
-				continue
-			}
-
-			if cli.debug_mapper {
-				log.debug("mgw: set our_ipref  %v  ->  %v + %v", ip, gw, &ref)
-			}
-			mgw.our_ipref.Set(ip, IpRefRec{gw, ref, oid, mark})
-
-		} else {
-			log.err("mgw: invalid address record, %v %v %v %v, dropping record", ea, ip, gw, &ref)
-		}
+		mgw.insert_record(oid, mark, pkt[off:off+V1_AREC_LEN])
 	}
 
 	return DROP
@@ -708,6 +712,63 @@ func (mtun *MapTun) get_src_iprec(gw IP32, ref rff.Ref) *IpRec {
 	return &rec
 }
 
+func (mtun *MapTun) insert_record(oid O32, mark M32, arec []byte) {
+
+	var ref rff.Ref
+	ea := IP32(be.Uint32(arec[V1_AREC_EA : V1_AREC_EA+4]))
+	ip := IP32(be.Uint32(arec[V1_AREC_IP : V1_AREC_IP+4]))
+	gw := IP32(be.Uint32(arec[V1_AREC_GW : V1_AREC_GW+4]))
+	ref.H = be.Uint64(arec[V1_AREC_REFH : V1_AREC_REFH+8])
+	ref.L = be.Uint64(arec[V1_AREC_REFL : V1_AREC_REFL+8])
+
+	if gw == 0 || ref.IsZero() {
+		log.err("mtun: unexpected null gw + ref, %v %v %v %v, dropping record", ea, ip, gw, &ref)
+		return
+	}
+
+	if ea != 0 && ip == 0 {
+
+		if (oid == mtun.oid && arec[V1_AREC_EA+2] < SECOND_BYTE) ||
+			(oid != mtun.oid && arec[V1_AREC_EA+2] >= SECOND_BYTE) {
+			log.err("mtun: %v(%v): second byte rule violation(ea), %v %v %v %v, dropping record",
+				owners.name(oid), oid, ea, ip, gw, &ref)
+			return
+		}
+
+		their_refs, ok := mtun.our_ea.Get(gw)
+		if !ok {
+			their_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
+			mtun.our_ea.Set(gw, their_refs)
+		}
+		if cli.debug_mapper {
+			log.debug("mtun: set their_refs  %v  ->  %v  ->  %v", gw, &ref, ea)
+		}
+		their_refs.(*b.Tree).Set(ref, IpRec{ea, oid, mark})
+
+	} else if ea == 0 && ip != 0 {
+
+		if (oid == mtun.oid && arec[V1_AREC_REFL+6] < SECOND_BYTE) ||
+			(oid != mtun.oid && arec[V1_AREC_REFL+6] >= SECOND_BYTE) {
+			log.err("mtun: %v(%v): second byte rule violation(ref), %v %v %v %v, dropping record",
+				owners.name(oid), oid, ea, ip, gw, &ref)
+			return
+		}
+
+		our_refs, ok := mtun.our_ip.Get(gw)
+		if !ok {
+			our_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
+			mtun.our_ip.Set(gw, our_refs)
+		}
+		if cli.debug_mapper {
+			log.debug("mtun: set our_refs  %v  ->  %v  ->  %v", gw, &ref, ip)
+		}
+		our_refs.(*b.Tree).Set(ref, IpRec{ip, oid, mark})
+
+	} else {
+		log.err("mtun: invalid address record, %v %v %v %v, dropping record", ea, ip, gw, &ref)
+	}
+}
+
 func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
@@ -727,60 +788,7 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 	mark := M32(be.Uint32(pkt[off+V1_MARK : off+V1_MARK+4]))
 
 	for off += V1_MARK_LEN; off < pktlen; off += V1_AREC_LEN {
-
-		var ref rff.Ref
-		ea := IP32(be.Uint32(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4]))
-		ip := IP32(be.Uint32(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4]))
-		gw := IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
-		ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-		ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
-
-		if gw == 0 || ref.IsZero() {
-			log.err("mtun: unexpected null gw + ref, %v %v %v %v, dropping record", ea, ip, gw, &ref)
-			continue
-		}
-
-		if ea != 0 && ip == 0 {
-
-			if (oid == mtun.oid && pkt[off+V1_AREC_EA+2] < SECOND_BYTE) ||
-				(oid != mtun.oid && pkt[off+V1_AREC_EA+2] >= SECOND_BYTE) {
-				log.err("mtun: %v(%v): second byte rule violation(ea), %v %v %v %v, dropping record",
-					owners.name(oid), oid, ea, ip, gw, &ref)
-				continue
-			}
-
-			their_refs, ok := mtun.our_ea.Get(gw)
-			if !ok {
-				their_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
-				mtun.our_ea.Set(gw, their_refs)
-			}
-			if cli.debug_mapper {
-				log.debug("mtun: set their_refs  %v  ->  %v  ->  %v", gw, &ref, ea)
-			}
-			their_refs.(*b.Tree).Set(ref, IpRec{ea, oid, mark})
-
-		} else if ea == 0 && ip != 0 {
-
-			if (oid == mtun.oid && pkt[off+V1_AREC_REFL+6] < SECOND_BYTE) ||
-				(oid != mtun.oid && pkt[off+V1_AREC_REFL+6] >= SECOND_BYTE) {
-				log.err("mtun: %v(%v): second byte rule violation(ref), %v %v %v %v, dropping record",
-					owners.name(oid), oid, ea, ip, gw, &ref)
-				continue
-			}
-
-			our_refs, ok := mtun.our_ip.Get(gw)
-			if !ok {
-				our_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
-				mtun.our_ip.Set(gw, our_refs)
-			}
-			if cli.debug_mapper {
-				log.debug("mtun: set our_refs  %v  ->  %v  ->  %v", gw, &ref, ip)
-			}
-			our_refs.(*b.Tree).Set(ref, IpRec{ip, oid, mark})
-
-		} else {
-			log.err("mtun: invalid address record, %v %v %v %v, dropping record", ea, ip, gw, &ref)
-		}
+		mtun.insert_record(oid, mark, pkt[off:off+V1_AREC_LEN])
 	}
 
 	return DROP

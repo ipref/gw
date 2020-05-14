@@ -69,13 +69,26 @@ func main() {
 	start_db()
 
 	owners.init()
+	owners.db_restore()
+
 	mapper_oid = owners.get_oid("mapper")
 
 	marker.init()
-	gen_ea.init()
+	marker.db_restore()
 
 	map_gw.init(mapper_oid)
 	map_tun.init(mapper_oid)
+	mmark := marker.now()
+	map_gw.set_cur_mark(mapper_oid, mmark)
+	map_tun.set_cur_mark(mapper_oid, mmark)
+	map_gw.db_restore()
+	map_tun.db_restore()
+
+	gen_ea.init()
+	gen_ea.db_restore()
+
+	//gen_ref.init()
+	//gen_ref.db_restore()
 
 	stop_db_restore()
 

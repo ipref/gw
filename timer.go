@@ -52,8 +52,6 @@ func (m *Mark) init() {
 		log.fatal("mark: cannot seed pseudo random number generator")
 	}
 	prng.Seed(int64(be.Uint32(creep)))
-
-	m.db_restore()
 }
 
 func (m *Mark) now() M32 {
