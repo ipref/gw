@@ -274,24 +274,24 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 					rec.gw = cli.gw_ip
 				}
 
-				if rec.ref.IsZero() {
-
-					// TODO: this is no good, it should check if a record already exists, as
-					//       it stands, it will keep re-allocating on any change to the file
-					//
-					// The best approach would be to publish the allocations to a dynamic DNS
-					// server, then convey records from the server to the mapper.
-
-					ref := <-random_dns_ref
-					if ref.IsZero() {
-						log.err("dns watcher: cannot get generated reference: %v %v %v %v, ignoring",
-							rec.ea, rec.ip, rec.gw, &rec.ref)
-						goto skip_record
-					}
-					rec.ref = ref
-					log.info("dns watcher: allocated dns ref: %v %v %v %v",
-						rec.ea, rec.ip, rec.gw, &rec.ref)
-				}
+				//if rec.ref.IsZero() {
+				//
+				//	// TODO: this is no good, it should check if a record already exists, as
+				//	//       it stands, it will keep re-allocating on any change to the file
+				//	//
+				//	// The best approach would be to publish the allocations to a dynamic DNS
+				//	// server, then convey records from the server to the mapper.
+				//
+				//	ref := <-random_dns_ref
+				//	if ref.IsZero() {
+				//		log.err("dns watcher: cannot get generated reference: %v %v %v %v, ignoring",
+				//			rec.ea, rec.ip, rec.gw, &rec.ref)
+				//		goto skip_record
+				//	}
+				//	rec.ref = ref
+				//	log.info("dns watcher: allocated dns ref: %v %v %v %v",
+				//		rec.ea, rec.ip, rec.gw, &rec.ref)
+				//}
 
 				if rec.gw == 0 || rec.ref.IsZero() {
 					log.err("dns watcher: invalid ip address record: %v %v %v %v, ignoring",
