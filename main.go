@@ -103,12 +103,10 @@ func main() {
 	recv_gw = make(chan *PktBuf, PKTQLEN)
 	send_gw = make(chan *PktBuf, PKTQLEN)
 
-	random_dns_ref = make(chan rff.Ref, GENQLEN)
 	random_mapper_ref = make(chan rff.Ref, GENQLEN)
 
 	mbchan = make(chan *PktBuf, PKTQLEN)
 
-	go gen_dns_refs()
 	go gen_mapper_refs()
 	gen_ea.start()
 
