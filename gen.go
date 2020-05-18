@@ -104,8 +104,8 @@ func (gen *GenEA) check_for_expired() {
 					break
 				}
 
-				be.PutUint32(pkt[off:off+4], uint32(key.(IP32)))
-				copy(pkt[off+4:off+4+4], []byte{0, 0, 0, 0})
+				copy(pkt[off:off+4], []byte{0, 0, 0, 0})
+				be.PutUint32(pkt[off+4:off+4+4], uint32(key.(IP32)))
 				off += 4
 			}
 
@@ -146,10 +146,10 @@ func (gen *GenEA) remove_expired_eas(pb *PktBuf) {
 
 	for ; off < pktlen; off += 8 {
 
-		ea := IP32(be.Uint32(pkt[off : off+4]))
-		mark := M32(be.Uint32(pkt[off+4 : off+8]))
+		mark := M32(be.Uint32(pkt[off : off+4]))
 
 		if mark == 0 {
+			ea := IP32(be.Uint32(pkt[off+4 : off+4+4]))
 			gen.mtx.Lock()
 			ok := gen.allocated.Delete(ea)
 			gen.mtx.Unlock()

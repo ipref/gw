@@ -515,13 +515,13 @@ func (mgw *MapGw) check_for_expired_eas(pb *PktBuf) int {
 
 	for ; off < pktlen; off += 8 {
 
-		ea := IP32(be.Uint32(pkt[off : off+4]))
+		ea := IP32(be.Uint32(pkt[off+4 : off+4+4]))
 
 		iprefrec, ok := mgw.their_ipref.Get(ea)
 
 		if !ok {
 			// not found, treat as expired
-			copy(pkt[off+4:off+8], []byte{0, 0, 0, 0})
+			copy(pkt[off:off+4], []byte{0, 0, 0, 0})
 			continue
 		}
 
@@ -529,19 +529,19 @@ func (mgw *MapGw) check_for_expired_eas(pb *PktBuf) int {
 
 		if rec.oid != oid {
 			// oid mismatch, clear ea
-			copy(pkt[off:off+4], []byte{0, 0, 0, 0})
+			copy(pkt[off+4:off+4+4], []byte{0, 0, 0, 0})
 			continue
 		}
 
 		if rec.mark < mgw.cur_mark[rec.oid] {
 			// expired
-			copy(pkt[off+4:off+8], []byte{0, 0, 0, 0})
+			copy(pkt[off:off+4], []byte{0, 0, 0, 0})
 			continue
 		}
 
 		// in use
 
-		be.PutUint32(pkt[off+4:off+8], uint32(rec.mark))
+		be.PutUint32(pkt[off:off+4], uint32(rec.mark))
 	}
 
 	pkt[V1_CMD] &= 0x3f
