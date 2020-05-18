@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	rff "github.com/ipref/ref"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -87,8 +86,8 @@ func main() {
 	gen_ea.init()
 	gen_ea.db_restore()
 
-	//gen_ref.init()
-	//gen_ref.db_restore()
+	gen_ref.init()
+	gen_ref.db_restore()
 
 	stop_db_restore()
 
@@ -103,12 +102,10 @@ func main() {
 	recv_gw = make(chan *PktBuf, PKTQLEN)
 	send_gw = make(chan *PktBuf, PKTQLEN)
 
-	random_mapper_ref = make(chan rff.Ref, GENQLEN)
-
 	mbchan = make(chan *PktBuf, PKTQLEN)
 
-	go gen_mapper_refs()
 	gen_ea.start()
+	gen_ref.start()
 
 	go dns_watcher()
 

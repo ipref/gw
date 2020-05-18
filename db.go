@@ -268,6 +268,9 @@ func (mtun *MapTun) db_restore() {
 func (gen *GenEA) db_restore() {
 }
 
+func (gen *GenREF) db_restore() {
+}
+
 func db_save_oid(pb *PktBuf) {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]

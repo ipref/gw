@@ -29,7 +29,7 @@ const (
 	RECOVERY_CHECK_TICK = TIMER_TICK * 5  // [ms] avg 84.055 [s]
 	RECOVERY_TICK       = TIMER_TICK / 11 // [ms] avg  1.528 [s]
 	RECOVERY_NUM        = 11              // items at a time
-	RECOVERY_THRESHOLD  = 80              // % of used allocation to trigger recovery
+	RECOVERY_THRESHOLD  = 80              // % of used allocation to trigger ea recovery
 )
 
 // -- ea gen -------------------------------------------------------------------
@@ -291,16 +291,175 @@ func (gen *GenEA) init() {
 
 // -- ref gen ------------------------------------------------------------------
 
+type GenREF struct {
+	allocated *b.Tree
+	mtx       sync.Mutex
+}
+
+var gen_ref GenREF
+var recover_ref chan *PktBuf
 var random_mapper_ref chan rff.Ref
 
+func (gen *GenREF) check_for_expired() {
+
+	var pktid uint16
+
+	threshold := 7 // arbitrary initial allocations
+
+	for ; ; sleep(RECOVERY_CHECK_TICK, RECOVERY_CHECK_TICK/TIMER_FUZZ) {
+
+		gen.mtx.Lock()
+		num_allocated := gen.allocated.Len()
+		gen.mtx.Unlock()
+
+		if num_allocated <= threshold {
+			continue
+		}
+		threshold = num_allocated // we recover when allocations exceeds previously detected allocations
+
+		log.info("gen ref: recovery threshold reached: %v ref allocated, recovering expired refs", num_allocated)
+
+		gen.mtx.Lock()
+		enu, err := gen.allocated.SeekFirst()
+		gen.mtx.Unlock()
+
+		if err != nil {
+			continue // empty tree
+		}
+
+		for err := error(nil); err == nil; sleep(RECOVERY_TICK, RECOVERY_TICK/TIMER_FUZZ) {
+
+			var key interface{}
+			//var val interface{}
+
+			pktid++
+			if pktid == 0 {
+				pktid++
+			}
+
+			pb := <-getbuf
+			pb.write_v1_header(V1_REQ|V1_RECOVER_REF, pktid)
+			pkt := pb.pkt[pb.iphdr:]
+
+			off := V1_HDR_LEN
+
+			be.PutUint32(pkt[off:off+4], uint32(mapper_oid))
+
+			off += 4
+
+			for ix := 0; ix < RECOVERY_NUM; ix++ {
+
+				gen.mtx.Lock()
+				key, _, err = enu.Next() //  err is defined in the outer loop
+				gen.mtx.Unlock()
+
+				if err != nil {
+					if err != io.EOF {
+						log.err("gen ref: cannot read ref from 'allocated': %v", err)
+					}
+					break
+				}
+
+				copy(pkt[off:off+4], []byte{0, 0, 0, 0})
+				be.PutUint64(pkt[off+4:off+4+8], key.(rff.Ref).H)
+				be.PutUint64(pkt[off+4+8:off+4+8+8], key.(rff.Ref).L)
+				off += 20
+			}
+
+			pb.tail = pb.iphdr + off
+			be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
+			pb.peer = "gen_ref"
+			pb.schan = recover_ref
+			recv_tun <- pb
+		}
+	}
+}
+
+func (gen *GenREF) remove_expired_refs(pb *PktBuf) {
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pktlen := len(pkt)
+
+	off := V1_HDR_LEN
+
+	if off+4 > pktlen {
+		log.err("recover ref: pkt too short")
+		return
+	}
+
+	oid := O32(be.Uint32(pkt[off : off+4]))
+
+	if oid != mapper_oid {
+		log.err("recover ref: oid(%v) does not match mapper oid(%v)", oid, mapper_oid)
+		return
+	}
+
+	off += 4
+
+	if (pktlen-off)%20 != 0 {
+		log.err("recover ref: corrupted packet")
+		return
+	}
+
+	var ref rff.Ref
+
+	for ; off < pktlen; off += 20 {
+
+		mark := M32(be.Uint32(pkt[off : off+4]))
+
+		if mark == 0 {
+			ref.H = be.Uint64(pkt[off+4 : off+4+8])
+			ref.L = be.Uint64(pkt[off+4+8 : off+4+8+8])
+			gen.mtx.Lock()
+			ok := gen.allocated.Delete(ref)
+			gen.mtx.Unlock()
+			log.debug("recover ref: removed %v (%v)", &ref, ok)
+		}
+	}
+}
+
+// listen to messages sent in response to queries for expired refs
+func (gen *GenREF) recover_expired() {
+
+	for pb := range recover_ref {
+
+		if err := pb.validate_v1_header(pb.len()); err != nil {
+
+			log.err("recover ref: invalid v1 packet from %v:  %v", pb.peer, err)
+			retbuf <- pb
+			continue
+		}
+
+		pkt := pb.pkt[pb.iphdr:pb.tail]
+
+		cmd := pkt[V1_CMD]
+
+		if cli.trace {
+			pb.pp_raw("recover ref:  ")
+		}
+
+		switch cmd {
+
+		case V1_DATA | V1_NOOP:
+
+		case V1_ACK | V1_RECOVER_REF:
+			gen.remove_expired_refs(pb)
+		default:
+			log.err("recover ref: invalid v1 pkt: %02x", cmd)
+		}
+
+		retbuf <- pb
+	}
+}
+
 // generate random refs with second to last byte >= SECOND_BYTE
-func gen_mapper_refs() {
+func (gen *GenREF) gen_mapper_refs() {
 
 	var ref rff.Ref
 	refzero := rff.Ref{0, 0}
-	allocated := make(map[rff.Ref]bool)
 	creep := make([]byte, 16)
 	var err error
+	var added bool
 
 	for {
 		// clear ref before incrementing ii
@@ -321,14 +480,30 @@ func gen_mapper_refs() {
 				continue // reserved ref
 			}
 
-			_, ok := allocated[ref]
-			if ok {
-				continue // already allocated
-			}
+			gen.mtx.Lock()
 
-			allocated[ref] = true
-			break
+			_, added = gen.allocated.Put(ref, func(old interface{}, exists bool) (interface{}, bool) {
+				return refzero, !exists
+			})
+
+			gen.mtx.Unlock()
+
+			if added {
+				break // allocated new ref
+			}
 		}
 		random_mapper_ref <- ref
 	}
+}
+
+func (gen *GenREF) start() {
+	go gen.gen_mapper_refs()
+	go gen.check_for_expired()
+	go gen.recover_expired()
+}
+
+func (gen *GenREF) init() {
+	gen.allocated = b.TreeNew(b.Cmp(ref_cmp))
+	recover_ref = make(chan *PktBuf, PKTQLEN)
+	random_mapper_ref = make(chan rff.Ref, GENQLEN)
 }
