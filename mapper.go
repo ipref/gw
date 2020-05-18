@@ -869,4 +869,79 @@ func (mtun *MapTun) set_new_mark(pb *PktBuf) int {
 	return DROP
 }
 
+func (mtun *MapTun) check_for_expired_refs(pb *PktBuf) int {
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pktlen := len(pkt)
+
+	off := V1_HDR_LEN
+
+	if off+4 > pktlen {
+		log.err("mtun: ref expiration query pkt too short")
+		return DROP
+	}
+
+	oid := O32(be.Uint32(pkt[off : off+4]))
+
+	if oid != mtun.oid {
+		log.err("mtun: ref expiration query oid(%v) does not match mtun oid(%v)", oid, mtun.oid)
+		return DROP
+	}
+
+	off += 4
+
+	if (pktlen-off)%20 != 0 {
+		log.err("mtun: corrupted ref expiration query packet")
+		return DROP
+	}
+
+	our_refs, ok := mtun.our_ip.Get(cli.gw_ip)
+	if !ok {
+		log.err("mtun: ref expiration: local gw not in the map: %v", cli.gw_ip)
+		return DROP
+	}
+
+	var ref rff.Ref
+
+	for ; off < pktlen; off += 20 {
+
+		ref.H = be.Uint64(pkt[off+4 : off+4+8])
+		ref.L = be.Uint64(pkt[off+4+8 : off+4+8+8])
+
+		iprec, ok := our_refs.(*b.Tree).Get(ref)
+		if !ok {
+			// not found, treat as expired
+			copy(pkt[off:off+4], []byte{0, 0, 0, 0})
+			continue
+		}
+
+		rec := iprec.(IpRec)
+
+		if rec.oid != oid {
+			// oid mismatch, clear ref
+			copy(pkt[off+4:off+4+8], []byte{0, 0, 0, 0, 0, 0, 0, 0})
+			copy(pkt[off+4+8:off+4+8+8], []byte{0, 0, 0, 0, 0, 0, 0, 0})
+			continue
+		}
+
+		if rec.mark < mtun.cur_mark[rec.oid] {
+			// expired
+			copy(pkt[off:off+4], []byte{0, 0, 0, 0})
+			continue
+		}
+
+		// in use
+
+		be.PutUint32(pkt[off:off+4], uint32(rec.mark))
+	}
+
+	pkt[V1_CMD] &= 0x3f
+	pkt[V1_CMD] |= V1_ACK
+
+	pb.peer = "mtun"
+	pb.schan <- pb
+
+	return ACCEPT
+}
+
 // -- Mapper helpers -----------------------------------------------------------

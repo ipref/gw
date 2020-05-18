@@ -626,6 +626,8 @@ func fwd_to_tun() {
 					verdict = map_tun.get_ea(pb)
 				case V1_SET_MARK:
 					verdict = map_tun.set_new_mark(pb)
+				case V1_REQ | V1_RECOVER_REF:
+					verdict = map_tun.check_for_expired_refs(pb)
 				default:
 					log.err("fwd_to_tun: unknown address records command: %v, ignoring", pb.pkt[pb.iphdr+V1_CMD])
 				}
