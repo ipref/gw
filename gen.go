@@ -456,7 +456,7 @@ func (gen *GenREF) recover_expired() {
 func (gen *GenREF) gen_mapper_refs() {
 
 	var ref rff.Ref
-	refzero := rff.Ref{0, 0}
+	var refzero rff.Ref // constant rff.Ref{0,0}
 	creep := make([]byte, 16)
 	var err error
 	var added bool

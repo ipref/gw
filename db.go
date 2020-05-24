@@ -237,7 +237,7 @@ func (mtun *MapTun) db_restore() {
 		if bkt == nil {
 			return nil
 		}
-		log.info("db restoring ea records")
+		log.info("db restoring ref records")
 		bkt.ForEach(func(key, val []byte) error {
 
 			// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
@@ -265,7 +265,7 @@ func (mtun *MapTun) db_restore() {
 	})
 }
 
-// restore allocated ea addresses
+// restore allocated eas
 func (gen *GenEA) db_restore() {
 
 	if db == nil {
@@ -309,8 +309,52 @@ func (gen *GenEA) db_restore() {
 	})
 }
 
-// restore allocated references
+// restore allocated refs
 func (gen *GenREF) db_restore() {
+
+	if db == nil {
+		return
+	}
+
+	var refzero rff.Ref // constant rff.Ref{0,0}
+
+	db.View(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(refbkt))
+		if bkt == nil {
+			return nil
+		}
+		log.info("db restoring allocated refs")
+		bkt.ForEach(func(key, val []byte) error {
+
+			// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
+
+			oid := O32(be.Uint32(val[:4]))
+			mark := M32(be.Uint32(val[4:8]))
+			var ref rff.Ref
+			ref.H = be.Uint64(val[V1_MARK_LEN+V1_AREC_REFH : V1_MARK_LEN+V1_AREC_REFH+8])
+			ref.L = be.Uint64(val[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
+
+			if oid == 0 || mark == 0 {
+				log.err("db restore allocated ref: %v invalid oid(mark): %v(%v), ignoring", ref, owners.name(oid), mark)
+			} else if oid != mapper_oid {
+				log.debug("db restore allocated ref: %v not allocated by mapper, ignoring", ref)
+			} else {
+
+				_, added := gen.allocated.Put(ref, func(old interface{}, exists bool) (interface{}, bool) {
+					return refzero, !exists
+				})
+
+				if added {
+					log.debug("db restore allocated ref: %v", ref)
+				} else {
+					log.err("db restore allocated ref: %v already exists", ref)
+				}
+
+			}
+			return nil
+		})
+		return nil
+	})
 }
 
 func db_save_oid(pb *PktBuf) {
