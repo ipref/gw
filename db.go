@@ -265,9 +265,51 @@ func (mtun *MapTun) db_restore() {
 	})
 }
 
+// restore allocated ea addresses
 func (gen *GenEA) db_restore() {
+
+	if db == nil {
+		return
+	}
+
+	db.View(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(eabkt))
+		if bkt == nil {
+			return nil
+		}
+		log.info("db restoring allocated eas")
+		bkt.ForEach(func(key, val []byte) error {
+
+			// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
+
+			oid := O32(be.Uint32(val[:4]))
+			mark := M32(be.Uint32(val[4:8]))
+			ea := IP32(be.Uint32(val[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4]))
+
+			if oid == 0 || mark == 0 {
+				log.err("db restore allocated ea: %v invalid oid(mark): %v(%v), ignoring", ea, owners.name(oid), mark)
+			} else if oid != mapper_oid {
+				log.debug("db restore allocated ea: %v not allocated by mapper, ignoring", ea)
+			} else {
+
+				_, added := gen.allocated.Put(ea, func(old interface{}, exists bool) (interface{}, bool) {
+					return M32(0), !exists
+				})
+
+				if added {
+					log.debug("db restore allocated ea: %v", ea)
+				} else {
+					log.err("db restore allocated ea: %v already exists", ea)
+				}
+
+			}
+			return nil
+		})
+		return nil
+	})
 }
 
+// restore allocated references
 func (gen *GenREF) db_restore() {
 }
 
