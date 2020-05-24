@@ -88,17 +88,6 @@ type IpRef struct {
 	ref rff.Ref
 }
 
-func (ipr *IpRef) barr() []byte {
-
-	// return big endian byte array: ip + ref
-
-	arr := make([]byte, 20, 20)
-	be.PutUint32(arr[0:4], uint32(ipr.ip))
-	be.PutUint64(arr[4:12], ipr.ref.H)
-	be.PutUint64(arr[12:20], ipr.ref.L)
-	return arr
-}
-
 type IpRefRec struct {
 	ip   IP32
 	ref  rff.Ref
