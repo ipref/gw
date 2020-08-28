@@ -12,6 +12,8 @@ IPREF can be implemented in many different ways. This sample implementation uses
 
 The gateway is simple but quite capable. It can be used to test IPREF and to develop other services based on IPREF.
 
+This code includes technology covered by patent US 10,749,840 B2.
+
 # Block diagram
 
 Major components of the gateway are shown in the diagram below. Blocks in the area between the dashed lines are part of the executable. For more realistic operations, DNS support is required. The gateway needs an IPREF aware resolver and a DNS agent. These two components communicate with the _address mapper_ to provide mapping between IPREF addresses and standard IP addresses used in local networks.
