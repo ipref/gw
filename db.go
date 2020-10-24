@@ -600,14 +600,14 @@ func start_db() {
 			log.fatal("cannot rename %v: %v", dbname, err)
 		}
 	} else {
-		rdb, err = bolt.Open(rdbpath, 0666, &bolt.Options{Timeout: 1 * time.Second})
+		rdb, err = bolt.Open(rdbpath, 0440, &bolt.Options{Timeout: 1 * time.Second})
 		if err != nil {
 			log.fatal("cannot open %v: %v", dbname+"~", err)
 		}
 	}
 
-	os.MkdirAll(cli.datadir, 0775)
-	db, err = bolt.Open(dbpath, 0664, &bolt.Options{Timeout: 1 * time.Second})
+	os.MkdirAll(cli.datadir, 0770)
+	db, err = bolt.Open(dbpath, 0660, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		log.fatal("cannot create %v: %v", dbname, err)
 	}
