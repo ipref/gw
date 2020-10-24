@@ -59,10 +59,10 @@ func main() {
 	goexit = make(chan string)
 	go catch_signals()
 
-	go pkt_buffers()
-
 	getbuf = make(chan *PktBuf, 1)
 	retbuf = make(chan *PktBuf, cli.maxbuf)
+	go pkt_buffers()
+
 	dbchan = make(chan *PktBuf, PKTQLEN)
 
 	start_db()
