@@ -68,7 +68,7 @@ func (o *Owners) db_restore() {
 			} else if o.oids[oid] != "" {
 				log.err("db restore oids: detected duplicate owner id: %v(%v), discarding", name, oid)
 			} else {
-				log.debug("db: restore oids: %v(%v)", name, oid)
+				log.debug("db: restore oid: %v(%v)", name, oid)
 				o.oids[oid] = name
 			}
 			return nil
@@ -94,7 +94,7 @@ func (o *Owners) db_restore() {
 		for oid, name := range o.oids {
 			if oid != 0 && len(name) != 0 { // skip over unassigned oids
 				be.PutUint32(key, uint32(oid))
-				log.debug("db restore oids: re-save oid: %v(%v)", name, oid)
+				log.debug("db: re-save oid: %v(%v)", name, oid)
 				err := bkt.Put(key, []byte(name))
 				if err != nil {
 					return err
@@ -110,17 +110,13 @@ func (o *Owners) db_restore() {
 
 func (m *Mark) db_restore() {
 
-	// init time base such that marks are always > 0
-
-	m.base = time.Now().Add(-time.Second)
-
 	if rdb == nil {
 		return
 	}
 
 	// read marks from db
 
-	mm := make(map[O32]M32) // temporary map for copying to new db
+	mm := make(map[O32]M32) // temporary map oid -> mark for copying to new db
 
 	rdb.View(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(markbkt))
@@ -134,9 +130,9 @@ func (m *Mark) db_restore() {
 			mark := M32(be.Uint32(val))
 
 			if oid == 0 || mark == 0 {
-				log.err("db restore marks: invalid mark: %v(%v), discarding", owners.name(oid), mark)
+				log.err("db: invalid mark: %v(%v), discarding", owners.name(oid), mark)
 			} else {
-				log.debug("db restore marks: restore mark: %v(%v)", owners.name(oid), mark)
+				log.debug("db: restore mark: %v(%v)", owners.name(oid), mark)
 				mm[oid] = mark
 			}
 			return nil
@@ -173,7 +169,7 @@ func (m *Mark) db_restore() {
 			if owners.name(oid) != "unknown" && mark != 0 { // skip over invalid marks
 				be.PutUint32(key, uint32(oid))
 				be.PutUint32(val, uint32(mark))
-				log.debug("db restore marks: re-save oid: %v(%v)", owners.name(oid), mark)
+				log.debug("db: re-save mark: %v(%v)", owners.name(oid), mark)
 				err := bkt.Put(key, val)
 				if err != nil {
 					return err
