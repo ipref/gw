@@ -27,11 +27,7 @@ func (o *Owners) name(oid O32) string {
 		name = o.oids[oid]
 	}
 	o.mtx.Unlock()
-	ix := strings.LastIndex(name, "/")
-	if ix < 0 {
-		return name
-	}
-	return name[ix+1:]
+	return name
 }
 
 // get oid, create if necessary
