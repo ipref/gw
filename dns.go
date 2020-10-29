@@ -364,35 +364,9 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 		}
 	}
 
-	// set new mark (whether we sent any records or not)
+	// set new mark whether we sent any records or not
 
-	pb := <-getbuf
-	pb.peer = "hosts"
-
-	pb.write_v1_header(V1_SET_MARK, 0)
-
-	pkt := pb.pkt[pb.iphdr:]
-	off := V1_HDR_LEN
-
-	be.PutUint32(pkt[off+V1_OID:off+V1_OID+4], uint32(oid))
-	be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], uint32(mark))
-
-	off += V1_MARK_LEN
-
-	pb.tail = pb.iphdr + off
-	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
-
-	pbb := <-getbuf
-	pbb.peer = "hosts"
-	pbb.copy_from(pb)
-
-	pbc := <-getbuf
-	pbc.peer = "hosts"
-	pbc.copy_from(pb)
-
-	recv_tun <- pb
-	recv_gw <- pbb
-	dbchan <- pbc
+	send_marker(mark, oid, "etc_hosts_parser")
 }
 
 func parse_hosts(path string, timer *time.Timer) {

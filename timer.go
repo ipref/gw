@@ -68,22 +68,64 @@ func sleep(dly, fuzz int) {
 	time.Sleep(time.Duration(dly-fuzz/2+prng.Intn(fuzz)) * time.Millisecond)
 }
 
+func send_marker(mark M32, oid O32, from string) {
+
+	pb := <-getbuf
+	pb.peer = from
+
+	pb.write_v1_header(V1_DATA|V1_SET_MARK, 0)
+	pkt := pb.pkt[pb.iphdr:]
+	off := V1_HDR_LEN
+	be.PutUint32(pkt[off+V1_OID:off+V1_OID+4], uint32(oid))
+	be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], uint32(mark))
+	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((V1_HDR_LEN+V1_MARK_LEN)/4))
+	pb.tail = pb.iphdr + V1_HDR_LEN + V1_MARK_LEN
+
+	switch oid {
+	case mapper_oid:
+
+		pbb := <-getbuf
+		pbb.peer = pb.peer
+		pbb.copy_from(pb)
+
+		pbc := <-getbuf
+		pbc.peer = pb.peer
+		pbc.copy_from(pb)
+
+		pbd := <-getbuf
+		pbd.peer = pb.peer
+		pbd.copy_from(pb)
+
+		recv_tun <- pb
+		recv_gw <- pbb
+		dbchan <- pbc
+		mbchan <- pbd
+
+	case arp_oid:
+
+		send_gw <- pb
+
+	default:
+
+		pbb := <-getbuf
+		pbb.peer = pb.peer
+		pbb.copy_from(pb)
+
+		pbc := <-getbuf
+		pbc.peer = pb.peer
+		pbc.copy_from(pb)
+
+		recv_tun <- pb
+		recv_gw <- pbb
+		dbchan <- pbc
+	}
+}
+
 func arp_tick() {
 
 	for {
 		sleep(ARP_TICK, ARP_TICK/TIMER_FUZZ)
-
-		mark := marker.now()
-		pb := <-getbuf
-		pb.write_v1_header(V1_SET_MARK, 0)
-		pkt := pb.pkt[pb.iphdr:]
-		off := V1_HDR_LEN
-		be.PutUint32(pkt[off+V1_OID:off+V1_OID+4], uint32(arp_oid))
-		be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], uint32(mark))
-		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((V1_HDR_LEN+V1_MARK_LEN)/4))
-		pb.tail = V1_HDR_LEN + V1_MARK_LEN
-		pb.peer = "arp_timer"
-		send_gw <- pb
+		send_marker(marker.now(), arp_oid, "arp_timer")
 	}
 }
 
@@ -91,35 +133,6 @@ func timer_tick() {
 
 	for {
 		sleep(TIMER_TICK, TIMER_TICK/TIMER_FUZZ)
-
-		mark := marker.now()
-
-		pb := <-getbuf
-		pb.peer = "timer"
-
-		pb.write_v1_header(V1_DATA|V1_SET_MARK, 0)
-		pkt := pb.pkt[pb.iphdr:]
-		off := V1_HDR_LEN
-		be.PutUint32(pkt[off+V1_OID:off+V1_OID+4], uint32(mapper_oid))
-		be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], uint32(mark))
-		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((V1_HDR_LEN+V1_MARK_LEN)/4))
-		pb.tail = pb.iphdr + V1_HDR_LEN + V1_MARK_LEN
-
-		pbb := <-getbuf
-		pbb.peer = "timer"
-		pbb.copy_from(pb)
-
-		pbc := <-getbuf
-		pbc.peer = "timer"
-		pbc.copy_from(pb)
-
-		pbd := <-getbuf
-		pbd.peer = "timer"
-		pbd.copy_from(pb)
-
-		recv_gw <- pb
-		recv_tun <- pbb
-		mbchan <- pbc
-		dbchan <- pbd
+		send_marker(marker.now(), mapper_oid, "mapper_timer")
 	}
 }
