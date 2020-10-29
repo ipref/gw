@@ -205,7 +205,6 @@ const (
 	MAPPER_REFRESH = MAPPER_TMOUT - MAPPER_TMOUT/4 // [s] when to refresh
 )
 
-var mapper_oid O32
 var map_gw MapGw   // exclusively owned by fwd_to_gw
 var map_tun MapTun // exclusively owned by fwd_to_tun
 

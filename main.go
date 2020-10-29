@@ -71,6 +71,7 @@ func main() {
 	owners.db_restore()
 
 	mapper_oid = owners.get_oid("mapper")
+	arp_oid = owners.get_oid("arp")
 
 	marker.init()
 	marker.db_restore()

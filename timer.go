@@ -78,10 +78,11 @@ func arp_tick() {
 		pb.write_v1_header(V1_SET_MARK, 0)
 		pkt := pb.pkt[pb.iphdr:]
 		off := V1_HDR_LEN
-		copy(pkt[off+V1_OID:off+V1_OID+4], []byte{0, 0, 0, 0})
+		be.PutUint32(pkt[off+V1_OID:off+V1_OID+4], uint32(arp_oid))
 		be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], uint32(mark))
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((V1_HDR_LEN+V1_MARK_LEN)/4))
 		pb.tail = V1_HDR_LEN + V1_MARK_LEN
+		pb.peer = "arp_timer"
 		send_gw <- pb
 	}
 }

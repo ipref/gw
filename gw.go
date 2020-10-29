@@ -269,7 +269,7 @@ func gw_sender(con net.PacketConn) {
 		log.info("gw nexthop: %v", gw_nexthop)
 	}
 
-	now := marker.now()
+	arp_marker := marker.now()
 
 	for pb := range send_gw {
 
@@ -292,8 +292,12 @@ func gw_sender(con net.PacketConn) {
 				// update time mark
 
 				off := V1_HDR_LEN
-				now = M32(be.Uint32(pkt[off+V1_MARK : off+V1_MARK+4]))
-				//log.debug("gw out:  updated now mark(%v)", now)
+				oid := O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
+				if oid == arp_oid {
+					arp_marker = M32(be.Uint32(pkt[off+V1_MARK : off+V1_MARK+4]))
+				} else {
+					log.err("gw out:  arp timer update oid(%v) does not match arp_oid(%v), ignoring", oid, arp_oid)
+				}
 				retbuf <- pb
 				continue
 
@@ -356,8 +360,8 @@ func gw_sender(con net.PacketConn) {
 				continue
 			}
 
-			if arprec.expire < now {
-				arprec.expire = now + ARP_REC_EXPIRE
+			if arprec.expire < arp_marker {
+				arprec.expire = arp_marker + ARP_REC_EXPIRE
 				if cli.debug_gw {
 					log.debug("gw out:  mac for %v, expired, induce arp", nexthop)
 				}

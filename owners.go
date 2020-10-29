@@ -3,7 +3,6 @@
 package main
 
 import (
-	"strings"
 	"sync"
 )
 
@@ -13,6 +12,8 @@ type Owners struct {
 }
 
 var owners Owners
+var mapper_oid O32
+var arp_oid O32
 
 func (o *Owners) init() {
 	o.oids = make([]string, 1, 16)
