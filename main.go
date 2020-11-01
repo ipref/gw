@@ -63,7 +63,19 @@ func main() {
 	retbuf = make(chan *PktBuf, cli.maxbuf)
 	go pkt_buffers()
 
+	recv_tun = make(chan *PktBuf, PKTQLEN)
+	send_tun = make(chan *PktBuf, PKTQLEN)
+	recv_gw = make(chan *PktBuf, PKTQLEN)
+	send_gw = make(chan *PktBuf, PKTQLEN)
+	go fwd_to_gw()
+	go fwd_to_tun()
+
+	mbchan = make(chan *PktBuf, PKTQLEN)
+	go mbroker()
+
 	dbchan = make(chan *PktBuf, PKTQLEN)
+
+	// start of initialization and restoration from DB
 
 	start_db()
 
@@ -76,11 +88,12 @@ func main() {
 	marker.init()
 	marker.db_restore()
 
+	mapper_mark := marker.now()
+
 	map_gw.init(mapper_oid)
 	map_tun.init(mapper_oid)
-	mmark := marker.now()
-	map_gw.set_cur_mark(mapper_oid, mmark)
-	map_tun.set_cur_mark(mapper_oid, mmark)
+	map_gw.set_cur_mark(mapper_oid, mapper_mark)
+	map_tun.set_cur_mark(mapper_oid, mapper_mark)
 	map_gw.db_restore()
 	map_tun.db_restore()
 
@@ -92,18 +105,9 @@ func main() {
 
 	stop_db_restore()
 
-	mapper_mark := marker.now()
-	map_gw.set_cur_mark(mapper_oid, mapper_mark)
-	map_tun.set_cur_mark(mapper_oid, mapper_mark)
+	// end of initialization and restoration from DB
 
 	icmpreq = make(chan *PktBuf, PKTQLEN)
-
-	recv_tun = make(chan *PktBuf, PKTQLEN)
-	send_tun = make(chan *PktBuf, PKTQLEN)
-	recv_gw = make(chan *PktBuf, PKTQLEN)
-	send_gw = make(chan *PktBuf, PKTQLEN)
-
-	mbchan = make(chan *PktBuf, PKTQLEN)
 
 	gen_ea.start()
 	gen_ref.start()
@@ -112,9 +116,6 @@ func main() {
 
 	go icmp()
 
-	go fwd_to_gw()
-	go fwd_to_tun()
-
 	start_gw()
 	start_tun()
 
@@ -122,7 +123,6 @@ func main() {
 	go arp_tick()
 
 	go mbroker_conn()
-	go mbroker()
 
 	msg := <-goexit
 	stop_db()
