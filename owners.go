@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"sync"
 )
 
@@ -50,10 +51,38 @@ func (o *Owners) get_oid(name string) O32 {
 	}
 
 	oid := O32(len(o.oids))
-	o.oids = append(o.oids, name)
+	if err := o.register(oid, name); err != nil {
+		log.fatal("%v", err)
+	}
 	o.mtx.Unlock()
 
-	log.debug("owners: new oid: %v(%v)", name, oid)
+	return oid
+}
+
+// register oid (internal function)
+func (o *Owners) register(oid O32, name string) error {
+
+	// caller must acquire o.mtx before calling this function
+
+	if oid < 1 || len(name) == 0 {
+		return fmt.Errorf("owners: attempting to register an invalid oid: %v(%v)", name, oid)
+	}
+
+	if int(oid) >= len(o.oids) {
+		o.oids = append(o.oids, make([]string, int(oid)-len(o.oids)+1)...)
+	}
+
+	if o.oids[oid] == name {
+		return fmt.Errorf("owners: attempting to register a duplicate oid name: %v(%v)", name, oid)
+	}
+
+	if o.oids[oid] != "" {
+		return fmt.Errorf("owners: attempting to register a duplicate oid: %v(%v)", name, oid)
+	}
+
+	o.oids[oid] = name
+
+	log.info("owners: registering new oid: %v(%v)", name, oid)
 
 	// send to db
 
@@ -76,5 +105,5 @@ func (o *Owners) get_oid(name string) O32 {
 	pb.peer = "owners"
 	dbchan <- pb
 
-	return oid
+	return nil
 }

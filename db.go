@@ -38,14 +38,12 @@ func zero(slice []byte) bool {
 	return true
 }
 
-func (o *Owners) db_restore() {
+func (o *Owners) db_restore_oids() {
 
 	if rdb == nil {
 		return
 	}
 
-	// key: oid		-- O32
-	// val: name    -- string
 	rdb.View(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(oidbkt))
 		if bkt == nil {
@@ -57,55 +55,16 @@ func (o *Owners) db_restore() {
 			oid := O32(be.Uint32(key))
 			name := string(val)
 
-			if int(oid) >= len(o.oids) {
-				o.oids = append(o.oids, make([]string, int(oid)-len(o.oids)+1)...)
+			o.mtx.Lock()
+			if err := o.register(oid, name); err != nil {
+				log.err("%v", err)
 			}
+			o.mtx.Unlock()
 
-			if oid == 0 || len(name) == 0 {
-				log.err("db restore oids: detected unassigned owner id: %v(%v), discarding", name, oid)
-			} else if o.oids[oid] == name {
-				log.err("db restore oids: detected duplicate owner name: %v(%v), discarding", name, oid)
-			} else if o.oids[oid] != "" {
-				log.err("db restore oids: detected duplicate owner id: %v(%v), discarding", name, oid)
-			} else {
-				log.debug("db: restore oid: %v(%v)", name, oid)
-				o.oids[oid] = name
-			}
 			return nil
 		})
 		return nil
 	})
-
-	// copy to new DB
-
-	var err error
-
-	err = db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte(oidbkt))
-		return err
-	})
-	if err != nil {
-		log.fatal("db restore oids: cannot create bucket %v: %v", oidbkt, err)
-	}
-
-	err = db.Update(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket([]byte(oidbkt))
-		key := []byte{0, 0, 0, 0}
-		for oid, name := range o.oids {
-			if oid != 0 && len(name) != 0 { // skip over unassigned oids
-				be.PutUint32(key, uint32(oid))
-				log.debug("db: re-save oid: %v(%v)", name, oid)
-				err := bkt.Put(key, []byte(name))
-				if err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		log.fatal("db restore oids: restore owner ids failed: %v", err)
-	}
 }
 
 func (m *Mark) db_restore() {
@@ -385,7 +344,7 @@ func db_save_oid(pb *PktBuf) {
 		return err
 	})
 	if err != nil {
-		log.err("db save oid: failed to save oid: %v", err)
+		log.err("db save oid: failed to save oid %v(%v): %v", string(name), be.Uint32(oid), err)
 	}
 }
 
@@ -589,7 +548,7 @@ func start_db() {
 	rdbpath := path.Join(cli.datadir, rdbname)
 
 	// if restore DB exists then we restore from it regardless of whether DB exists
-	// with the rationale that it is a result of a previous failed or aborted startup
+	// or not presuming this is a result of a previous failed or aborted startup
 
 	rdb, err = bolt.Open(rdbpath, 0440, &bolt.Options{Timeout: 1 * time.Second})
 	if err == nil {

@@ -80,7 +80,7 @@ func main() {
 	start_db()
 
 	owners.init()
-	owners.db_restore()
+	owners.db_restore_oids()
 
 	mapper_oid = owners.get_oid("mapper")
 	arp_oid = owners.get_oid("arp")
