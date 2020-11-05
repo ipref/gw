@@ -53,9 +53,6 @@ func (m *Mark) init() {
 	}
 	prng.Seed(int64(be.Uint32(creep)))
 
-	// init time base such that marks are always > 0
-
-	m.base = time.Now().Add(-time.Second)
 }
 
 func (m *Mark) now() M32 {

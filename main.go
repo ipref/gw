@@ -86,7 +86,8 @@ func main() {
 	arp_oid = owners.get_oid("arp")
 
 	marker.init()
-	marker.db_restore()
+	marker.db_restore_time_base()
+	marker.db_restore_markers()
 
 	mapper_mark := marker.now()
 

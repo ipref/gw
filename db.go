@@ -19,6 +19,7 @@ sending v1 packets to DB channel.
 
 const (
 	dbname  = "mapper.db"
+	basebkt = "base" // various base data
 	eabkt   = "ea"   // ea  -> db_arec
 	refbkt  = "ref"  // ref -> db_arec
 	markbkt = "mark" // oid -> mark
@@ -67,7 +68,63 @@ func (o *Owners) db_restore_oids() {
 	})
 }
 
-func (m *Mark) db_restore() {
+func (m *Mark) db_restore_time_base() {
+
+	// restore time base from db
+
+	if rdb != nil {
+		rdb.View(func(tx *bolt.Tx) error {
+			bkt := tx.Bucket([]byte(basebkt))
+			if bkt != nil {
+				tbase := bkt.Get([]byte("time_base"))
+				if tbase != nil {
+					err := m.base.UnmarshalText(tbase)
+					if err != nil {
+						log.err("db: cannot restore time base: %v", err)
+					} else {
+						log.info("db: restoring time base: %v", string(tbase))
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	// if necessary, init time base such that marks are always > 0
+
+	if m.base.IsZero() {
+
+		m.base = time.Now().Add(-time.Second)
+	}
+
+	// save time base
+
+	if tbase, err := m.base.MarshalText(); err != nil {
+
+		log.fatal("marker: cannot marshal time base: %v", err)
+
+	} else {
+
+		pb := <-getbuf
+		pb.write_v1_header(V1_SAVE_TIME_BASE, 0)
+		pkt := pb.pkt[pb.iphdr:]
+
+		off := V1_HDR_LEN
+		pkt[off] = V1_TYPE_STRING
+		pkt[off+1] = byte(len(tbase))
+		copy(pkt[off+2:], tbase)
+
+		off += (len(tbase) + 5) &^ 3
+		pb.tail = pb.iphdr + off
+		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
+
+		pb.peer = "marker"
+		dbchan <- pb
+
+	}
+}
+
+func (m *Mark) db_restore_markers() {
 
 	if rdb == nil {
 		return
@@ -348,6 +405,41 @@ func db_save_oid(pb *PktBuf) {
 	}
 }
 
+func db_save_time_base(pb *PktBuf) {
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+
+	if len(pkt) < V1_HDR_LEN+4+4 {
+		log.err("db save time base: pktlen(%v) too short, dropping", len(pkt))
+		return
+	}
+
+	off := V1_HDR_LEN
+
+	tbase := pkt[off+2 : off+2+int(pkt[off+1])]
+
+	log.debug("db save time base: %v", string(tbase))
+
+	var err error
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists([]byte(basebkt))
+		return err
+	})
+	if err != nil {
+		log.fatal("db save time base: cannot create bucket %v: %v", basebkt, err)
+	}
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(basebkt))
+		err := bkt.Put([]byte("time_base"), tbase)
+		return err
+	})
+	if err != nil {
+		log.err("db failed to save time base %v: %v", string(tbase), err)
+	}
+}
+
 func db_save_mark(pb *PktBuf) {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
@@ -510,6 +602,8 @@ func db_listen() {
 			db_save_mark(pb)
 		case V1_DATA | V1_SAVE_OID:
 			db_save_oid(pb)
+		case V1_DATA | V1_SAVE_TIME_BASE:
+			db_save_time_base(pb)
 		default: // invalid
 			log.err("db: unrecognized v1 cmd: %v", cmd)
 		}

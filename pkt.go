@@ -58,12 +58,13 @@ const ( // v1 commands
 	V1_SET_MARK = 2
 	V1_SET_SOFT = 3
 	//V1_PURGE  = 4
-	V1_INDUCE_ARP  = 5
-	V1_GET_EA      = 6
-	V1_MC_GET_EA   = 7
-	V1_SAVE_OID    = 8
-	V1_RECOVER_EA  = 9
-	V1_RECOVER_REF = 10
+	V1_INDUCE_ARP     = 5
+	V1_GET_EA         = 6
+	V1_MC_GET_EA      = 7
+	V1_SAVE_OID       = 8
+	V1_SAVE_TIME_BASE = 9
+	V1_RECOVER_EA     = 10
+	V1_RECOVER_REF    = 11
 )
 
 const ( // v1 command mode, top two bits
