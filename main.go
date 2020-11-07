@@ -85,16 +85,14 @@ func main() {
 	mapper_oid = owners.get_oid("mapper")
 	arp_oid = owners.get_oid("arp")
 
+	map_gw.init(mapper_oid)
+	map_tun.init(mapper_oid)
+
 	marker.init()
 	marker.db_restore_time_base()
 	marker.db_restore_markers()
 
-	mapper_mark := marker.now()
-
-	map_gw.init(mapper_oid)
-	map_tun.init(mapper_oid)
-	map_gw.set_cur_mark(mapper_oid, mapper_mark)
-	map_tun.set_cur_mark(mapper_oid, mapper_mark)
+	send_marker(marker.now(), mapper_oid, "main")
 	map_gw.db_restore()
 	map_tun.db_restore()
 

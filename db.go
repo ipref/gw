@@ -130,10 +130,6 @@ func (m *Mark) db_restore_markers() {
 		return
 	}
 
-	// read marks from db
-
-	mm := make(map[O32]M32) // temporary map oid -> mark for copying to new db
-
 	rdb.View(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(markbkt))
 		if bkt == nil {
@@ -146,57 +142,15 @@ func (m *Mark) db_restore_markers() {
 			mark := M32(be.Uint32(val))
 
 			if oid == 0 || mark == 0 {
-				log.err("db: invalid mark: %v(%v), discarding", owners.name(oid), mark)
+				log.err("db: invalid mark: %v(%v): %v, discarding", owners.name(oid), oid, mark)
 			} else {
-				log.debug("db: restore mark: %v(%v)", owners.name(oid), mark)
-				mm[oid] = mark
+				log.debug("db: restore mark: %v(%v): %v", owners.name(oid), oid, mark)
+				send_marker(mark, oid, "restore_markers")
 			}
 			return nil
 		})
 		return nil
 	})
-
-	// adjust time base from db
-
-	mark := mm[mapper_oid]
-	if mark == 0 {
-		log.err("db restore marks: missing mapper mark")
-	} else {
-		time.Now().Add(-time.Duration(mark)*time.Second - 1)
-	}
-
-	// copy valid marks to new db
-
-	var err error
-
-	err = db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte(oidbkt))
-		return err
-	})
-	if err != nil {
-		log.fatal("db restore marks: cannot create bucket %v: %v", markbkt, err)
-	}
-
-	err = db.Update(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket([]byte(markbkt))
-		key := []byte{0, 0, 0, 0}
-		val := []byte{0, 0, 0, 0}
-		for oid, mark := range mm {
-			if owners.name(oid) != "unknown" && mark != 0 { // skip over invalid marks
-				be.PutUint32(key, uint32(oid))
-				be.PutUint32(val, uint32(mark))
-				log.debug("db: re-save mark: %v(%v)", owners.name(oid), mark)
-				err := bkt.Put(key, val)
-				if err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		log.fatal("db restore marks: restore marks failed: %v", err)
-	}
 }
 
 // restore address records from the ea bucket
