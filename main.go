@@ -97,10 +97,10 @@ func main() {
 	map_tun.db_restore_refs()
 
 	gen_ea.init()
-	gen_ea.db_restore()
+	gen_ea.db_restore_allocated_eas()
 
 	gen_ref.init()
-	gen_ref.db_restore()
+	gen_ref.db_restore_allocated_refs()
 
 	stop_db_restore()
 

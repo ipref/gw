@@ -232,7 +232,7 @@ func (mtun *MapTun) db_restore_refs() {
 }
 
 // restore allocated eas
-func (gen *GenEA) db_restore() {
+func (gen *GenEA) db_restore_allocated_eas() {
 
 	if db == nil {
 		return
@@ -253,9 +253,9 @@ func (gen *GenEA) db_restore() {
 			ea := IP32(be.Uint32(val[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4]))
 
 			if oid == 0 || mark == 0 {
-				log.err("db restore allocated ea: %v invalid oid(mark): %v(%v), ignoring", ea, owners.name(oid), mark)
+				log.err("db restore allocated eas: %v invalid oid(mark): %v(%v): %v, ignoring", ea, owners.name(oid), oid, mark)
 			} else if oid != mapper_oid {
-				log.debug("db restore allocated ea: %v not allocated by mapper, ignoring", ea)
+				log.debug("db restore allocated eas: %v not allocated by mapper, ignoring", ea)
 			} else {
 
 				_, added := gen.allocated.Put(ea, func(old interface{}, exists bool) (interface{}, bool) {
@@ -263,9 +263,9 @@ func (gen *GenEA) db_restore() {
 				})
 
 				if added {
-					log.debug("db restore allocated ea: %v", ea)
+					log.debug("db restore allocated eas: %v", ea)
 				} else {
-					log.err("db restore allocated ea: %v already exists", ea)
+					log.err("db restore allocated eas: %v already exists", ea)
 				}
 
 			}
@@ -276,7 +276,7 @@ func (gen *GenEA) db_restore() {
 }
 
 // restore allocated refs
-func (gen *GenREF) db_restore() {
+func (gen *GenREF) db_restore_allocated_refs() {
 
 	if db == nil {
 		return
@@ -301,9 +301,9 @@ func (gen *GenREF) db_restore() {
 			ref.L = be.Uint64(val[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
 
 			if oid == 0 || mark == 0 {
-				log.err("db restore allocated ref: %v invalid oid(mark): %v(%v), ignoring", ref, owners.name(oid), mark)
+				log.err("db restore allocated refs: %v invalid oid(mark): %v(%v): %v, ignoring", ref, owners.name(oid), oid, mark)
 			} else if oid != mapper_oid {
-				log.debug("db restore allocated ref: %v not allocated by mapper, ignoring", ref)
+				log.debug("db restore allocated refs: %v not allocated by mapper, ignoring", ref)
 			} else {
 
 				_, added := gen.allocated.Put(ref, func(old interface{}, exists bool) (interface{}, bool) {
@@ -311,9 +311,9 @@ func (gen *GenREF) db_restore() {
 				})
 
 				if added {
-					log.debug("db restore allocated ref: %v", ref)
+					log.debug("db restore allocated refs: %v", ref)
 				} else {
-					log.err("db restore allocated ref: %v already exists", ref)
+					log.err("db restore allocated refs: %v already exists", ref)
 				}
 
 			}
