@@ -154,7 +154,7 @@ func (m *Mark) db_restore_markers() {
 }
 
 // restore address records from the ea bucket
-func (mgw *MapGw) db_restore() {
+func (mgw *MapGw) db_restore_eas() {
 
 	if rdb == nil {
 		return
@@ -175,11 +175,11 @@ func (mgw *MapGw) db_restore() {
 			ea := IP32(be.Uint32(val[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4]))
 
 			if oid == 0 || mark == 0 {
-				log.err("db restore ea: %v invalid oid(mark): %v(%v), discarding", ea, owners.name(oid), mark)
+				log.err("db restore eas: %v invalid oid mark: %v(%v): %v, discarding", ea, owners.name(oid), oid, mark)
 			} else if oid == mgw.oid && mark < mgw.cur_mark[oid] {
-				log.debug("db restore ea: %v expired, discarding", ea)
+				log.debug("db restore eas: %v expired, discarding", ea)
 			} else {
-				log.debug("db restore ea: %v restore", ea)
+				log.debug("db restore eas: %v restore", ea)
 
 				mgw.insert_record(oid, mark, val[V1_MARK_LEN:])
 				map_tun.insert_record(oid, mark, val[V1_MARK_LEN:])
@@ -192,7 +192,7 @@ func (mgw *MapGw) db_restore() {
 }
 
 // restore address records from the ref bucket
-func (mtun *MapTun) db_restore() {
+func (mtun *MapTun) db_restore_refs() {
 
 	if rdb == nil {
 		return
@@ -215,11 +215,11 @@ func (mtun *MapTun) db_restore() {
 			ref.L = be.Uint64(val[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
 
 			if oid == 0 || mark == 0 {
-				log.err("db restore ref: %v invalid oid(mark): %v(%v), discarding", ref, owners.name(oid), mark)
+				log.err("db restore refs: %v invalid oid(mark): %v(%v), discarding", ref, owners.name(oid), mark)
 			} else if oid == mtun.oid && mark < mtun.cur_mark[oid] {
-				log.debug("db restore ref: %v expired, discarding", ref)
+				log.debug("db restore refs: %v expired, discarding", ref)
 			} else {
-				log.debug("db restore ref: %v restore", ref)
+				log.debug("db restore refs: %v restore", ref)
 
 				mtun.insert_record(oid, mark, val[V1_MARK_LEN:])
 				map_gw.insert_record(oid, mark, val[V1_MARK_LEN:])

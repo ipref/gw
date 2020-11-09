@@ -93,8 +93,8 @@ func main() {
 	marker.db_restore_markers()
 
 	send_marker(marker.now(), mapper_oid, "main")
-	map_gw.db_restore()
-	map_tun.db_restore()
+	map_gw.db_restore_eas()
+	map_tun.db_restore_refs()
 
 	gen_ea.init()
 	gen_ea.db_restore()
