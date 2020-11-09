@@ -598,11 +598,8 @@ func start_db() {
 	// if restore DB exists then we restore from it regardless of whether DB exists
 	// or not presuming this is a result of a previous failed or aborted startup
 
-	rdb, err = bolt.Open(rdbpath, 0440, &bolt.Options{Timeout: 1 * time.Second})
-	if err == nil {
-		log.info("opening existing restore DB %v", rdbname)
-		os.Remove(dbpath)
-	} else if os.IsNotExist(err) {
+	if fd, err := os.Open(rdbpath); os.IsNotExist(err) {
+
 		if err := os.Rename(dbpath, rdbpath); err != nil {
 			if os.IsNotExist(err) {
 				rdb = nil
@@ -611,13 +608,23 @@ func start_db() {
 			}
 		} else {
 			log.info("opening existing DB %v as restore DB renamed to %v", dbname, rdbname)
-			rdb, err = bolt.Open(rdbpath, 0440, &bolt.Options{Timeout: 1 * time.Second})
+			rdb, err = bolt.Open(rdbpath, 0440, &bolt.Options{Timeout: 1 * time.Second, ReadOnly: true})
 			if err != nil {
 				log.fatal("cannot open restore DB %v: %v", rdbname, err)
 			}
 		}
+
 	} else {
-		log.fatal("cannot open existing restore DB %v: %v", rdbname, err)
+
+		fd.Close()
+
+		os.Remove(dbpath)
+		log.info("opening existing restore DB %v", rdbname)
+
+		rdb, err = bolt.Open(rdbpath, 0440, &bolt.Options{Timeout: 1 * time.Second, ReadOnly: true})
+		if err != nil {
+			log.fatal("cannot open existing restore DB %v: %v", rdbname, err)
+		}
 	}
 
 	log.info("creating DB %v", dbname)
