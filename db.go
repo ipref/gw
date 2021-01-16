@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2020 Waldemar Augustyn */
+/* Copyright (c) 2018-2021 Waldemar Augustyn */
 
 package main
 
@@ -231,6 +231,7 @@ func (mtun *MapTun) db_restore_refs() {
 	})
 }
 
+/*
 // restore allocated eas
 func (gen *GenEA) db_restore_allocated_eas() {
 
@@ -274,7 +275,9 @@ func (gen *GenEA) db_restore_allocated_eas() {
 		return nil
 	})
 }
+*/
 
+/*
 // restore allocated refs
 func (gen *GenREF) db_restore_allocated_refs() {
 
@@ -322,6 +325,7 @@ func (gen *GenREF) db_restore_allocated_refs() {
 		return nil
 	})
 }
+*/
 
 func db_save_oid(pb *PktBuf) {
 

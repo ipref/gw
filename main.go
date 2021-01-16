@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2020 Waldemar Augustyn */
+/* Copyright (c) 2018-2021 Waldemar Augustyn */
 
 package main
 
@@ -96,17 +96,17 @@ func main() {
 	map_gw.db_restore_eas()
 	map_tun.db_restore_refs()
 
-	gen_ea.init()
-	gen_ea.db_restore_allocated_eas()
-
-	gen_ref.init()
-	gen_ref.db_restore_allocated_refs()
-
 	stop_db_restore()
 
 	// end of initialization and restoration from DB
 
 	icmpreq = make(chan *PktBuf, PKTQLEN)
+
+	gen_ea.init()
+	//gen_ea.db_restore_allocated_eas()
+
+	gen_ref.init()
+	//gen_ref.db_restore_allocated_refs()
 
 	gen_ea.start()
 	gen_ref.start()
