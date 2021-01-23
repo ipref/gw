@@ -1,6 +1,13 @@
-/* Copyright (c) 2018-2020 Waldemar Augustyn */
+/* Copyright (c) 2018-2021 Waldemar Augustyn */
 
 package main
+
+/* NOTE: We use cznic implementation of btree: modernc.org/b. It allows
+   interruptible traversal of the tree. Other implemenations, such as
+   github.com/google/btree, rely on closures as iterators. This makes
+   it more difficult to traverse in chunks while the tree is modified
+   by other go routines.
+*/
 
 import (
 	rff "github.com/ipref/ref"
