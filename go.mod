@@ -1,5 +1,7 @@
 module github.com/ipref/gw
 
+go 1.15
+
 require (
 	github.com/fsnotify/fsnotify v1.4.7
 	github.com/ipref/ref v0.0.0-20200107051412-01a3fee091ce
