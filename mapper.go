@@ -687,7 +687,7 @@ func (mtun *MapTun) get_src_iprec(gw IP32, ref rff.Ref) *IpRec {
 
 	// no ea for this remote host, allocate one
 
-	ea := <-random_mapper_ea
+	ea := <-gen_ea.ea
 	if cli.debug_mapper {
 		log.debug("mtun: no src ea for: %v + %v, allocating: %v", gw, &ref, ea)
 	}

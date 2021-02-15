@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2020 Waldemar Augustyn */
+/* Copyright (c) 2018-2021 Waldemar Augustyn */
 
 package main
 
@@ -35,17 +35,15 @@ const (
 // -- ea gen -------------------------------------------------------------------
 
 type GenEA struct {
-	allocated *b.Tree
-	mtx       sync.Mutex
+	allocated map[IP32]bool
 	bcast     IP32
+	ea        chan IP32 // mapper random ea
+	recv      chan *PktBuf
 }
 
 var gen_ea GenEA
-var recover_ea chan *PktBuf
-var random_mapper_ea chan IP32
 
-// query for expired eas
-func (gen *GenEA) check_for_expired() {
+/* func (gen *GenEA) check_for_expired() {
 
 	var pktid uint16
 
@@ -117,8 +115,9 @@ func (gen *GenEA) check_for_expired() {
 		}
 	}
 }
+*/
 
-func (gen *GenEA) remove_expired_eas(pb *PktBuf) {
+/* func (gen *GenEA) remove_expired_eas(pb *PktBuf) {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 	pktlen := len(pkt)
@@ -157,9 +156,9 @@ func (gen *GenEA) remove_expired_eas(pb *PktBuf) {
 		}
 	}
 }
+*/
 
-// listen to messages sent in response to queries for expired eas
-func (gen *GenEA) recover_expired() {
+/* func (gen *GenEA) recover_expired() {
 
 	for pb := range recover_ea {
 
@@ -191,102 +190,71 @@ func (gen *GenEA) recover_expired() {
 		retbuf <- pb
 	}
 }
-
-/*
-// generate random eas with second to last byte < SECOND_BYTE
-func (gen *GenEA) gen_dns_eas() {
-
-	var ea IP32
-	creep := make([]byte, 4)
-	var err error
-
-	for {
-		// clear ea before incrementing ii
-		for ii := 0; ii < MAXTRIES; ii, ea = ii+1, 0 {
-
-			_, err = rand.Read(creep[1:])
-			if err != nil {
-				continue // cannot get random number
-			}
-
-			creep[2] %= SECOND_BYTE
-			ea = IP32(be.Uint32(creep))
-
-			ea &^= cli.ea_mask
-			if ea == 0 || ea == gen.bcast {
-				continue // zero address or broadcast address, try another
-			}
-			ea |= cli.ea_ip
-			_, ok := gen.allocated[ea]
-			if ok {
-				continue // already allocated
-			}
-			gen.allocated[ea] = true
-			break
-		}
-		random_dns_ea <- ea
-	}
-}
 */
 
-// generate random eas with second to last byte >= SECOND_BYTE
-func (gen *GenEA) gen_mapper_eas() {
+// generate a random ea with second to last byte >= SECOND_BYTE
+func (gen *GenEA) next_ea() IP32 {
 
 	var ea IP32
 	creep := make([]byte, 4)
 	var err error
-	var added bool
 
-	for {
-		// clear ea before incrementing ii
-		for ii := 0; ii < MAXTRIES; ii, ea = ii+1, 0 {
+	// clear ea before incrementing ii
+	for ii := 0; ii < MAXTRIES; ii, ea = ii+1, 0 {
 
-			_, err = rand.Read(creep[1:])
-			if err != nil {
-				continue // cannot get random number
-			}
-
-			creep[2] %= 256 - SECOND_BYTE
-			creep[2] += SECOND_BYTE
-			ea = IP32(be.Uint32(creep))
-
-			ea &^= cli.ea_mask
-			if ea == 0 || ea == gen.bcast {
-				continue // zero address or broadcast address, try another
-			}
-
-			ea |= cli.ea_ip
-
-			gen.mtx.Lock()
-
-			_, added = gen.allocated.Put(ea, func(old interface{}, exists bool) (interface{}, bool) {
-				return M32(0), !exists
-			})
-
-			gen.mtx.Unlock()
-
-			if added {
-				break // allocated new ea
-			}
+		_, err = rand.Read(creep[1:])
+		if err != nil {
+			continue // cannot get random number
 		}
-		random_mapper_ea <- ea
+
+		creep[2] %= 256 - SECOND_BYTE
+		creep[2] += SECOND_BYTE
+		ea = IP32(be.Uint32(creep))
+
+		ea &^= cli.ea_mask
+		if ea == 0 || ea == gen.bcast {
+			continue // zero address or broadcast address, try another
+		}
+
+		ea |= cli.ea_ip
+
+		if gen.allocated[ea] {
+			continue // already allocated, try another
+		}
+		gen.allocated[ea] = true
+
+		return ea
 	}
+
+	log.err("gen_ea: cannot allocate ea")
+	return 0
+}
+
+func (gen *GenEA) receive(pb *PktBuf) {
+
+	retbuf <- pb
 }
 
 func (gen *GenEA) start() {
 
-	//go gen.gen_dns_eas()
-	go gen.gen_mapper_eas()
-	go gen.check_for_expired()
-	go gen.recover_expired()
+	go func(gen *GenEA) {
+		ea := gen.next_ea()
+		for {
+			select {
+			case gen.ea <- ea:
+				ea = gen.next_ea()
+			case pb := <-gen.recv:
+				gen.receive(pb)
+			}
+		}
+	}(gen)
 }
 
 func (gen *GenEA) init() {
+	gen.allocated = make(map[IP32]bool)
 	gen.bcast = 0xffffffff &^ cli.ea_mask
-	gen.allocated = b.TreeNew(b.Cmp(addr_cmp))
-	recover_ea = make(chan *PktBuf, PKTQLEN)
-	//random_dns_ea = make(chan IP32, GENQLEN)
-	random_mapper_ea = make(chan IP32, GENQLEN)
+	gen.ea = make(chan IP32, GENQLEN)
+	gen.recv = make(chan *PktBuf, PKTQLEN)
 }
 
 // -- ref gen ------------------------------------------------------------------
