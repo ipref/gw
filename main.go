@@ -75,6 +75,9 @@ func main() {
 
 	dbchan = make(chan *PktBuf, PKTQLEN)
 
+	gen_ea.init()
+	gen_ref.init()
+
 	// start of initialization and restoration from DB
 
 	start_db()
@@ -101,12 +104,6 @@ func main() {
 	// end of initialization and restoration from DB
 
 	icmpreq = make(chan *PktBuf, PKTQLEN)
-
-	gen_ea.init()
-	//gen_ea.db_restore_allocated_eas()
-
-	gen_ref.init()
-	//gen_ref.db_restore_allocated_refs()
 
 	gen_ea.start()
 	gen_ref.start()
