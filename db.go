@@ -12,9 +12,10 @@ import (
 
 /* Persistent store and restore
 
-The DB holds data for restoration on start up. The restoration is performed
-directly without locking. In contrast, storing data in DB is accomplished by
-sending v1 packets to DB channel.
+The DB holds data for restoration on start up. During restoration, two DBs are
+open: rdb which holds data from the previous run, and db which is newly created
+to hold data for the current run. Packet forwarding is delayed until restoration
+completes.
 */
 
 const (
@@ -30,7 +31,7 @@ var db *bolt.DB  // current DB
 var rdb *bolt.DB // restore DB
 var dbchan chan *PktBuf
 
-func zero(slice []byte) bool {
+func is_zero(slice []byte) bool {
 	for _, val := range slice {
 		if val != 0 {
 			return false
@@ -409,7 +410,7 @@ func db_save_mark(pb *PktBuf) {
 
 	off := V1_HDR_LEN
 
-	if zero(pkt[off+V1_OID:off+V1_OID+4]) || zero(pkt[off+V1_MARK:off+V1_MARK+4]) {
+	if is_zero(pkt[off+V1_OID:off+V1_OID+4]) || is_zero(pkt[off+V1_MARK:off+V1_MARK+4]) {
 		log.err("db save mark: invalid oid or mark, ignoring")
 		return
 	}
@@ -436,15 +437,16 @@ func db_save_mark(pb *PktBuf) {
 
 func db_insert_record(db_arec []byte) {
 
-	if zero(db_arec[V1_MARK_LEN+V1_AREC_GW:V1_MARK_LEN+V1_AREC_GW+4]) || zero(db_arec[V1_MARK_LEN+V1_AREC_REFH:V1_MARK_LEN+V1_AREC_REFL+8]) {
+	if is_zero(db_arec[V1_MARK_LEN+V1_AREC_GW:V1_MARK_LEN+V1_AREC_GW+4]) ||
+		is_zero(db_arec[V1_MARK_LEN+V1_AREC_REFH:V1_MARK_LEN+V1_AREC_REFL+8]) {
 		log.err("db insert arec: null gw + ref, ignoring")
 		return
 	}
 
 	var err error
 
-	ea_zero := zero(db_arec[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4])
-	ip_zero := zero(db_arec[V1_MARK_LEN+V1_AREC_IP : V1_MARK_LEN+V1_AREC_IP+4])
+	ea_zero := is_zero(db_arec[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4])
+	ip_zero := is_zero(db_arec[V1_MARK_LEN+V1_AREC_IP : V1_MARK_LEN+V1_AREC_IP+4])
 
 	if !ea_zero && ip_zero {
 
@@ -504,12 +506,12 @@ func db_save_arec(pb *PktBuf) {
 
 	off := V1_HDR_LEN
 
-	if zero(pkt[off+V1_OID : off+V1_OID+4]) {
+	if is_zero(pkt[off+V1_OID : off+V1_OID+4]) {
 		log.err("db save arec: null oid, ignoring packet")
 		return
 	}
 
-	if zero(pkt[off+V1_MARK : off+V1_MARK+4]) {
+	if is_zero(pkt[off+V1_MARK : off+V1_MARK+4]) {
 		log.err("db save arec: null mark, ignoring packet")
 		return
 	}
