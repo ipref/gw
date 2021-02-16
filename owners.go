@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2020 Waldemar Augustyn */
+/* Copyright (c) 2018-2021 Waldemar Augustyn */
 
 package main
 
@@ -103,7 +103,7 @@ func (o *Owners) register(oid O32, name string) error {
 	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
 
 	pb.peer = "owners"
-	dbchan <- pb
+	db.recv <- pb
 
 	return nil
 }

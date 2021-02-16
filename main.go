@@ -73,17 +73,17 @@ func main() {
 	mbchan = make(chan *PktBuf, PKTQLEN)
 	go mbroker()
 
-	dbchan = make(chan *PktBuf, PKTQLEN)
-
+	owners.init()
+	marker.init()
 	gen_ea.init()
 	gen_ref.init()
 
-	// start of initialization and restoration from DB
+	db.init()
+	db.start()
 
-	start_db()
+	// start of restoration from DB
 
-	owners.init()
-	owners.db_restore_oids()
+	owners.restore_oids()
 
 	mapper_oid = owners.get_oid("mapper")
 	arp_oid = owners.get_oid("arp")
@@ -91,17 +91,16 @@ func main() {
 	map_gw.init(mapper_oid)
 	map_tun.init(mapper_oid)
 
-	marker.init()
-	marker.db_restore_time_base()
-	marker.db_restore_markers()
+	marker.restore_time_base()
+	marker.restore_markers()
 
 	send_marker(marker.now(), mapper_oid, "main")
-	map_gw.db_restore_eas()
-	map_tun.db_restore_refs()
+	//map_gw.db_restore_eas()
+	//map_tun.db_restore_refs()
 
-	stop_db_restore()
+	db.stop_restore()
 
-	// end of initialization and restoration from DB
+	// end of restoration from DB
 
 	icmpreq = make(chan *PktBuf, PKTQLEN)
 
@@ -121,6 +120,6 @@ func main() {
 	go mbroker_conn()
 
 	msg := <-goexit
-	stop_db()
+	db.stop()
 	log.info("STOP ipref gateway: %v", msg)
 }

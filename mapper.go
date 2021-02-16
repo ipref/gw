@@ -282,8 +282,8 @@ func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 		pb := get_arec_pkt(dst, 0, rec.ip, rec.ref, rec.oid, rec.mark)
 		pbb := <-getbuf
 		pbb.copy_from(pb)
-		recv_gw <- pb // tell mtun
-		dbchan <- pbb // tell db
+		recv_gw <- pb  // tell mtun
+		db.recv <- pbb // tell db
 
 	}
 
@@ -322,8 +322,8 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 				pb := get_arec_pkt(0, src, rec.ip, rec.ref, rec.oid, rec.mark)
 				pbb := <-getbuf
 				pbb.copy_from(pb)
-				recv_gw <- pb // tell mtun
-				dbchan <- pbb // tell db
+				recv_gw <- pb  // tell mtun
+				db.recv <- pbb // tell db
 			}
 
 			return rec
@@ -346,8 +346,8 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 	pb := get_arec_pkt(0, src, rec.ip, rec.ref, rec.oid, rec.mark)
 	pbb := <-getbuf
 	pbb.copy_from(pb)
-	recv_gw <- pb // tell mtun
-	dbchan <- pbb // tell db
+	recv_gw <- pb  // tell mtun
+	db.recv <- pbb // tell db
 
 	return rec
 }
@@ -632,7 +632,7 @@ func (mtun *MapTun) get_dst_ip(gw IP32, ref rff.Ref) IP32 {
 		pbb := <-getbuf
 		pbb.copy_from(pb)
 		recv_tun <- pb // tell mgw
-		dbchan <- pbb  // tell db
+		db.recv <- pbb // tell db
 	}
 
 	return rec.ip
@@ -678,7 +678,7 @@ func (mtun *MapTun) get_src_iprec(gw IP32, ref rff.Ref) *IpRec {
 				pbb := <-getbuf
 				pbb.copy_from(pb)
 				recv_tun <- pb // tell mgw
-				dbchan <- pbb  // tell db
+				db.recv <- pbb // tell db
 			}
 
 			return &rec
@@ -702,7 +702,7 @@ func (mtun *MapTun) get_src_iprec(gw IP32, ref rff.Ref) *IpRec {
 	pbb := <-getbuf
 	pbb.copy_from(pb)
 	recv_tun <- pb // tell mgw
-	dbchan <- pbb  // tell db
+	db.recv <- pbb // tell db
 
 	return &rec
 }

@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2020 Waldemar Augustyn */
+/* Copyright (c) 2018-2021 Waldemar Augustyn */
 
 package main
 
@@ -95,7 +95,7 @@ func send_marker(mark M32, oid O32, from string) {
 
 		recv_tun <- pb
 		recv_gw <- pbb
-		dbchan <- pbc
+		db.recv <- pbc
 		mbchan <- pbd
 
 	case arp_oid:
@@ -114,7 +114,7 @@ func send_marker(mark M32, oid O32, from string) {
 
 		recv_tun <- pb
 		recv_gw <- pbb
-		dbchan <- pbc
+		db.recv <- pbc
 	}
 }
 

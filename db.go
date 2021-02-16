@@ -3,7 +3,7 @@
 package main
 
 import (
-	rff "github.com/ipref/ref"
+	//rff "github.com/ipref/ref"
 	bolt "go.etcd.io/bbolt"
 	"os"
 	"path"
@@ -27,9 +27,13 @@ const (
 	oidbkt  = "oid"  // oid -> name
 )
 
-var db *bolt.DB  // current DB
-var rdb *bolt.DB // restore DB
-var dbchan chan *PktBuf
+type DB struct {
+	db   *bolt.DB // current DB
+	rdb  *bolt.DB // restore DB
+	recv chan *PktBuf
+}
+
+var db DB
 
 func is_zero(slice []byte) bool {
 	for _, val := range slice {
@@ -40,18 +44,18 @@ func is_zero(slice []byte) bool {
 	return true
 }
 
-func (o *Owners) db_restore_oids() {
+func (o *Owners) restore_oids() {
 
-	if rdb == nil {
+	if db.rdb == nil {
 		return
 	}
 
-	rdb.View(func(tx *bolt.Tx) error {
+	db.rdb.View(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(oidbkt))
 		if bkt == nil {
 			return nil
 		}
-		log.info("db: restoring oids")
+		log.info("owners: restoring oids")
 		bkt.ForEach(func(key, val []byte) error {
 
 			oid := O32(be.Uint32(key))
@@ -69,21 +73,21 @@ func (o *Owners) db_restore_oids() {
 	})
 }
 
-func (m *Mark) db_restore_time_base() {
+func (m *Mark) restore_time_base() {
 
 	// restore time base from db
 
-	if rdb != nil {
-		rdb.View(func(tx *bolt.Tx) error {
+	if db.rdb != nil {
+		db.rdb.View(func(tx *bolt.Tx) error {
 			bkt := tx.Bucket([]byte(basebkt))
 			if bkt != nil {
 				tbase := bkt.Get([]byte("time_base"))
 				if tbase != nil {
 					err := m.base.UnmarshalText(tbase)
 					if err != nil {
-						log.err("db: cannot restore time base: %v", err)
+						log.err("marker: cannot restore time base: %v", err)
 					} else {
-						log.info("db: restoring time base: %v", string(tbase))
+						log.info("marker: restoring time base: %v", string(tbase))
 					}
 				}
 			}
@@ -120,32 +124,32 @@ func (m *Mark) db_restore_time_base() {
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
 
 		pb.peer = "marker"
-		dbchan <- pb
+		db.recv <- pb
 
 	}
 }
 
-func (m *Mark) db_restore_markers() {
+func (m *Mark) restore_markers() {
 
-	if rdb == nil {
+	if db.rdb == nil {
 		return
 	}
 
-	rdb.View(func(tx *bolt.Tx) error {
+	db.rdb.View(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(markbkt))
 		if bkt == nil {
 			return nil
 		}
-		log.info("db: restoring marks")
+		log.info("marker: restoring marks")
 		bkt.ForEach(func(key, val []byte) error {
 
 			oid := O32(be.Uint32(key))
 			mark := M32(be.Uint32(val))
 
 			if oid == 0 || mark == 0 {
-				log.err("db: invalid mark: %v(%v): %v, discarding", owners.name(oid), oid, mark)
+				log.err("marker: invalid restore mark: %v(%v): %v, discarding", owners.name(oid), oid, mark)
 			} else {
-				log.debug("db: restore mark: %v(%v): %v", owners.name(oid), oid, mark)
+				log.debug("marker: restore mark: %v(%v): %v", owners.name(oid), oid, mark)
 				send_marker(mark, oid, "restore_markers")
 			}
 			return nil
@@ -154,8 +158,7 @@ func (m *Mark) db_restore_markers() {
 	})
 }
 
-// restore address records from the ea bucket
-func (mgw *MapGw) db_restore_eas() {
+/* func (mgw *MapGw) db_restore_eas() {
 
 	if rdb == nil {
 		return
@@ -191,9 +194,9 @@ func (mgw *MapGw) db_restore_eas() {
 		return nil
 	})
 }
+*/
 
-// restore address records from the ref bucket
-func (mtun *MapTun) db_restore_refs() {
+/* func (mtun *MapTun) db_restore_refs() {
 
 	if rdb == nil {
 		return
@@ -231,6 +234,7 @@ func (mtun *MapTun) db_restore_refs() {
 		return nil
 	})
 }
+*/
 
 /*
 // restore allocated eas
@@ -328,7 +332,7 @@ func (gen *GenREF) db_restore_allocated_refs() {
 }
 */
 
-func db_save_oid(pb *PktBuf) {
+func (db *DB) save_oid(pb *PktBuf) {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 
@@ -346,7 +350,7 @@ func db_save_oid(pb *PktBuf) {
 
 	var err error
 
-	err = db.Update(func(tx *bolt.Tx) error {
+	err = db.db.Update(func(tx *bolt.Tx) error {
 		_, err := tx.CreateBucketIfNotExists([]byte(oidbkt))
 		return err
 	})
@@ -354,7 +358,7 @@ func db_save_oid(pb *PktBuf) {
 		log.fatal("db save oid: cannot create bucket %v: %v", oidbkt, err)
 	}
 
-	err = db.Update(func(tx *bolt.Tx) error {
+	err = db.db.Update(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(oidbkt))
 		err := bkt.Put(oid, name)
 		return err
@@ -364,7 +368,7 @@ func db_save_oid(pb *PktBuf) {
 	}
 }
 
-func db_save_time_base(pb *PktBuf) {
+func (db *DB) save_time_base(pb *PktBuf) {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 
@@ -381,7 +385,7 @@ func db_save_time_base(pb *PktBuf) {
 
 	var err error
 
-	err = db.Update(func(tx *bolt.Tx) error {
+	err = db.db.Update(func(tx *bolt.Tx) error {
 		_, err := tx.CreateBucketIfNotExists([]byte(basebkt))
 		return err
 	})
@@ -389,7 +393,7 @@ func db_save_time_base(pb *PktBuf) {
 		log.fatal("db save time base: cannot create bucket %v: %v", basebkt, err)
 	}
 
-	err = db.Update(func(tx *bolt.Tx) error {
+	err = db.db.Update(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(basebkt))
 		err := bkt.Put([]byte("time_base"), tbase)
 		return err
@@ -399,7 +403,7 @@ func db_save_time_base(pb *PktBuf) {
 	}
 }
 
-func db_save_mark(pb *PktBuf) {
+func (db *DB) save_mark(pb *PktBuf) {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 
@@ -417,7 +421,7 @@ func db_save_mark(pb *PktBuf) {
 
 	var err error
 
-	err = db.Update(func(tx *bolt.Tx) error {
+	err = db.db.Update(func(tx *bolt.Tx) error {
 		_, err := tx.CreateBucketIfNotExists([]byte(markbkt))
 		return err
 	})
@@ -425,7 +429,7 @@ func db_save_mark(pb *PktBuf) {
 		log.fatal("db save mark: cannot create bucket %v: %v", markbkt, err)
 	}
 
-	err = db.Update(func(tx *bolt.Tx) error {
+	err = db.db.Update(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(markbkt))
 		err := bkt.Put(pkt[off+V1_OID:off+V1_OID+4], pkt[off+V1_MARK:off+V1_MARK+4])
 		return err
@@ -435,7 +439,7 @@ func db_save_mark(pb *PktBuf) {
 	}
 }
 
-func db_insert_record(db_arec []byte) {
+func (db *DB) insert_record(db_arec []byte) {
 
 	if is_zero(db_arec[V1_MARK_LEN+V1_AREC_GW:V1_MARK_LEN+V1_AREC_GW+4]) ||
 		is_zero(db_arec[V1_MARK_LEN+V1_AREC_REFH:V1_MARK_LEN+V1_AREC_REFL+8]) {
@@ -452,7 +456,7 @@ func db_insert_record(db_arec []byte) {
 
 		log.debug("db insert arec: ea -> db_arec")
 
-		err = db.Update(func(tx *bolt.Tx) error {
+		err = db.db.Update(func(tx *bolt.Tx) error {
 			_, err := tx.CreateBucketIfNotExists([]byte(eabkt))
 			return err
 		})
@@ -460,7 +464,7 @@ func db_insert_record(db_arec []byte) {
 			log.fatal("db insert arec: cannot create bucket %v: %v", eabkt, err)
 		}
 
-		err = db.Update(func(tx *bolt.Tx) error {
+		err = db.db.Update(func(tx *bolt.Tx) error {
 			bkt := tx.Bucket([]byte(eabkt))
 			err := bkt.Put(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4], db_arec)
 			return err
@@ -473,7 +477,7 @@ func db_insert_record(db_arec []byte) {
 
 		log.debug("db insert arec: ref -> db_arec")
 
-		err = db.Update(func(tx *bolt.Tx) error {
+		err = db.db.Update(func(tx *bolt.Tx) error {
 			_, err := tx.CreateBucketIfNotExists([]byte(refbkt))
 			return err
 		})
@@ -481,7 +485,7 @@ func db_insert_record(db_arec []byte) {
 			log.fatal("db insert arec: cannot create bucket %v: %v", refbkt, err)
 		}
 
-		err = db.Update(func(tx *bolt.Tx) error {
+		err = db.db.Update(func(tx *bolt.Tx) error {
 			bkt := tx.Bucket([]byte(refbkt))
 			err := bkt.Put(db_arec[V1_MARK_LEN+V1_AREC_REFH:V1_MARK_LEN+V1_AREC_REFL+8], db_arec)
 			return err
@@ -495,7 +499,7 @@ func db_insert_record(db_arec []byte) {
 	}
 }
 
-func db_save_arec(pb *PktBuf) {
+func (db *DB) save_arec(pb *PktBuf) {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 	pktlen := len(pkt)
@@ -530,94 +534,69 @@ func db_save_arec(pb *PktBuf) {
 
 	for ; off < pktlen; off += V1_AREC_LEN {
 		copy(db_arec[V1_MARK_LEN:], pkt[off:off+V1_AREC_LEN])
-		db_insert_record(db_arec)
+		db.insert_record(db_arec)
 	}
 }
 
-func db_listen() {
+func (db *DB) receive(pb *PktBuf) {
 
-	for pb := range dbchan {
+	pkt := pb.pkt[pb.iphdr:pb.tail]
 
-		pkt := pb.pkt[pb.iphdr:pb.tail]
+	if err := pb.validate_v1_header(len(pkt)); err != nil {
 
-		if err := pb.validate_v1_header(len(pkt)); err != nil {
-
-			log.err("db: invalid v1 packet from %v:  %v", pb.peer, err)
-			retbuf <- pb
-			continue
-		}
-
-		cmd := pkt[V1_CMD]
-
-		if cli.trace {
-			pb.pp_raw("db in:  ")
-		}
-
-		switch cmd {
-
-		case V1_DATA | V1_NOOP:
-		case V1_DATA | V1_SET_AREC:
-			db_save_arec(pb)
-		case V1_DATA | V1_SET_MARK:
-			db_save_mark(pb)
-		case V1_DATA | V1_SAVE_OID:
-			db_save_oid(pb)
-		case V1_DATA | V1_SAVE_TIME_BASE:
-			db_save_time_base(pb)
-		default: // invalid
-			log.err("db: unrecognized v1 cmd: %v", cmd)
-		}
-
+		log.err("db: invalid v1 packet from %v:  %v", pb.peer, err)
 		retbuf <- pb
+		return
 	}
+
+	cmd := pkt[V1_CMD]
+
+	if cli.trace {
+		pb.pp_raw("db in:  ")
+	}
+
+	switch cmd {
+
+	case V1_DATA | V1_NOOP:
+	case V1_DATA | V1_SET_AREC:
+		db.save_arec(pb)
+	case V1_DATA | V1_SET_MARK:
+		db.save_mark(pb)
+	case V1_DATA | V1_SAVE_OID:
+		db.save_oid(pb)
+	case V1_DATA | V1_SAVE_TIME_BASE:
+		db.save_time_base(pb)
+	default: // invalid
+		log.err("db: unrecognized v1 cmd: %v", cmd)
+	}
+
+	retbuf <- pb
 }
 
-func stop_db_restore() {
-
-	if rdb != nil {
-		log.info("closing restore DB: %v", dbname+"~")
-		rdb.Close()
-		rdb = nil
-	}
-	rdbpath := path.Join(cli.datadir, dbname+"~")
-	os.Remove(rdbpath)
-}
-
-func stop_db() {
-
-	if db != nil {
-		log.info("closing DB: %v", dbname)
-		db.Close()
-		db = nil
-	}
-	stop_db_restore()
-}
-
-func start_db() {
-
-	var err error
+func (db *DB) open_db() {
 
 	rdbname := dbname + "~"
 	dbpath := path.Join(cli.datadir, dbname)
 	rdbpath := path.Join(cli.datadir, rdbname)
 
 	// if restore DB exists then we restore from it regardless of whether DB exists
-	// or not presuming this is a result of a previous failed or aborted startup
+	// or not presuming this is a result of a previously failed or aborted startup
 
 	if fd, err := os.Open(rdbpath); os.IsNotExist(err) {
 
 		if err := os.Rename(dbpath, rdbpath); err != nil {
 			if os.IsNotExist(err) {
-				rdb = nil
+				db.rdb = nil
 			} else {
 				log.fatal("cannot rename DB %v to %v: %v", dbname, rdbname, err)
 			}
 		} else {
 			log.info("opening existing DB %v as restore DB renamed to %v", dbname, rdbname)
-			rdb, err = bolt.Open(rdbpath, 0440, &bolt.Options{Timeout: 1 * time.Second, ReadOnly: true})
+			frdb, err := bolt.Open(rdbpath, 0440, &bolt.Options{Timeout: 1 * time.Second, ReadOnly: true})
 			if err != nil {
 				log.fatal("cannot open restore DB %v: %v", rdbname, err)
 			}
+			db.rdb = frdb
 		}
 
 	} else {
@@ -627,19 +606,55 @@ func start_db() {
 		os.Remove(dbpath)
 		log.info("opening existing restore DB %v", rdbname)
 
-		rdb, err = bolt.Open(rdbpath, 0440, &bolt.Options{Timeout: 1 * time.Second, ReadOnly: true})
+		frdb, err := bolt.Open(rdbpath, 0440, &bolt.Options{Timeout: 1 * time.Second, ReadOnly: true})
 		if err != nil {
 			log.fatal("cannot open existing restore DB %v: %v", rdbname, err)
 		}
+		db.rdb = frdb
 	}
 
 	log.info("creating DB %v", dbname)
 
 	os.MkdirAll(cli.datadir, 0770)
-	db, err = bolt.Open(dbpath, 0660, &bolt.Options{Timeout: 1 * time.Second})
+	fdb, err := bolt.Open(dbpath, 0660, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		log.fatal("cannot create %v: %v", dbname, err)
 	}
+	db.db = fdb
+}
 
-	go db_listen()
+func (db *DB) stop_restore() {
+
+	if db.rdb != nil {
+		log.info("closing restore DB: %v", dbname+"~")
+		db.rdb.Close()
+		db.rdb = nil
+	}
+	rdbpath := path.Join(cli.datadir, dbname+"~")
+	os.Remove(rdbpath)
+}
+
+func (db *DB) stop() {
+
+	if db.db != nil {
+		log.info("closing DB: %v", dbname)
+		db.db.Close()
+		db.db = nil
+	}
+	db.stop_restore()
+}
+
+func (db *DB) start() {
+
+	db.open_db()
+
+	go func(db *DB) {
+		for pb := range db.recv {
+			db.receive(pb)
+		}
+	}(db)
+}
+
+func (db *DB) init() {
+	db.recv = make(chan *PktBuf, PKTQLEN)
 }
