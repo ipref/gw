@@ -332,7 +332,7 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 
 	// local host's ip does not have a map to ipref, create one
 
-	ref := <-random_mapper_ref
+	ref := <-gen_ref.ref
 	if cli.debug_mapper {
 		log.debug("mgw: no src ipref for: %v, allocating: %v", src, &ref)
 	}

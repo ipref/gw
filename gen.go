@@ -5,9 +5,6 @@ package main
 import (
 	"crypto/rand"
 	rff "github.com/ipref/ref"
-	"io"
-	"modernc.org/b"
-	"sync"
 )
 
 /* Address and reference allocation
@@ -260,15 +257,14 @@ func (gen *GenEA) init() {
 // -- ref gen ------------------------------------------------------------------
 
 type GenREF struct {
-	allocated *b.Tree
-	mtx       sync.Mutex
+	allocated map[rff.Ref]bool
+	ref       chan rff.Ref // mapper random ref
+	recv      chan *PktBuf
 }
 
 var gen_ref GenREF
-var recover_ref chan *PktBuf
-var random_mapper_ref chan rff.Ref
 
-func (gen *GenREF) check_for_expired() {
+/* func (gen *GenREF) check_for_expired() {
 
 	var pktid uint16
 
@@ -342,8 +338,9 @@ func (gen *GenREF) check_for_expired() {
 		}
 	}
 }
+*/
 
-func (gen *GenREF) remove_expired_refs(pb *PktBuf) {
+/* func (gen *GenREF) remove_expired_refs(pb *PktBuf) {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 	pktlen := len(pkt)
@@ -385,9 +382,9 @@ func (gen *GenREF) remove_expired_refs(pb *PktBuf) {
 		}
 	}
 }
+*/
 
-// listen to messages sent in response to queries for expired refs
-func (gen *GenREF) recover_expired() {
+/* func (gen *GenREF) recover_expired() {
 
 	for pb := range recover_ref {
 
@@ -419,59 +416,67 @@ func (gen *GenREF) recover_expired() {
 		retbuf <- pb
 	}
 }
+*/
 
 // generate random refs with second to last byte >= SECOND_BYTE
-func (gen *GenREF) gen_mapper_refs() {
+func (gen *GenREF) next_ref() rff.Ref {
 
 	var ref rff.Ref
 	var refzero rff.Ref // constant rff.Ref{0,0}
 	creep := make([]byte, 16)
-	var err error
-	var added bool
 
-	for {
-		// clear ref before incrementing ii
-		for ii := 0; ii < MAXTRIES; ii, ref = ii+1, refzero {
+	// clear ref before incrementing ii
+	for ii := 0; ii < MAXTRIES; ii, ref = ii+1, refzero {
 
-			_, err = rand.Read(creep[7:])
-			if err != nil {
-				continue // cannot get random number
-			}
-
-			creep[14] %= 256 - SECOND_BYTE
-			creep[14] += SECOND_BYTE
-			creep[7] >>= 4 // make 64 bit refs happen more often
-			ref.H = be.Uint64(creep[:8])
-			ref.L = be.Uint64(creep[8:])
-
-			if ref.H == 0 && ref.L < MIN_REF {
-				continue // reserved ref
-			}
-
-			gen.mtx.Lock()
-
-			_, added = gen.allocated.Put(ref, func(old interface{}, exists bool) (interface{}, bool) {
-				return refzero, !exists
-			})
-
-			gen.mtx.Unlock()
-
-			if added {
-				break // allocated new ref
-			}
+		_, err := rand.Read(creep[7:])
+		if err != nil {
+			continue // cannot get random number
 		}
-		random_mapper_ref <- ref
+
+		creep[14] %= 256 - SECOND_BYTE
+		creep[14] += SECOND_BYTE
+		creep[7] >>= 4 // make 64 bit refs happen more often
+		ref.H = be.Uint64(creep[:8])
+		ref.L = be.Uint64(creep[8:])
+
+		if ref.H == 0 && ref.L < MIN_REF {
+			continue // reserved ref
+		}
+
+		if gen.allocated[ref] {
+			continue // already allocated, try another
+		}
+		gen.allocated[ref] = true
+
+		return ref
 	}
+
+	log.err("gen_ref: cannot allocate ref")
+	return refzero
+}
+
+func (gen *GenREF) receive(pb *PktBuf) {
+
+	retbuf <- pb
 }
 
 func (gen *GenREF) start() {
-	go gen.gen_mapper_refs()
-	go gen.check_for_expired()
-	go gen.recover_expired()
+
+	go func(gen *GenREF) {
+		ref := gen.next_ref()
+		for {
+			select {
+			case gen.ref <- ref:
+				ref = gen.next_ref()
+			case pb := <-gen.recv:
+				gen.receive(pb)
+			}
+		}
+	}(gen)
 }
 
 func (gen *GenREF) init() {
-	gen.allocated = b.TreeNew(b.Cmp(ref_cmp))
-	recover_ref = make(chan *PktBuf, PKTQLEN)
-	random_mapper_ref = make(chan rff.Ref, GENQLEN)
+	gen.allocated = make(map[rff.Ref]bool)
+	gen.ref = make(chan rff.Ref, GENQLEN)
+	gen.recv = make(chan *PktBuf, PKTQLEN)
 }

@@ -81,7 +81,7 @@ func main() {
 	db.init()
 	db.start()
 
-	// start of restoration from DB
+	// start of restoration from DB, write directly to the related data objects
 
 	owners.restore_oids()
 
@@ -95,8 +95,9 @@ func main() {
 	marker.restore_markers()
 
 	send_marker(marker.now(), mapper_oid, "main")
-	//map_gw.db_restore_eas()
-	//map_tun.db_restore_refs()
+
+	map_gw.restore_eas()
+	map_tun.restore_refs()
 
 	db.stop_restore()
 

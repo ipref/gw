@@ -3,7 +3,7 @@
 package main
 
 import (
-	//rff "github.com/ipref/ref"
+	rff "github.com/ipref/ref"
 	bolt "go.etcd.io/bbolt"
 	"os"
 	"path"
@@ -158,18 +158,18 @@ func (m *Mark) restore_markers() {
 	})
 }
 
-/* func (mgw *MapGw) db_restore_eas() {
+func (mgw *MapGw) restore_eas() {
 
-	if rdb == nil {
+	if db.rdb == nil {
 		return
 	}
 
-	rdb.View(func(tx *bolt.Tx) error {
+	db.rdb.View(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(eabkt))
 		if bkt == nil {
 			return nil
 		}
-		log.info("db restoring ea records")
+		log.info("mgw: restoring ea records")
 		bkt.ForEach(func(key, val []byte) error {
 
 			// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
@@ -179,35 +179,37 @@ func (m *Mark) restore_markers() {
 			ea := IP32(be.Uint32(val[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4]))
 
 			if oid == 0 || mark == 0 {
-				log.err("db restore eas: %v invalid oid mark: %v(%v): %v, discarding", ea, owners.name(oid), oid, mark)
+				log.err("mgw: restore eas: %v invalid oid mark: %v(%v): %v, discarding", ea, owners.name(oid), oid, mark)
 			} else if oid == mgw.oid && mark < mgw.cur_mark[oid] {
-				log.debug("db restore eas: %v expired, discarding", ea)
+				log.debug("mgw: restore eas: %v expired, discarding", ea)
 			} else {
-				log.debug("db restore eas: %v restore", ea)
+				log.debug("mgw: restore eas: %v restore", ea)
 
 				mgw.insert_record(oid, mark, val[V1_MARK_LEN:])
 				map_tun.insert_record(oid, mark, val[V1_MARK_LEN:])
-				db_insert_record(val)
+				db.insert_record(val)
+				if oid == mapper_oid {
+					gen_ea.allocated[ea] = true
+				}
 			}
 			return nil
 		})
 		return nil
 	})
 }
-*/
 
-/* func (mtun *MapTun) db_restore_refs() {
+func (mtun *MapTun) restore_refs() {
 
-	if rdb == nil {
+	if db.rdb == nil {
 		return
 	}
 
-	rdb.View(func(tx *bolt.Tx) error {
+	db.rdb.View(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(refbkt))
 		if bkt == nil {
 			return nil
 		}
-		log.info("db restoring ref records")
+		log.info("mtun: restoring ref records")
 		bkt.ForEach(func(key, val []byte) error {
 
 			// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
@@ -219,22 +221,24 @@ func (m *Mark) restore_markers() {
 			ref.L = be.Uint64(val[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
 
 			if oid == 0 || mark == 0 {
-				log.err("db restore refs: %v invalid oid(mark): %v(%v), discarding", ref, owners.name(oid), mark)
+				log.err("mtun: restore refs: %v invalid oid(mark): %v(%v), discarding", ref, owners.name(oid), mark)
 			} else if oid == mtun.oid && mark < mtun.cur_mark[oid] {
-				log.debug("db restore refs: %v expired, discarding", ref)
+				log.debug("mtun: restore refs: %v expired, discarding", ref)
 			} else {
-				log.debug("db restore refs: %v restore", ref)
+				log.debug("mtun: restore refs: %v restore", ref)
 
 				mtun.insert_record(oid, mark, val[V1_MARK_LEN:])
 				map_gw.insert_record(oid, mark, val[V1_MARK_LEN:])
-				db_insert_record(val)
+				db.insert_record(val)
+				if oid == mapper_oid {
+					gen_ref.allocated[ref] = true
+				}
 			}
 			return nil
 		})
 		return nil
 	})
 }
-*/
 
 /*
 // restore allocated eas
