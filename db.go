@@ -19,12 +19,12 @@ completes.
 */
 
 const (
-	dbname  = "mapper.db"
-	basebkt = "base" // various base data
-	eabkt   = "ea"   // ea  -> db_arec
-	refbkt  = "ref"  // ref -> db_arec
-	markbkt = "mark" // oid -> mark
-	oidbkt  = "oid"  // oid -> name
+	dbname   = "mapper.db"
+	base_bkt = "base" // various base data
+	ea_bkt   = "ea"   // ea  -> db_arec
+	ref_bkt  = "ref"  // ref -> db_arec
+	mark_bkt = "mark" // oid -> mark
+	oid_bkt  = "oid"  // oid -> name
 )
 
 type DB struct {
@@ -51,7 +51,7 @@ func (o *Owners) restore_oids() {
 	}
 
 	db.rdb.View(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket([]byte(oidbkt))
+		bkt := tx.Bucket([]byte(oid_bkt))
 		if bkt == nil {
 			return nil
 		}
@@ -79,7 +79,7 @@ func (m *Mark) restore_time_base() {
 
 	if db.rdb != nil {
 		db.rdb.View(func(tx *bolt.Tx) error {
-			bkt := tx.Bucket([]byte(basebkt))
+			bkt := tx.Bucket([]byte(base_bkt))
 			if bkt != nil {
 				tbase := bkt.Get([]byte("time_base"))
 				if tbase != nil {
@@ -136,7 +136,7 @@ func (m *Mark) restore_markers() {
 	}
 
 	db.rdb.View(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket([]byte(markbkt))
+		bkt := tx.Bucket([]byte(mark_bkt))
 		if bkt == nil {
 			return nil
 		}
@@ -165,7 +165,7 @@ func (mgw *MapGw) restore_eas() {
 	}
 
 	db.rdb.View(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket([]byte(eabkt))
+		bkt := tx.Bucket([]byte(ea_bkt))
 		if bkt == nil {
 			return nil
 		}
@@ -205,7 +205,7 @@ func (mtun *MapTun) restore_refs() {
 	}
 
 	db.rdb.View(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket([]byte(refbkt))
+		bkt := tx.Bucket([]byte(ref_bkt))
 		if bkt == nil {
 			return nil
 		}
@@ -249,7 +249,7 @@ func (gen *GenEA) db_restore_allocated_eas() {
 	}
 
 	db.View(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket([]byte(eabkt))
+		bkt := tx.Bucket([]byte(ea_bkt))
 		if bkt == nil {
 			return nil
 		}
@@ -297,7 +297,7 @@ func (gen *GenREF) db_restore_allocated_refs() {
 	var refzero rff.Ref // constant rff.Ref{0,0}
 
 	db.View(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket([]byte(refbkt))
+		bkt := tx.Bucket([]byte(ref_bkt))
 		if bkt == nil {
 			return nil
 		}
@@ -355,15 +355,15 @@ func (db *DB) save_oid(pb *PktBuf) {
 	var err error
 
 	err = db.db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte(oidbkt))
+		_, err := tx.CreateBucketIfNotExists([]byte(oid_bkt))
 		return err
 	})
 	if err != nil {
-		log.fatal("db save oid: cannot create bucket %v: %v", oidbkt, err)
+		log.fatal("db save oid: cannot create bucket %v: %v", oid_bkt, err)
 	}
 
 	err = db.db.Update(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket([]byte(oidbkt))
+		bkt := tx.Bucket([]byte(oid_bkt))
 		err := bkt.Put(oid, name)
 		return err
 	})
@@ -390,15 +390,15 @@ func (db *DB) save_time_base(pb *PktBuf) {
 	var err error
 
 	err = db.db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte(basebkt))
+		_, err := tx.CreateBucketIfNotExists([]byte(base_bkt))
 		return err
 	})
 	if err != nil {
-		log.fatal("db save time base: cannot create bucket %v: %v", basebkt, err)
+		log.fatal("db save time base: cannot create bucket %v: %v", base_bkt, err)
 	}
 
 	err = db.db.Update(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket([]byte(basebkt))
+		bkt := tx.Bucket([]byte(base_bkt))
 		err := bkt.Put([]byte("time_base"), tbase)
 		return err
 	})
@@ -426,15 +426,15 @@ func (db *DB) save_mark(pb *PktBuf) {
 	var err error
 
 	err = db.db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte(markbkt))
+		_, err := tx.CreateBucketIfNotExists([]byte(mark_bkt))
 		return err
 	})
 	if err != nil {
-		log.fatal("db save mark: cannot create bucket %v: %v", markbkt, err)
+		log.fatal("db save mark: cannot create bucket %v: %v", mark_bkt, err)
 	}
 
 	err = db.db.Update(func(tx *bolt.Tx) error {
-		bkt := tx.Bucket([]byte(markbkt))
+		bkt := tx.Bucket([]byte(mark_bkt))
 		err := bkt.Put(pkt[off+V1_OID:off+V1_OID+4], pkt[off+V1_MARK:off+V1_MARK+4])
 		return err
 	})
@@ -461,15 +461,15 @@ func (db *DB) insert_record(db_arec []byte) {
 		log.debug("db insert arec: ea -> db_arec")
 
 		err = db.db.Update(func(tx *bolt.Tx) error {
-			_, err := tx.CreateBucketIfNotExists([]byte(eabkt))
+			_, err := tx.CreateBucketIfNotExists([]byte(ea_bkt))
 			return err
 		})
 		if err != nil {
-			log.fatal("db insert arec: cannot create bucket %v: %v", eabkt, err)
+			log.fatal("db insert arec: cannot create bucket %v: %v", ea_bkt, err)
 		}
 
 		err = db.db.Update(func(tx *bolt.Tx) error {
-			bkt := tx.Bucket([]byte(eabkt))
+			bkt := tx.Bucket([]byte(ea_bkt))
 			err := bkt.Put(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4], db_arec)
 			return err
 		})
@@ -482,15 +482,15 @@ func (db *DB) insert_record(db_arec []byte) {
 		log.debug("db insert arec: ref -> db_arec")
 
 		err = db.db.Update(func(tx *bolt.Tx) error {
-			_, err := tx.CreateBucketIfNotExists([]byte(refbkt))
+			_, err := tx.CreateBucketIfNotExists([]byte(ref_bkt))
 			return err
 		})
 		if err != nil {
-			log.fatal("db insert arec: cannot create bucket %v: %v", refbkt, err)
+			log.fatal("db insert arec: cannot create bucket %v: %v", ref_bkt, err)
 		}
 
 		err = db.db.Update(func(tx *bolt.Tx) error {
-			bkt := tx.Bucket([]byte(refbkt))
+			bkt := tx.Bucket([]byte(ref_bkt))
 			err := bkt.Put(db_arec[V1_MARK_LEN+V1_AREC_REFH:V1_MARK_LEN+V1_AREC_REFL+8], db_arec)
 			return err
 		})
