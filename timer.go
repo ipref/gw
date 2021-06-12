@@ -61,7 +61,7 @@ func (m *Mark) now() M32 {
 
 }
 
-func sleep(dly, fuzz int) {
+func sleep(dly /* [ms] */, fuzz /* [ms] */ int) {
 	time.Sleep(time.Duration(dly-fuzz/2+prng.Intn(fuzz)) * time.Millisecond)
 }
 
