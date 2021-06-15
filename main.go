@@ -120,6 +120,11 @@ func main() {
 
 	go mbroker_conn()
 
+	if cli.mbroker {
+		go induce_ea_allocation()
+		go induce_ref_allocation()
+	}
+
 	msg := <-goexit
 	db.stop()
 	log.info("STOP ipref gateway: %v", msg)
