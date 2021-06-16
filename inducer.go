@@ -21,6 +21,8 @@ func allocate_eas(gw []IP32, ref rff.Ref, from, to uint64) {
 
 	pktid := uint16(prng.Intn(0x10000))
 
+	log.info("inducing ea allocation")
+
 	for lword := from; lword < to+1; lword++ {
 
 		pktid++
@@ -62,16 +64,18 @@ func induce_ea_allocation() {
 	base_ref := rff.Ref{0, 0x11110000}
 	base_gw := []IP32{0x01010101, 0x01010102, 0x01010103, 0x01010104}
 
-	log.info("inducing ea allocation")
+	log.info("START inducing ea allocation")
 
 	allocate_eas(base_gw[0:1], base_ref, 0x0002, 0x0009) // range is inclusive
-	allocate_eas(base_gw[0:1], base_ref, 0x0005, 0x000d) // some existing already
+	allocate_eas(base_gw[0:1], base_ref, 0x0005, 0x000d) // some existing ones
 	sleep(dly, dly/8)
 	allocate_eas(base_gw[1:2], base_ref, 0x0117, 0x011a)
-	allocate_eas(base_gw[1:2], base_ref, 0x0119, 0x011f) // some existing already
+	allocate_eas(base_gw[1:2], base_ref, 0x0119, 0x011f)
+	sleep(dly, dly/8)
+	allocate_eas(base_gw[0:1], base_ref, 0x0007, 0x000b) // some existing ones after a while
 	sleep(dly, dly/8)
 	allocate_eas(base_gw[2:3], base_ref, 0x0222, 0x022b)
-	allocate_eas(base_gw[2:3], base_ref, 0x0227, 0x022e) // some existing already
+	allocate_eas(base_gw[2:3], base_ref, 0x0227, 0x022e)
 	sleep(dly, dly/8)
 	allocate_eas(base_gw[:3], base_ref, 0x0335, 0x033b)
 	sleep(dly, dly/8)
@@ -88,6 +92,8 @@ func induce_ea_allocation() {
 	allocate_eas(base_gw, base_ref, 0x0993, 0x099e)
 	sleep(dly, dly/8)
 	allocate_eas(base_gw[1:3], base_ref, 0x0aa2, 0x0aaf)
+
+	log.info("STOP inducing ea allocation")
 }
 
 // -- ref allocation inducer ---------------------------------------------------

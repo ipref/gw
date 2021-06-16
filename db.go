@@ -179,11 +179,10 @@ func (mgw *MapGw) restore_eas() {
 			ea := IP32(be.Uint32(val[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4]))
 
 			if oid == 0 || mark == 0 {
-				log.err("mgw: restore eas: %v invalid oid mark: %v(%v): %v, discarding", ea, owners.name(oid), oid, mark)
+				log.err("mgw: restore ea: %v invalid oid mark: %v(%v): %v, discarding", ea, owners.name(oid), oid, mark)
 			} else if oid == mgw.oid && mark < mgw.cur_mark[oid] {
-				log.debug("mgw: restore eas: %v expired, discarding", ea)
+				log.debug("mgw: restore ea: %v expired, discarding", ea)
 			} else {
-				log.debug("mgw: restore eas: %v restore", ea)
 
 				mgw.insert_record(oid, mark, val[V1_MARK_LEN:])
 				map_tun.insert_record(oid, mark, val[V1_MARK_LEN:])
@@ -221,11 +220,10 @@ func (mtun *MapTun) restore_refs() {
 			ref.L = be.Uint64(val[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
 
 			if oid == 0 || mark == 0 {
-				log.err("mtun: restore refs: %v invalid oid(mark): %v(%v), discarding", ref, owners.name(oid), mark)
+				log.err("mtun: restore ref: %v invalid oid(mark): %v(%v), discarding", ref, owners.name(oid), mark)
 			} else if oid == mtun.oid && mark < mtun.cur_mark[oid] {
-				log.debug("mtun: restore refs: %v expired, discarding", ref)
+				log.debug("mtun: restore ref: %v expired, discarding", ref)
 			} else {
-				log.debug("mtun: restore refs: %v restore", ref)
 
 				mtun.insert_record(oid, mark, val[V1_MARK_LEN:])
 				map_gw.insert_record(oid, mark, val[V1_MARK_LEN:])
@@ -240,8 +238,7 @@ func (mtun *MapTun) restore_refs() {
 	})
 }
 
-/*
-// restore allocated eas
+/*// restore allocated eas
 func (gen *GenEA) db_restore_allocated_eas() {
 
 	if db == nil {
@@ -286,8 +283,7 @@ func (gen *GenEA) db_restore_allocated_eas() {
 }
 */
 
-/*
-// restore allocated refs
+/*// restore allocated refs
 func (gen *GenREF) db_restore_allocated_refs() {
 
 	if db == nil {
@@ -452,13 +448,25 @@ func (db *DB) insert_record(db_arec []byte) {
 	}
 
 	var err error
+	var mark M32
+	var ea IP32
+	var ip IP32
+	var gw IP32
+	var ref rff.Ref
 
 	ea_zero := is_zero(db_arec[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4])
 	ip_zero := is_zero(db_arec[V1_MARK_LEN+V1_AREC_IP : V1_MARK_LEN+V1_AREC_IP+4])
 
 	if !ea_zero && ip_zero {
 
-		log.debug("db insert arec: ea -> db_arec")
+		if cli.debug["db"] {
+			mark = M32(be.Uint32(db_arec[V1_MARK : V1_MARK+4]))
+			ea = IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4]))
+			gw = IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_GW : V1_MARK_LEN+V1_AREC_GW+4]))
+			ref.H = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFH : V1_MARK_LEN+V1_AREC_REFH+8])
+			ref.L = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
+			log.debug("db save: mark(%v) %v -> %v + %v", mark, ea, gw, &ref)
+		}
 
 		err = db.db.Update(func(tx *bolt.Tx) error {
 			_, err := tx.CreateBucketIfNotExists([]byte(ea_bkt))
@@ -479,7 +487,13 @@ func (db *DB) insert_record(db_arec []byte) {
 
 	} else if ea_zero && !ip_zero {
 
-		log.debug("db insert arec: ref -> db_arec")
+		if cli.debug["db"] {
+			mark = M32(be.Uint32(db_arec[V1_MARK : V1_MARK+4]))
+			ip = IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_IP : V1_MARK_LEN+V1_AREC_IP+4]))
+			ref.H = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFH : V1_MARK_LEN+V1_AREC_REFH+8])
+			ref.L = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
+			log.debug("db save: mark(%v) %v -> %v", mark, &ref, ip)
+		}
 
 		err = db.db.Update(func(tx *bolt.Tx) error {
 			_, err := tx.CreateBucketIfNotExists([]byte(ref_bkt))
@@ -499,7 +513,7 @@ func (db *DB) insert_record(db_arec []byte) {
 		}
 
 	} else {
-		log.err("db insert arec: invalid address record, ignoring")
+		log.err("db save arec: invalid address record, ignoring")
 	}
 }
 
@@ -571,7 +585,7 @@ func (db *DB) receive(pb *PktBuf) {
 	case V1_DATA | V1_SAVE_TIME_BASE:
 		db.save_time_base(pb)
 	default: // invalid
-		log.err("db: unrecognized v1 cmd: %v", cmd)
+		log.err("db: unrecognized v1 cmd: 0x%x from %v", cmd, pb.peer)
 	}
 
 	retbuf <- pb
