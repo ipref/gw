@@ -23,6 +23,9 @@ const (
 	SECOND_BYTE = 100
 	MIN_REF     = 256 // low ref values are reserved
 	MAXTRIES    = 10  // num of tries to get unique random value before giving up
+
+	RCVY_MAX    = 7                      // max records to recover at a time
+	RCVY_EXPIRE = (MAPPER_TMOUT * 3) / 2 // extra time before attempting recovery
 )
 
 // -- ea gen -------------------------------------------------------------------
@@ -134,7 +137,7 @@ loop:
 		case V1_NACK | V1_RECOVER_EA:
 			break loop
 		default:
-			log.err("recover ea: invalid v1 pkt: %02x", cmd)
+			log.err("recover ea: unrecognized v1 cmd: 0x%x from %v", cmd, pb.peer)
 			break loop
 		}
 	}

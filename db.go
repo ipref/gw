@@ -353,6 +353,8 @@ func (db *DB) insert_record(db_arec []byte) {
 		return
 	}
 
+	// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
+
 	var err error
 	var mark M32
 	var ea IP32
@@ -462,6 +464,110 @@ func (db *DB) save_arec(pb *PktBuf) {
 	}
 }
 
+func (db *DB) find_eas_to_recover(pb *PktBuf) int {
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pktlen := len(pkt)
+	if pktlen < V1_HDR_LEN+V1_MARK_LEN+4 {
+		log.err("db find eas: packet too short, ignoring")
+		return DROP
+	}
+
+	off := V1_HDR_LEN
+
+	if is_zero(pkt[off+V1_OID : off+V1_OID+4]) {
+		log.err("db find eas: null oid, ignoring packet")
+		return DROP
+	}
+
+	seek_oid := O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
+
+	off += V1_MARK_LEN
+
+	if (pktlen - off) != 4 {
+		log.err("db find eas: corrupted packet, ignoring")
+		return DROP
+	}
+
+	seek_ea := pkt[off : off+4]
+
+	// assume NACK
+
+	pkt[V1_CMD] = V1_NACK | V1_RECOVER_EA
+	pb.tail = pb.iphdr + off
+	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
+	pb.peer = "db"
+
+	// search for eas
+	//
+	// these operations are atomic because all access to db is from this go routine
+
+	if db.rdb == nil {
+		log.err("db find eas: db unavailable")
+		return DROP
+	}
+
+	var seek_mark M32
+
+	db.rdb.View(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(mark_bkt))
+		if bkt == nil {
+			return nil
+		}
+		val := bkt.Get(pkt[V1_HDR_LEN+V1_OID : V1_HDR_LEN+V1_OID+4])
+		if val != nil {
+			seek_mark = M32(be.Uint32(val))
+		}
+		return nil
+	})
+
+	if seek_mark == 0 {
+		log.err("db find eas: cannot find current mark for %v(%v) in db",
+			owners.name(seek_oid), seek_oid)
+		return DROP
+	}
+
+	db.rdb.View(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(ea_bkt))
+		if bkt == nil {
+			return nil
+		}
+
+		cur := bkt.Cursor()
+
+		for ea, db_arec := cur.Seek(seek_ea); ea != nil; ea, db_arec = cur.Next() {
+
+			// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
+
+			if O32(be.Uint32(db_arec[V1_OID:V1_OID+4])) != seek_oid {
+				continue
+			}
+			if !(M32(be.Uint32(db_arec[V1_MARK:V1_MARK+4]))+RCVY_EXPIRE < seek_mark) {
+				continue
+			}
+
+			copy(pkt[off:off+4], db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK+V1_AREC_EA+4])
+
+			off += 4
+			if (off-V1_HDR_LEN-V1_MARK_LEN)/4 >= RCVY_MAX {
+				break
+			}
+		}
+		return nil
+	})
+
+	// change to ACK if any eas found
+
+	if off > V1_HDR_LEN+V1_MARK_LEN {
+		pkt[V1_CMD] = V1_ACK | V1_RECOVER_EA
+		pb.tail = pb.iphdr + off
+		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
+	}
+
+	pb.schan <- pb
+	return ACCEPT
+}
+
 func (db *DB) receive(pb *PktBuf) {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
@@ -479,6 +585,8 @@ func (db *DB) receive(pb *PktBuf) {
 		pb.pp_raw("db in:  ")
 	}
 
+	verdict := DROP
+
 	switch cmd {
 
 	case V1_DATA | V1_NOOP:
@@ -486,6 +594,8 @@ func (db *DB) receive(pb *PktBuf) {
 		db.save_arec(pb)
 	case V1_DATA | V1_SET_MARK:
 		db.save_mark(pb)
+	case V1_REQ | V1_RECOVER_EA:
+		verdict = db.find_eas_to_recover(pb)
 	case V1_DATA | V1_SAVE_OID:
 		db.save_oid(pb)
 	case V1_DATA | V1_SAVE_TIME_BASE:
@@ -494,7 +604,9 @@ func (db *DB) receive(pb *PktBuf) {
 		log.err("db: unrecognized v1 cmd: 0x%x from %v", cmd, pb.peer)
 	}
 
-	retbuf <- pb
+	if verdict == DROP {
+		retbuf <- pb
+	}
 }
 
 func (db *DB) open_db() {
