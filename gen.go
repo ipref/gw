@@ -35,6 +35,7 @@ type GenEA struct {
 	bcast     IP32
 	ea        chan IP32 // mapper random ea
 	recv      chan *PktBuf
+	rcvy      chan IP32
 }
 
 var gen_ea GenEA
@@ -42,107 +43,95 @@ var gen_ea GenEA
 // trigger recovery of expired eas
 func (gen *GenEA) recover_expired_eas() {
 
-	const PAUSE = 257 // [ms]
+	const INTERVAL = (MAPPER_TMOUT * 1000) / 3 // [ms]
+	const PAUSE = 257                          // [ms]
 
-	recover_ea := make(chan *PktBuf, PKTQLEN)
-	pktid := uint16(prng.Intn(0xffff)) + 1 // make sure it's not zero
+	pktid := uint16(prng.Intn(0x10000))
 
-	// initiate ea recovery scan
+	go func() {
+		for {
+			sleep(INTERVAL, INTERVAL/8)
+			gen.rcvy <- 0
+		}
+	}()
 
-	pb := <-getbuf
-	pb.write_v1_header(V1_REQ|V1_RECOVER_EA, pktid)
-	pkt := pb.pkt[pb.iphdr:]
+	for search_ea := range gen.rcvy {
 
-	off := V1_HDR_LEN
+		sleep(PAUSE, PAUSE/5) // small delay between recovery batches
 
-	be.PutUint32(pkt[off+V1_OID:off+V1_OID+4], uint32(mapper_oid))
-	be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], 0)
-
-	off += V1_MARK_LEN
-
-	be.PutUint32(pkt[off:off+4], 0) // find first address after 0.0.0.0
-
-	off += 4
-
-	pb.tail = pb.iphdr + off
-	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
-	pb.peer = "recover_ea"
-	pb.schan = recover_ea
-	db.recv <- pb
-
-	// recover eas
-
-loop:
-	for pb = range recover_ea {
-
-		if err := pb.validate_v1_header(pb.len()); err != nil {
-
-			log.err("recover ea: invalid v1 packet from %v:  %v", pb.peer, err)
-			break loop
+		if pktid += 1; pktid == 0 {
+			pktid++
 		}
 
-		pkt := pb.pkt[pb.iphdr:pb.tail]
+		pb := <-getbuf
+		pb.write_v1_header(V1_REQ|V1_RECOVER_EA, pktid)
+		pkt := pb.pkt[pb.iphdr:]
 
-		cmd := pkt[V1_CMD]
+		off := V1_HDR_LEN
 
-		if cli.trace {
-			pb.pp_raw("recover ea:  ")
-		}
+		be.PutUint32(pkt[off+V1_OID:off+V1_OID+4], uint32(mapper_oid))
+		be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], 0)
 
-		switch cmd {
+		off += V1_MARK_LEN
 
-		case V1_ACK | V1_RECOVER_EA:
+		be.PutUint32(pkt[off:off+4], uint32(search_ea))
 
-			// pass the list to forwarders
+		off += 4
 
-			pbf := <-getbuf
-			pbf.copy_from(pb)
+		pb.tail = pb.iphdr + off
+		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
+		pb.peer = "recover ea"
+		pb.schan = gen.recv
+		db.recv <- pb
+	}
+}
 
-			pbf.pkt[pbf.iphdr+V1_CMD] = V1_DATA | V1_RECOVER_EA
-			pbf.peer = "recover_ea"
-			recv_tun <- pbf
+func (gen *GenEA) receive(pb *PktBuf) int {
 
-			// ask db for more
+	if err := pb.validate_v1_header(pb.len()); err != nil {
 
-			pkt = pb.pkt[pb.iphdr:pb.tail]
-			off = pb.len() - 4 // last returned ip address
-			if off < V1_HDR_LEN+V1_MARK_LEN {
-				break loop // no more eas
-			}
-
-			ip := be.Uint32(pkt[off : off+4])
-
-			off = V1_HDR_LEN + V1_MARK_LEN
-			be.PutUint32(pkt[off:off+4], ip+1) // next IP address
-
-			off += 4
-
-			pkt[V1_CMD] = V1_DATA | V1_RECOVER_EA
-
-			pktid = be.Uint16(pkt[V1_PKTID:V1_PKTID+2]) + 1
-			if pktid == 0 {
-				pktid++
-			}
-			be.PutUint16(pkt[V1_PKTID:V1_PKTID+2], pktid)
-
-			pb.tail = pb.iphdr + off
-			be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
-			pb.peer = "recover_ea"
-			pb.schan = recover_ea
-
-			sleep(PAUSE, PAUSE/4) // pause a little
-
-			db.recv <- pb
-
-		case V1_NACK | V1_RECOVER_EA:
-			break loop
-		default:
-			log.err("recover ea: unrecognized v1 cmd: 0x%x from %v", cmd, pb.peer)
-			break loop
-		}
+		log.err("gen ea:  invalid v1 packet from %v:  %v", pb.peer, err)
+		return DROP
 	}
 
-	retbuf <- pb
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+
+	cmd := pkt[V1_CMD]
+
+	if cli.trace {
+		pb.pp_raw("gen ea:  ")
+	}
+
+	switch cmd {
+
+	case V1_ACK | V1_RECOVER_EA:
+
+		last_off := pb.len() - 4
+
+		if last_off < V1_HDR_LEN+V1_MARK_LEN {
+			break // paranoia, should never happen
+		}
+
+		// trigger next batch
+
+		ea := IP32(be.Uint32(pkt[last_off : last_off+4]))
+		gen.rcvy <- ea + 1
+
+		// pass the list to forwarders
+
+		pkt[V1_CMD] = V1_DATA | V1_RECOVER_EA
+		pb.peer = "recover ea"
+		pb.schan = retbuf
+		recv_tun <- pb
+
+		return ACCEPT
+
+	case V1_NACK | V1_RECOVER_EA:
+	default:
+		log.err("gen ea:  unrecognized v1 cmd: 0x%x from %v", cmd, pb.peer)
+	}
+
+	return DROP
 }
 
 // generate a random ea with second to last byte >= SECOND_BYTE
@@ -179,13 +168,8 @@ func (gen *GenEA) next_ea() IP32 {
 		return ea
 	}
 
-	log.err("gen_ea: cannot allocate ea")
+	log.err("gen ea: cannot allocate ea")
 	return 0
-}
-
-func (gen *GenEA) receive(pb *PktBuf) {
-
-	retbuf <- pb
 }
 
 func (gen *GenEA) start() {
@@ -199,23 +183,16 @@ func (gen *GenEA) start() {
 			case gen.ea <- ea:
 				ea = gen.next_ea()
 			case pb := <-gen.recv:
-				gen.receive(pb)
+				if gen.receive(pb) == DROP {
+					retbuf <- pb
+				}
 			}
 		}
 	}(gen)
 
 	// recover expired eas
 
-	go func(gen *GenEA) {
-
-		const DELAY = (MAPPER_TMOUT * 1000) / 3 // [ms]
-
-		for {
-			sleep(DELAY, DELAY/8)
-			gen.recover_expired_eas()
-		}
-
-	}(gen)
+	go gen.recover_expired_eas()
 }
 
 func (gen *GenEA) init() {
@@ -223,6 +200,7 @@ func (gen *GenEA) init() {
 	gen.bcast = 0xffffffff &^ cli.ea_mask
 	gen.ea = make(chan IP32, GENQLEN)
 	gen.recv = make(chan *PktBuf, PKTQLEN)
+	gen.rcvy = make(chan IP32, PKTQLEN)
 }
 
 // -- ref gen ------------------------------------------------------------------
