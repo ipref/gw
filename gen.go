@@ -74,9 +74,13 @@ func (gen *GenEA) recover_expired_eas() {
 
 		off += V1_MARK_LEN
 
-		be.PutUint32(pkt[off:off+4], uint32(search_ea))
+		for ii := off; ii < V1_AREC_LEN; ii++ {
+			pkt[off+ii] = 0
+		}
 
-		off += 4
+		be.PutUint32(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], uint32(search_ea))
+
+		off += V1_AREC_LEN
 
 		pb.tail = pb.iphdr + off
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
@@ -106,7 +110,7 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 
 	case V1_ACK | V1_RECOVER_EA:
 
-		last_off := pb.len() - 4
+		last_off := pb.len() - V1_AREC_LEN
 
 		if last_off < V1_HDR_LEN+V1_MARK_LEN {
 			break // paranoia, should never happen
@@ -114,7 +118,7 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 
 		// trigger next batch
 
-		ea := IP32(be.Uint32(pkt[last_off : last_off+4]))
+		ea := IP32(be.Uint32(pkt[last_off+V1_AREC_EA : last_off+V1_AREC_EA+4]))
 		gen.rcvy <- ea + 1
 
 		// pass the list to forwarders

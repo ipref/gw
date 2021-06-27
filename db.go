@@ -468,7 +468,7 @@ func (db *DB) find_eas_to_recover(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 	pktlen := len(pkt)
-	if pktlen < V1_HDR_LEN+V1_MARK_LEN+4 {
+	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
 		log.err("db find eas: packet too short, ignoring")
 		return DROP
 	}
@@ -484,12 +484,12 @@ func (db *DB) find_eas_to_recover(pb *PktBuf) int {
 
 	off += V1_MARK_LEN
 
-	if (pktlen - off) != 4 {
+	if (pktlen - off) != V1_AREC_LEN {
 		log.err("db find eas: corrupted packet, ignoring")
 		return DROP
 	}
 
-	seek_ea := pkt[off : off+4]
+	seek_ea := pkt[off+V1_AREC_EA : off+V1_AREC_EA+4]
 
 	// assume NACK
 
@@ -500,7 +500,7 @@ func (db *DB) find_eas_to_recover(pb *PktBuf) int {
 
 	// search for eas
 	//
-	// these operations are atomic because all access to db is from this go routine
+	// these operations are atomic because all access to db is from inside this go routine
 
 	if db.rdb == nil {
 		log.err("db find eas: db unavailable")
@@ -546,10 +546,10 @@ func (db *DB) find_eas_to_recover(pb *PktBuf) int {
 				continue
 			}
 
-			copy(pkt[off:off+4], db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK+V1_AREC_EA+4])
+			copy(pkt[off:off+V1_AREC_LEN], db_arec[V1_MARK_LEN:V1_MARK_LEN+V1_AREC_LEN])
 
-			off += 4
-			if (off-V1_HDR_LEN-V1_MARK_LEN)/4 >= RCVY_MAX {
+			off += V1_AREC_LEN
+			if off >= RCVY_MAX*V1_AREC_LEN+V1_HDR_LEN+V1_MARK_LEN {
 				break
 			}
 		}
