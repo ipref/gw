@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	rff "github.com/ipref/ref"
 	bolt "go.etcd.io/bbolt"
 	"os"
@@ -464,7 +465,95 @@ func (db *DB) save_arec(pb *PktBuf) {
 	}
 }
 
-func (db *DB) find_eas_to_recover(pb *PktBuf) int {
+func (db *DB) remove_expired_eas(pb *PktBuf) int {
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pktlen := len(pkt)
+	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+		log.err("db remove eas: packet too short, ignoring")
+		return DROP
+	}
+
+	off := V1_HDR_LEN + V1_MARK_LEN
+
+	if (pktlen-off)%V1_AREC_LEN != 0 {
+		log.err("db remove eas: corrupted packet, ignoring")
+		return DROP
+	}
+
+	if db.db == nil {
+		return DROP
+	}
+
+	var err error
+	var ea IP32
+	var gw IP32
+	var ref rff.Ref
+
+	err = db.db.Update(func(tx *bolt.Tx) error {
+
+		bkt := tx.Bucket([]byte(ea_bkt))
+
+		if bkt == nil {
+			return nil
+		}
+
+		for ; off < pktlen; off += V1_AREC_LEN {
+
+			if is_zero(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4]) {
+				continue
+			}
+
+			// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
+
+			db_arec := bkt.Get(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4])
+
+			if bytes.Compare(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4]) != 0 {
+				log.err("db remove ea(%v): ea mismatch, cannot remove ea",
+					IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4])))
+				continue
+			}
+			if bytes.Compare(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], db_arec[V1_MARK_LEN+V1_AREC_GW:V1_MARK_LEN+V1_AREC_GW+4]) != 0 {
+				log.err("db remove ea(%v): gw mismatch, cannot remove ea",
+					IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4])))
+				continue
+			}
+			if bytes.Compare(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], db_arec[V1_MARK_LEN+V1_AREC_REFH:V1_MARK_LEN+V1_AREC_REFH+8]) != 0 ||
+				bytes.Compare(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], db_arec[V1_MARK_LEN+V1_AREC_REFL:V1_MARK_LEN+V1_AREC_REFL+8]) != 0 {
+				log.err("db remove ea(%v): ref mismatch, cannot remove ea",
+					IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4])))
+				continue
+			}
+
+			if cli.debug["db"] {
+				ea = IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4]))
+				gw = IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_GW : V1_MARK_LEN+V1_AREC_GW+4]))
+				ref.H = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFH : V1_MARK_LEN+V1_AREC_REFH+8])
+				ref.L = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
+				log.debug("db remove ea(%v): %v + %v", ea, gw, &ref)
+			}
+
+			err = bkt.Delete(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4])
+
+			if err != nil {
+				break
+			}
+		}
+
+		return err
+	})
+
+	if err != nil {
+		log.err("db remove eas failed: %v", err)
+		return DROP
+	}
+
+	pb.peer = "db"
+	gen_ea.recv <- pb
+	return ACCEPT
+}
+
+func (db *DB) find_expired_eas(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 	pktlen := len(pkt)
@@ -502,14 +591,14 @@ func (db *DB) find_eas_to_recover(pb *PktBuf) int {
 	//
 	// these operations are atomic because all access to db is from inside this go routine
 
-	if db.rdb == nil {
+	if db.db == nil {
 		log.err("db find eas: db unavailable")
 		return DROP
 	}
 
 	var seek_mark M32
 
-	db.rdb.View(func(tx *bolt.Tx) error {
+	db.db.View(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(mark_bkt))
 		if bkt == nil {
 			return nil
@@ -527,7 +616,7 @@ func (db *DB) find_eas_to_recover(pb *PktBuf) int {
 		return DROP
 	}
 
-	db.rdb.View(func(tx *bolt.Tx) error {
+	db.db.View(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(ea_bkt))
 		if bkt == nil {
 			return nil
@@ -595,7 +684,9 @@ func (db *DB) receive(pb *PktBuf) {
 	case V1_DATA | V1_SET_MARK:
 		db.save_mark(pb)
 	case V1_REQ | V1_RECOVER_EA:
-		verdict = db.find_eas_to_recover(pb)
+		verdict = db.find_expired_eas(pb)
+	case V1_DATA | V1_RECOVER_EA:
+		verdict = db.remove_expired_eas(pb)
 	case V1_DATA | V1_SAVE_OID:
 		db.save_oid(pb)
 	case V1_DATA | V1_SAVE_TIME_BASE:
@@ -692,5 +783,5 @@ func (db *DB) start() {
 }
 
 func (db *DB) init() {
-	db.recv = make(chan *PktBuf, PKTQLEN)
+	db.recv = make(chan *PktBuf, PKTQLEN*4)
 }

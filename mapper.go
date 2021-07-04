@@ -239,7 +239,7 @@ func (mgw *MapGw) init(oid O32) {
 func (mgw *MapGw) set_cur_mark(oid O32, mark M32) {
 
 	if oid == 0 || mark == 0 {
-		log.fatal("mgw: unexpected invalid oid(%v) or mark(%v)", oid, mark)
+		log.fatal("mgw:  unexpected invalid oid(%v) or mark(%v)", oid, mark)
 	}
 	if int(oid) >= len(mgw.cur_mark) {
 		mgw.cur_mark = append(mgw.cur_mark, make([]M32, int(oid)-len(mgw.cur_mark)+1)...)
@@ -252,7 +252,7 @@ func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 	iprefrec, ok := mgw.their_ipref.Get(dst)
 	if !ok {
 		if cli.debug_mapper {
-			log.debug("mgw: dst ipref not found for: %v", dst)
+			log.debug("mgw:  dst ipref not found for: %v", dst)
 		}
 		return IpRefRec{0, rff.Ref{0, 0}, 0, 0} // not found
 	}
@@ -260,13 +260,13 @@ func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 	rec := iprefrec.(IpRefRec)
 
 	if int(rec.oid) >= len(mgw.cur_mark) {
-		log.err("mgw: invalid oid(%v) in their_ipref, ignoring record", rec.oid)
+		log.err("mgw:  invalid oid(%v) in their_ipref, ignoring record", rec.oid)
 		return IpRefRec{0, rff.Ref{0, 0}, 0, 0}
 	}
 
 	if rec.mark < mgw.cur_mark[rec.oid] {
 		if cli.debug_mapper {
-			log.debug("mgw: dst ipref expired for: %v", dst)
+			log.debug("mgw:  dst ipref expired for: %v", dst)
 		}
 		return IpRefRec{0, rff.Ref{0, 0}, 0, 0} // expired
 	}
@@ -274,7 +274,7 @@ func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 	if rec.oid == mgw.oid && rec.mark-mgw.cur_mark[mgw.oid] < MAPPER_REFRESH {
 
 		if cli.debug_mapper {
-			log.debug("mgw: refreshing dst ipref for: %v", dst)
+			log.debug("mgw:  refreshing dst ipref for: %v", dst)
 		}
 		mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
 		rec.mark = mark
@@ -299,14 +299,14 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 		rec := iprefrec.(IpRefRec)
 
 		if int(rec.oid) >= len(mgw.cur_mark) {
-			log.err("mgw: invalid oid(%v) in our_ipref, ignoring record", rec.oid)
+			log.err("mgw:  invalid oid(%v) in our_ipref, ignoring record", rec.oid)
 			return IpRefRec{0, rff.Ref{0, 0}, 0, 0}
 		}
 
 		if rec.mark < mgw.cur_mark[rec.oid] {
 
 			if cli.debug_mapper {
-				log.debug("mgw: src ipref expired for: %v, reallocating", src)
+				log.debug("mgw:  src ipref expired for: %v, reallocating", src)
 			}
 
 		} else {
@@ -314,7 +314,7 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 			if rec.oid == mgw.oid && rec.mark-mgw.cur_mark[mgw.oid] < MAPPER_REFRESH {
 
 				if cli.debug_mapper {
-					log.debug("mgw: refreshing src ipref for: %v", src)
+					log.debug("mgw:  refreshing src ipref for: %v", src)
 				}
 				mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
 				rec.mark = mark
@@ -334,10 +334,10 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 
 	ref := <-gen_ref.ref
 	if cli.debug_mapper {
-		log.debug("mgw: no src ipref for: %v, allocating: %v", src, &ref)
+		log.debug("mgw:  no src ipref for: %v, allocating: %v", src, &ref)
 	}
 	if ref.IsZero() {
-		log.err("mgw: cannot get new reference for %v, ignoring record", src)
+		log.err("mgw:  cannot get new reference for %v, ignoring record", src)
 		return IpRefRec{0, rff.Ref{0, 0}, 0, 0}
 	}
 	mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
@@ -362,7 +362,7 @@ func (mgw *MapGw) insert_record(oid O32, mark M32, arec []byte) {
 	ref.L = be.Uint64(arec[V1_AREC_REFL : V1_AREC_REFL+8])
 
 	if gw == 0 || ref.IsZero() {
-		log.err("mgw: unexpected null gw + ref, %v %v %v %v, dropping record", ea, ip, gw, &ref)
+		log.err("mgw:  unexpected null gw + ref, %v %v %v %v, dropping record", ea, ip, gw, &ref)
 		return
 	}
 
@@ -371,13 +371,13 @@ func (mgw *MapGw) insert_record(oid O32, mark M32, arec []byte) {
 		if (oid == mgw.oid && arec[V1_AREC_EA+2] < SECOND_BYTE) ||
 			(oid != mgw.oid && arec[V1_AREC_EA+2] >= SECOND_BYTE) {
 
-			log.err("mgw: %v(%v): second byte rule violation(ea), %v %v %v %v, dropping record",
+			log.err("mgw:  %v(%v): second byte rule violation(ea), %v %v %v %v, dropping record",
 				owners.name(oid), oid, ea, ip, gw, &ref)
 			return
 		}
 
 		if cli.debug_mapper {
-			log.debug("mgw: set their_ipref  %v  ->  %v + %v", ea, gw, &ref)
+			log.debug("mgw:  set their_ipref  %v  ->  %v + %v", ea, gw, &ref)
 		}
 		mgw.their_ipref.Set(ea, IpRefRec{gw, ref, oid, mark})
 
@@ -385,18 +385,18 @@ func (mgw *MapGw) insert_record(oid O32, mark M32, arec []byte) {
 
 		if (oid == mgw.oid && arec[V1_AREC_REFL+6] < SECOND_BYTE) ||
 			(oid != mgw.oid && arec[V1_AREC_REFL+6] >= SECOND_BYTE) {
-			log.err("mgw: %v(%v): second byte rule violation(ref), %v %v %v %v, dropping record",
+			log.err("mgw:  %v(%v): second byte rule violation(ref), %v %v %v %v, dropping record",
 				owners.name(oid), oid, ea, ip, gw, &ref)
 			return
 		}
 
 		if cli.debug_mapper {
-			log.debug("mgw: set our_ipref  %v  ->  %v + %v", ip, gw, &ref)
+			log.debug("mgw:  set our_ipref  %v  ->  %v + %v", ip, gw, &ref)
 		}
 		mgw.our_ipref.Set(ip, IpRefRec{gw, ref, oid, mark})
 
 	} else {
-		log.err("mgw: invalid address record, %v %v %v %v, dropping record", ea, ip, gw, &ref)
+		log.err("mgw:  invalid address record, %v %v %v %v, dropping record", ea, ip, gw, &ref)
 	}
 }
 
@@ -405,11 +405,11 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 	pktlen := len(pkt)
 	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
-		log.err("mgw: SET_AREC packet too short, dropping")
+		log.err("mgw:  SET_AREC packet too short, dropping")
 		return DROP
 	}
 	if int(be.Uint16(pkt[V1_PKTLEN:V1_PKTLEN+2]))*4 != pktlen {
-		log.err("mgw: SET_AREC packet length mismatch, dropping")
+		log.err("mgw:  SET_AREC packet length mismatch, dropping")
 		return DROP
 	}
 
@@ -429,7 +429,7 @@ func (mgw *MapGw) set_new_mark(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 	if len(pkt) != V1_HDR_LEN+V1_MARK_LEN || pkt[V1_CMD] != V1_SET_MARK {
-		log.err("mgw: invalid SET_MARK packet: PKT %08x data/tail(%v/%v), dropping",
+		log.err("mgw:  invalid SET_MARK packet: PKT %08x data/tail(%v/%v), dropping",
 			be.Uint32(pb.pkt[pb.data:pb.data+4]), pb.data, pb.tail)
 		return DROP
 	}
@@ -437,7 +437,7 @@ func (mgw *MapGw) set_new_mark(pb *PktBuf) int {
 	oid := O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
 	mark := M32(be.Uint32(pkt[off+V1_MARK : off+V1_MARK+4]))
 	if cli.debug_mapper {
-		log.debug("mgw: set mark %v(%v): %v", owners.name(oid), oid, mark)
+		log.debug("mgw:  set mark %v(%v): %v", owners.name(oid), oid, mark)
 	}
 	mgw.set_cur_mark(oid, mark)
 
@@ -450,7 +450,7 @@ func (mgw *MapGw) update_soft(pb *PktBuf) int {
 
 	if len(pkt) != V1_HDR_LEN+V1_SOFT_LEN || pkt[V1_CMD] != V1_SET_SOFT {
 
-		log.err("mgw: invalid SET_SOFT packet: PKT %08x data/tail(%v/%v), dropping",
+		log.err("mgw:  invalid SET_SOFT packet: PKT %08x data/tail(%v/%v), dropping",
 			be.Uint32(pb.pkt[pb.data:pb.data+4]), pb.data, pb.tail)
 
 		return DROP
@@ -468,13 +468,13 @@ func (mgw *MapGw) update_soft(pb *PktBuf) int {
 
 	if soft.port != 0 {
 		if cli.debug_mapper {
-			log.debug("mgw: update soft %v:%v mtu(%v) ttl/hops %v/%v", soft.gw, soft.port,
+			log.debug("mgw:  update soft %v:%v mtu(%v) ttl/hops %v/%v", soft.gw, soft.port,
 				soft.mtu, soft.ttl, soft.hops)
 		}
 		mgw.soft[soft.gw] = soft
 	} else {
 		if cli.debug_mapper {
-			log.debug("mgw: remove soft %v", soft.gw)
+			log.debug("mgw:  remove soft %v", soft.gw)
 		}
 		delete(mgw.soft, soft.gw)
 	}
@@ -482,7 +482,84 @@ func (mgw *MapGw) update_soft(pb *PktBuf) int {
 	return DROP
 }
 
-func (mgw *MapGw) check_for_expired_eas(pb *PktBuf) int {
+func (mgw *MapGw) remove_expired_eas(pb *PktBuf) int {
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pktlen := len(pkt)
+
+	off := V1_HDR_LEN
+
+	if off+V1_MARK_LEN+V1_AREC_LEN > pktlen {
+		log.err("mgw:  remove expired eas pkt too short")
+		return DROP
+	}
+
+	oid := O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
+
+	if oid != mgw.oid {
+		log.err("mgw:  remove expired eas oid(%v) does not match mgw oid(%v)", oid, mgw.oid)
+		return DROP
+	}
+
+	off += V1_MARK_LEN
+
+	if (pktlen-off)%V1_AREC_LEN != 0 {
+		log.err("mgw:  remove expired eas pkt corrupted")
+		return DROP
+	}
+
+	var arec AddrRec
+
+	for ; off < pktlen; off += V1_AREC_LEN {
+
+		arec.ea = IP32(be.Uint32(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4]))
+		arec.gw = IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
+		arec.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
+		arec.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+
+		if arec.ea == 0 {
+			continue
+		}
+
+		iprefrec, ok := mgw.their_ipref.Get(arec.ea)
+
+		if !ok {
+			continue
+		}
+
+		rec := iprefrec.(IpRefRec)
+
+		if oid != rec.oid {
+			log.err("mgw:  remove expired ea(%v): pkt oid(%v) does not match record oid(%v)",
+				arec.ea, oid, rec.oid)
+			continue
+		}
+		if arec.gw != rec.ip {
+			log.err("mgw:  remove expired ea(%v): pkt gw(%v) does not match record gw(%v)",
+				arec.ea, arec.gw, rec.ip)
+			continue
+		}
+		if arec.ref.H != rec.ref.H || arec.ref.L != rec.ref.L {
+			log.err("mgw:  remove expired ea(%v): pkt ref(%v) does not match record ref(%v)",
+				arec.ea, &arec.ref, &rec.ref)
+			continue
+		}
+
+		mgw.their_ipref.Delete(arec.ea)
+
+		if cli.debug_mapper {
+			log.debug("mgw:  removed expired ea(%v): %v + %v mark(%v)",
+				arec.ea, rec.ip, &rec.ref, rec.mark)
+		}
+	}
+
+	pb.peer = "mgw"
+	db.recv <- pb
+
+	return ACCEPT
+}
+
+/* func (mgw *MapGw) check_for_expired_eas(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 	pktlen := len(pkt)
@@ -547,6 +624,7 @@ func (mgw *MapGw) check_for_expired_eas(pb *PktBuf) int {
 
 	return ACCEPT
 }
+*/
 
 // -- MapTun -------------------------------------------------------------------
 
@@ -669,7 +747,7 @@ func (mtun *MapTun) get_src_iprec(gw IP32, ref rff.Ref) *IpRec {
 			if rec.oid == mtun.oid && rec.mark-mtun.cur_mark[mtun.oid] < MAPPER_REFRESH {
 
 				if cli.debug_mapper {
-					log.debug("mtun: refreshing src ea for: %v + %v", gw, ref)
+					log.debug("mtun: refreshing src ea(%v) for: %v + %v", rec.ip, gw, &ref)
 				}
 				mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
 				rec.mark = mark
@@ -864,7 +942,102 @@ func (mtun *MapTun) set_new_mark(pb *PktBuf) int {
 	return DROP
 }
 
-func (mtun *MapTun) check_for_expired_refs(pb *PktBuf) int {
+func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pktlen := len(pkt)
+
+	off := V1_HDR_LEN
+
+	if off+V1_MARK_LEN+V1_AREC_LEN > pktlen {
+		log.err("mtun: query expired eas pkt too short")
+		return DROP
+	}
+
+	oid := O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
+
+	if oid != mtun.oid {
+		log.err("mtun: query expired eas oid(%v) does not match mtun oid(%v)", oid, mtun.oid)
+		return DROP
+	}
+
+	off += V1_MARK_LEN
+
+	if (pktlen-off)%V1_AREC_LEN != 0 {
+		log.err("mtun: query expired eas pkt corrupted")
+		return DROP
+	}
+
+	var arec AddrRec
+
+	for ; off < pktlen; off += V1_AREC_LEN {
+
+		arec.ea = IP32(be.Uint32(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4]))
+		arec.gw = IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
+		arec.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
+		arec.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+
+		their_refs, ok := mtun.our_ea.Get(arec.gw)
+
+		if !ok {
+			if cli.debug_mapper {
+				log.debug("mtun: removed expired ea(%v): %v + %v gw not found",
+					arec.ea, arec.gw, &arec.ref)
+			}
+			continue
+		}
+
+		iprec, ok := their_refs.(*b.Tree).Get(arec.ref)
+
+		if !ok {
+			if cli.debug_mapper {
+				log.debug("mtun: removed expired ea(%v): %v + %v record not found",
+					arec.ea, arec.gw, &arec.ref)
+			}
+			continue
+		}
+
+		rec := iprec.(IpRec)
+
+		if rec.oid != oid {
+			if cli.debug_mapper {
+				log.debug("mtun: removed expired ea(%v): %v + %v rec.oid(%v) does not match oid(%v)",
+					arec.ea, arec.gw, &arec.ref, rec.oid, oid)
+			}
+			continue
+		}
+
+		if rec.ip != arec.ea {
+			if cli.debug_mapper {
+				log.debug("mtun: removed expired ea(%v): %v + %v rec.ea(%v) does not match",
+					arec.ea, arec.gw, &arec.ref, oid, rec.ip)
+			}
+			continue
+		}
+
+		if !(rec.mark < mtun.cur_mark[rec.oid]) {
+			be.PutUint32(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], 0)
+			if cli.debug_mapper {
+				log.debug("mtun: keeping non-expired ea(%v): %v + %v rec.mark(%v) not less than mark(%v)",
+					arec.ea, arec.gw, &arec.ref, rec.mark, mtun.cur_mark[rec.oid])
+			}
+			continue
+		}
+
+		their_refs.(*b.Tree).Delete(arec.ref)
+		if cli.debug_mapper {
+			log.debug("mtun: removed expired ea(%v): %v + %v rec.mark(%v) less than mark(%v)",
+				arec.ea, arec.gw, &arec.ref, rec.mark, mtun.cur_mark[rec.oid])
+		}
+	}
+
+	pb.peer = "mtun"
+	recv_tun <- pb
+
+	return ACCEPT
+}
+
+/* func (mtun *MapTun) check_for_expired_refs(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 	pktlen := len(pkt)
@@ -938,5 +1111,6 @@ func (mtun *MapTun) check_for_expired_refs(pb *PktBuf) int {
 
 	return ACCEPT
 }
+*/
 
-// -- Mapper helpers -----------------------------------------------------------
+// -----------------------------------------------------------------------------

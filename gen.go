@@ -86,6 +86,7 @@ func (gen *GenEA) recover_expired_eas() {
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
 		pb.peer = "recover ea"
 		pb.schan = gen.recv
+		log.debug("gen ea:  recover eas starting from: %v", search_ea)
 		db.recv <- pb
 	}
 }
@@ -106,11 +107,13 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 		pb.pp_raw("gen ea:  ")
 	}
 
+	pktlen := len(pkt)
+
 	switch cmd {
 
 	case V1_ACK | V1_RECOVER_EA:
 
-		last_off := pb.len() - V1_AREC_LEN
+		last_off := pktlen - V1_AREC_LEN
 
 		if last_off < V1_HDR_LEN+V1_MARK_LEN {
 			break // paranoia, should never happen
@@ -121,16 +124,50 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 		ea := IP32(be.Uint32(pkt[last_off+V1_AREC_EA : last_off+V1_AREC_EA+4]))
 		gen.rcvy <- ea + 1
 
-		// pass the list to forwarders
+		// pass the list to fwd_to_tun
 
 		pkt[V1_CMD] = V1_DATA | V1_RECOVER_EA
 		pb.peer = "recover ea"
 		pb.schan = retbuf
-		recv_tun <- pb
+		recv_gw <- pb
 
 		return ACCEPT
 
 	case V1_NACK | V1_RECOVER_EA:
+
+		log.debug("gen ea:  no more eas to recover")
+
+	case V1_DATA | V1_RECOVER_EA:
+
+		if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+			log.err("gen ea:  packet too short, ignoring")
+			return DROP
+		}
+
+		off := V1_HDR_LEN + V1_MARK_LEN
+
+		if (pktlen-off)%V1_AREC_LEN != 0 {
+			log.err("gen ea:  corrupted packet, ignoring")
+			return DROP
+		}
+
+		for ; off < pktlen; off += V1_AREC_LEN {
+
+			ea := IP32(be.Uint32(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4]))
+
+			if ea != 0 {
+				delete(gen.allocated, ea)
+				if cli.debug["gen"] {
+					var gw IP32
+					var ref rff.Ref
+					gw = IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
+					ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
+					ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+					log.debug("gen ea:  deleted allocated ea(%v): %v + %v", ea, gw, &ref)
+				}
+			}
+		}
+
 	default:
 		log.err("gen ea:  unrecognized v1 cmd: 0x%x from %v", cmd, pb.peer)
 	}
@@ -168,11 +205,12 @@ func (gen *GenEA) next_ea() IP32 {
 			continue // already allocated, try another
 		}
 		gen.allocated[ea] = true
+		log.debug("gen ea:  allocated ea(%v)", ea)
 
 		return ea
 	}
 
-	log.err("gen ea: cannot allocate ea")
+	log.err("gen ea:  cannot allocate ea")
 	return 0
 }
 
