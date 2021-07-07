@@ -251,7 +251,7 @@ func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 
 	iprefrec, ok := mgw.their_ipref.Get(dst)
 	if !ok {
-		if cli.debug_mapper {
+		if cli.debug["mapper"] {
 			log.debug("mgw:  dst ipref not found for: %v", dst)
 		}
 		return IpRefRec{0, rff.Ref{0, 0}, 0, 0} // not found
@@ -265,7 +265,7 @@ func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 	}
 
 	if rec.mark < mgw.cur_mark[rec.oid] {
-		if cli.debug_mapper {
+		if cli.debug["mapper"] {
 			log.debug("mgw:  dst ipref expired for: %v", dst)
 		}
 		return IpRefRec{0, rff.Ref{0, 0}, 0, 0} // expired
@@ -273,7 +273,7 @@ func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 
 	if rec.oid == mgw.oid && rec.mark-mgw.cur_mark[mgw.oid] < MAPPER_REFRESH {
 
-		if cli.debug_mapper {
+		if cli.debug["mapper"] {
 			log.debug("mgw:  refreshing dst ipref for: %v", dst)
 		}
 		mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
@@ -305,7 +305,7 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 
 		if rec.mark < mgw.cur_mark[rec.oid] {
 
-			if cli.debug_mapper {
+			if cli.debug["mapper"] {
 				log.debug("mgw:  src ipref expired for: %v, reallocating", src)
 			}
 
@@ -313,7 +313,7 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 
 			if rec.oid == mgw.oid && rec.mark-mgw.cur_mark[mgw.oid] < MAPPER_REFRESH {
 
-				if cli.debug_mapper {
+				if cli.debug["mapper"] {
 					log.debug("mgw:  refreshing src ipref for: %v", src)
 				}
 				mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
@@ -333,7 +333,7 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 	// local host's ip does not have a map to ipref, create one
 
 	ref := <-gen_ref.ref
-	if cli.debug_mapper {
+	if cli.debug["mapper"] {
 		log.debug("mgw:  no src ipref for: %v, allocating: %v", src, &ref)
 	}
 	if ref.IsZero() {
@@ -376,7 +376,7 @@ func (mgw *MapGw) insert_record(oid O32, mark M32, arec []byte) {
 			return
 		}
 
-		if cli.debug_mapper {
+		if cli.debug["mapper"] {
 			log.debug("mgw:  set their_ipref  %v  ->  %v + %v", ea, gw, &ref)
 		}
 		mgw.their_ipref.Set(ea, IpRefRec{gw, ref, oid, mark})
@@ -390,7 +390,7 @@ func (mgw *MapGw) insert_record(oid O32, mark M32, arec []byte) {
 			return
 		}
 
-		if cli.debug_mapper {
+		if cli.debug["mapper"] {
 			log.debug("mgw:  set our_ipref  %v  ->  %v + %v", ip, gw, &ref)
 		}
 		mgw.our_ipref.Set(ip, IpRefRec{gw, ref, oid, mark})
@@ -436,7 +436,7 @@ func (mgw *MapGw) set_new_mark(pb *PktBuf) int {
 	off := V1_HDR_LEN
 	oid := O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
 	mark := M32(be.Uint32(pkt[off+V1_MARK : off+V1_MARK+4]))
-	if cli.debug_mapper {
+	if cli.debug["mapper"] {
 		log.debug("mgw:  set mark %v(%v): %v", owners.name(oid), oid, mark)
 	}
 	mgw.set_cur_mark(oid, mark)
@@ -467,13 +467,13 @@ func (mgw *MapGw) update_soft(pb *PktBuf) int {
 	soft.hops = pkt[off+V1_SOFT_HOPS]
 
 	if soft.port != 0 {
-		if cli.debug_mapper {
+		if cli.debug["mapper"] {
 			log.debug("mgw:  update soft %v:%v mtu(%v) ttl/hops %v/%v", soft.gw, soft.port,
 				soft.mtu, soft.ttl, soft.hops)
 		}
 		mgw.soft[soft.gw] = soft
 	} else {
-		if cli.debug_mapper {
+		if cli.debug["mapper"] {
 			log.debug("mgw:  remove soft %v", soft.gw)
 		}
 		delete(mgw.soft, soft.gw)
@@ -547,7 +547,7 @@ func (mgw *MapGw) remove_expired_eas(pb *PktBuf) int {
 
 		mgw.their_ipref.Delete(arec.ea)
 
-		if cli.debug_mapper {
+		if cli.debug["mapper"] {
 			log.debug("mgw:  removed expired ea(%v): %v + %v mark(%v)",
 				arec.ea, rec.ip, &rec.ref, rec.mark)
 		}
@@ -660,7 +660,7 @@ func (mtun *MapTun) set_cur_mark(oid O32, mark M32) {
 
 func (mtun *MapTun) set_soft(src IP32, soft SoftRec) {
 
-	if cli.debug_mapper {
+	if cli.debug["mapper"] {
 		log.debug("mtun: set soft %v:%v mtu(%v) ttl/hops %v/%v", soft.gw, soft.port,
 			soft.mtu, soft.ttl, soft.hops)
 	}
@@ -692,7 +692,7 @@ func (mtun *MapTun) get_dst_ip(gw IP32, ref rff.Ref) IP32 {
 	}
 
 	if rec.mark < mtun.cur_mark[rec.oid] {
-		if cli.debug_mapper {
+		if cli.debug["mapper"] {
 			log.debug("mtun: dst ip expired for: %v + %v", gw, &ref)
 		}
 		return 0 // expired
@@ -700,7 +700,7 @@ func (mtun *MapTun) get_dst_ip(gw IP32, ref rff.Ref) IP32 {
 
 	if rec.oid == mtun.oid && rec.mark-mtun.cur_mark[mtun.oid] < MAPPER_REFRESH {
 
-		if cli.debug_mapper {
+		if cli.debug["mapper"] {
 			log.debug("mtun: refreshing dst ip for: %v + %v", gw, &ref)
 		}
 		mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
@@ -738,7 +738,7 @@ func (mtun *MapTun) get_src_iprec(gw IP32, ref rff.Ref) *IpRec {
 
 		if rec.mark < mtun.cur_mark[rec.oid] {
 
-			if cli.debug_mapper {
+			if cli.debug["mapper"] {
 				log.debug("mtun: src ea expired for: %v + %v, reallocating", gw, &ref)
 			}
 
@@ -746,7 +746,7 @@ func (mtun *MapTun) get_src_iprec(gw IP32, ref rff.Ref) *IpRec {
 
 			if rec.oid == mtun.oid && rec.mark-mtun.cur_mark[mtun.oid] < MAPPER_REFRESH {
 
-				if cli.debug_mapper {
+				if cli.debug["mapper"] {
 					log.debug("mtun: refreshing src ea(%v) for: %v + %v", rec.ip, gw, &ref)
 				}
 				mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
@@ -766,7 +766,7 @@ func (mtun *MapTun) get_src_iprec(gw IP32, ref rff.Ref) *IpRec {
 	// no ea for this remote host, allocate one
 
 	ea := <-gen_ea.ea
-	if cli.debug_mapper {
+	if cli.debug["mapper"] {
 		log.debug("mtun: no src ea for: %v + %v, allocating: %v", gw, &ref, ea)
 	}
 	if ea == 0 {
@@ -813,7 +813,7 @@ func (mtun *MapTun) insert_record(oid O32, mark M32, arec []byte) {
 			their_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
 			mtun.our_ea.Set(gw, their_refs)
 		}
-		if cli.debug_mapper {
+		if cli.debug["mapper"] {
 			log.debug("mtun: set their_refs  %v  ->  %v  ->  %v", gw, &ref, ea)
 		}
 		their_refs.(*b.Tree).Set(ref, IpRec{ea, oid, mark})
@@ -832,7 +832,7 @@ func (mtun *MapTun) insert_record(oid O32, mark M32, arec []byte) {
 			our_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
 			mtun.our_ip.Set(gw, our_refs)
 		}
-		if cli.debug_mapper {
+		if cli.debug["mapper"] {
 			log.debug("mtun: set our_refs  %v  ->  %v  ->  %v", gw, &ref, ip)
 		}
 		our_refs.(*b.Tree).Set(ref, IpRec{ip, oid, mark})
@@ -876,7 +876,7 @@ func (mtun *MapTun) get_ea(pb *PktBuf) int {
 		return DROP
 	}
 
-	if cli.debug_mapper {
+	if cli.debug["mapper"] {
 		log.debug("mtun: in from %v: %v", pb.peer, pb.pp_pkt())
 	}
 	if cli.trace {
@@ -934,7 +934,7 @@ func (mtun *MapTun) set_new_mark(pb *PktBuf) int {
 	off := V1_HDR_LEN
 	oid := O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
 	mark := M32(be.Uint32(pkt[off+V1_MARK : off+V1_MARK+4]))
-	if cli.debug_mapper {
+	if cli.debug["mapper"] {
 		log.debug("mtun: set mark %v(%v): %v", owners.name(oid), oid, mark)
 	}
 	mtun.set_cur_mark(oid, mark)
@@ -980,7 +980,7 @@ func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
 		their_refs, ok := mtun.our_ea.Get(arec.gw)
 
 		if !ok {
-			if cli.debug_mapper {
+			if cli.debug["mapper"] {
 				log.debug("mtun: removed expired ea(%v): %v + %v gw not found",
 					arec.ea, arec.gw, &arec.ref)
 			}
@@ -990,7 +990,7 @@ func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
 		iprec, ok := their_refs.(*b.Tree).Get(arec.ref)
 
 		if !ok {
-			if cli.debug_mapper {
+			if cli.debug["mapper"] {
 				log.debug("mtun: removed expired ea(%v): %v + %v record not found",
 					arec.ea, arec.gw, &arec.ref)
 			}
@@ -1000,7 +1000,7 @@ func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
 		rec := iprec.(IpRec)
 
 		if rec.oid != oid {
-			if cli.debug_mapper {
+			if cli.debug["mapper"] {
 				log.debug("mtun: removed expired ea(%v): %v + %v rec.oid(%v) does not match oid(%v)",
 					arec.ea, arec.gw, &arec.ref, rec.oid, oid)
 			}
@@ -1008,7 +1008,7 @@ func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
 		}
 
 		if rec.ip != arec.ea {
-			if cli.debug_mapper {
+			if cli.debug["mapper"] {
 				log.debug("mtun: removed expired ea(%v): %v + %v rec.ea(%v) does not match",
 					arec.ea, arec.gw, &arec.ref, oid, rec.ip)
 			}
@@ -1017,7 +1017,7 @@ func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
 
 		if !(rec.mark < mtun.cur_mark[rec.oid]) {
 			be.PutUint32(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], 0)
-			if cli.debug_mapper {
+			if cli.debug["mapper"] {
 				log.debug("mtun: keeping non-expired ea(%v): %v + %v rec.mark(%v) not less than mark(%v)",
 					arec.ea, arec.gw, &arec.ref, rec.mark, mtun.cur_mark[rec.oid])
 			}
@@ -1025,7 +1025,7 @@ func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
 		}
 
 		their_refs.(*b.Tree).Delete(arec.ref)
-		if cli.debug_mapper {
+		if cli.debug["mapper"] {
 			log.debug("mtun: removed expired ea(%v): %v + %v rec.mark(%v) less than mark(%v)",
 				arec.ea, arec.gw, &arec.ref, rec.mark, mtun.cur_mark[rec.oid])
 		}

@@ -237,7 +237,7 @@ func induce_arp(nexthop IP32) {
 		log.fatal("gw induce arp: shell command failed: %v", cmd)
 	}
 
-	if cli.debug_gw {
+	if cli.debug["gw"] {
 		log.debug("gw induce arp: %v", strings.Split(out, "\n")[0])
 	}
 
@@ -337,12 +337,12 @@ func gw_sender(con net.PacketConn) {
 
 			if len(arprec.pbq) != 0 {
 				if len(arprec.pbq) < ARP_MAX_QUEUE {
-					if cli.debug_gw {
+					if cli.debug["gw"] {
 						log.debug("gw out:  already incuding arp for %v, queuing packet", nexthop)
 					}
 					arprec.pbq = append(arprec.pbq, pb)
 				} else {
-					if cli.debug_gw {
+					if cli.debug["gw"] {
 						log.debug("gw out:  queue waiting for %v arp full, dropping packet", nexthop)
 					}
 					retbuf <- pb
@@ -353,7 +353,7 @@ func gw_sender(con net.PacketConn) {
 			arprec.pbq = append(arprec.pbq, pb)
 
 			if arprec.flags&ARP_FLAG_COMPLETED == 0 {
-				if cli.debug_gw {
+				if cli.debug["gw"] {
 					log.debug("gw out:  mac unavailable for %v, inducing arp", nexthop)
 				}
 				go induce_arp(nexthop)
@@ -362,7 +362,7 @@ func gw_sender(con net.PacketConn) {
 
 			if arprec.expire < arp_marker {
 				arprec.expire = arp_marker + ARP_REC_EXPIRE
-				if cli.debug_gw {
+				if cli.debug["gw"] {
 					log.debug("gw out:  mac for %v, expired, induce arp", nexthop)
 				}
 				go induce_arp(nexthop)
@@ -393,7 +393,7 @@ func gw_sender(con net.PacketConn) {
 				copy(pb.pkt[pb.data+ETHER_SRC_MAC:pb.data+ETHER_SRC_MAC+6], cli.ifc.HardwareAddr)
 				be.PutUint16(pb.pkt[pb.data+ETHER_TYPE:pb.data+ETHER_TYPE+2], ETHER_IPv4)
 
-				if cli.debug_gw {
+				if cli.debug["gw"] {
 					log.debug("gw out:  %v", pb.pp_pkt())
 				}
 
@@ -432,7 +432,7 @@ func gw_receiver(con net.PacketConn) {
 		pktlen := 0
 
 		rlen, haddr, err := con.ReadFrom(pkt)
-		if cli.debug_gw {
+		if cli.debug["gw"] {
 			log.debug("gw in: src mac: %v  rcvlen(%v)", haddr, rlen)
 		}
 		if rlen == 0 {
@@ -462,7 +462,7 @@ func gw_receiver(con net.PacketConn) {
 		pb.tail = pb.data + pktlen
 		pb.set_iphdr()
 
-		if cli.debug_gw {
+		if cli.debug["gw"] {
 			log.debug("gw in: %v", pb.pp_pkt())
 		}
 

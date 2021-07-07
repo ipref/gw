@@ -30,7 +30,7 @@ func tun_sender(fd *os.File) {
 		be.PutUint16(pb.pkt[pb.data+TUN_FLAGS:pb.data+TUN_FLAGS+2], TUN_IFF_TUN)
 		be.PutUint16(pb.pkt[pb.data+TUN_PROTO:pb.data+TUN_PROTO+2], TUN_IPv4)
 
-		if cli.debug_tun {
+		if cli.debug["tun"] {
 			log.debug("tun out: %v", pb.pp_pkt())
 		}
 
@@ -88,7 +88,7 @@ func tun_receiver(fd *os.File) {
 
 		proto := be.Uint16(pkt[TUN_PROTO : TUN_PROTO+2])
 		if proto != ETHER_IPv4 {
-			if cli.debug_tun {
+			if cli.debug["tun"] {
 				if proto == ETHER_IPv6 {
 					log.debug("tun: IPv6 packet, dropping")
 				} else {
@@ -111,7 +111,7 @@ func tun_receiver(fd *os.File) {
 
 		pb.set_iphdr()
 
-		if cli.debug_tun {
+		if cli.debug["tun"] {
 			log.debug("tun in: %v", pb.pp_pkt())
 		}
 

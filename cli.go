@@ -16,20 +16,17 @@ const (
 )
 
 var cli struct { // no locks, once setup in cli, never modified thereafter
-	debuglist    string
-	debug_gw     bool
-	debug_mapper bool
-	debug_tun    bool
-	mbroker      bool
-	ticks        bool
-	trace        bool
-	stamps       bool
-	datadir      string
-	gw           string
-	ea           string
-	hosts_path   string
-	sockname     string
-	maxbuf       int
+	debuglist  string
+	mbroker    bool
+	ticks      bool
+	trace      bool
+	stamps     bool
+	datadir    string
+	gw         string
+	ea         string
+	hosts_path string
+	sockname   string
+	maxbuf     int
 	// derived
 	debug      map[string]bool
 	ea_ip      IP32
@@ -43,7 +40,7 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 
 func parse_cli() {
 
-	flag.StringVar(&cli.debuglist, "debug", "", "enable debug in listed files, comma separated, or 'all'")
+	flag.StringVar(&cli.debuglist, "debug", "", "enable debug in listed files, comma separated")
 	flag.BoolVar(&cli.ticks, "ticks", false, "include timer ticks in debug")
 	flag.BoolVar(&cli.trace, "trace", false, "enable packet trace")
 	flag.BoolVar(&cli.mbroker, "mbroker", false, "disable forwarding, run as standalone mapper broker for debugging")
@@ -84,14 +81,6 @@ func parse_cli() {
 			eix = ix
 		}
 		cli.debug[fname[bix:eix]] = true
-		switch fname[bix:eix] {
-		case "gw":
-			cli.debug_gw = true
-		case "mapper":
-			cli.debug_mapper = true
-		case "tun":
-			cli.debug_tun = true
-		}
 	}
 
 	if cli.trace {
