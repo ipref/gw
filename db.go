@@ -170,7 +170,7 @@ func (mgw *MapGw) restore_eas() {
 		if bkt == nil {
 			return nil
 		}
-		log.info("mgw: restoring ea records")
+		log.info("mgw:  restoring ea records")
 		bkt.ForEach(func(key, val []byte) error {
 
 			// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
@@ -180,9 +180,9 @@ func (mgw *MapGw) restore_eas() {
 			ea := IP32(be.Uint32(val[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4]))
 
 			if oid == 0 || mark == 0 {
-				log.err("mgw: restore ea: %v invalid oid mark: %v(%v): %v, discarding", ea, owners.name(oid), oid, mark)
+				log.err("mgw:  restore ea: %v invalid oid mark: %v(%v): %v, discarding", ea, owners.name(oid), oid, mark)
 			} else if oid == mgw.oid && mark < mgw.cur_mark[oid] {
-				log.debug("mgw: restore ea: %v expired, discarding", ea)
+				log.debug("mgw:  restore ea: %v expired, discarding", ea)
 			} else {
 
 				mgw.insert_record(oid, mark, val[V1_MARK_LEN:])
@@ -221,9 +221,9 @@ func (mtun *MapTun) restore_refs() {
 			ref.L = be.Uint64(val[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
 
 			if oid == 0 || mark == 0 {
-				log.err("mtun: restore ref: %v invalid oid(mark): %v(%v), discarding", ref, owners.name(oid), mark)
+				log.err("mtun: restore ref: %v invalid oid(mark): %v(%v), discarding", &ref, owners.name(oid), mark)
 			} else if oid == mtun.oid && mark < mtun.cur_mark[oid] {
-				log.debug("mtun: restore ref: %v expired, discarding", ref)
+				log.debug("mtun: restore ref: %v expired, discarding", &ref)
 			} else {
 
 				mtun.insert_record(oid, mark, val[V1_MARK_LEN:])
@@ -657,6 +657,196 @@ func (db *DB) find_expired_eas(pb *PktBuf) int {
 	return ACCEPT
 }
 
+func (db *DB) remove_expired_refs(pb *PktBuf) int {
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pktlen := len(pkt)
+	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+		log.err("db remove refs: packet too short, ignoring")
+		return DROP
+	}
+
+	off := V1_HDR_LEN + V1_MARK_LEN
+
+	if (pktlen-off)%V1_AREC_LEN != 0 {
+		log.err("db remove refs: corrupted packet, ignoring")
+		return DROP
+	}
+
+	if db.db == nil {
+		return DROP
+	}
+
+	var err error
+	var ip IP32
+	var gw IP32
+	var ref rff.Ref
+
+	err = db.db.Update(func(tx *bolt.Tx) error {
+
+		bkt := tx.Bucket([]byte(ref_bkt))
+
+		if bkt == nil {
+			return nil
+		}
+
+		for ; off < pktlen; off += V1_AREC_LEN {
+
+			if is_zero(pkt[off+V1_AREC_REFH : off+V1_AREC_REFL+8]) {
+				continue
+			}
+
+			ip = IP32(be.Uint32(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4]))
+			gw = IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
+			ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
+			ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+
+			// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
+
+			db_arec := bkt.Get(pkt[off+V1_AREC_REFH : off+V1_AREC_REFL+8])
+
+			if bytes.Compare(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], db_arec[V1_MARK_LEN+V1_AREC_GW:V1_MARK_LEN+V1_AREC_GW+4]) != 0 {
+				log.err("db remove gw+ref(%v + %v): gw mismatch, cannot remove ref", gw, &ref)
+				continue
+			}
+			if bytes.Compare(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], db_arec[V1_MARK_LEN+V1_AREC_REFH:V1_MARK_LEN+V1_AREC_REFH+8]) != 0 ||
+				bytes.Compare(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], db_arec[V1_MARK_LEN+V1_AREC_REFL:V1_MARK_LEN+V1_AREC_REFL+8]) != 0 {
+				log.err("db remove gw+ref(%v + %v): ref mismatch, cannot remove ref", gw, &ref)
+				continue
+			}
+			if bytes.Compare(pkt[off+V1_AREC_IP:off+V1_AREC_IP+4], db_arec[V1_MARK_LEN+V1_AREC_IP:V1_MARK_LEN+V1_AREC_IP+4]) != 0 {
+				log.err("db remove gw+ref(%v + %v): ip mismatch, cannot remove ref", gw, &ref)
+				continue
+			}
+
+			if cli.debug["db"] {
+				log.debug("db remove gw+ref(%v + %v -> %v)", gw, &ref, ip)
+			}
+
+			err = bkt.Delete(pkt[off+V1_AREC_REFH : off+V1_AREC_REFL+8])
+
+			if err != nil {
+				break
+			}
+		}
+
+		return err
+	})
+
+	if err != nil {
+		log.err("db remove refs failed: %v", err)
+		return DROP
+	}
+
+	pb.peer = "db"
+	gen_ref.recv <- pb
+	return ACCEPT
+}
+
+func (db *DB) find_expired_refs(pb *PktBuf) int {
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pktlen := len(pkt)
+	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+		log.err("db find refs: packet too short, ignoring")
+		return DROP
+	}
+
+	off := V1_HDR_LEN
+
+	if is_zero(pkt[off+V1_OID : off+V1_OID+4]) {
+		log.err("db find refs: null oid, ignoring packet")
+		return DROP
+	}
+
+	seek_oid := O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
+
+	off += V1_MARK_LEN
+
+	if (pktlen - off) != V1_AREC_LEN {
+		log.err("db find refs: corrupted packet, ignoring")
+		return DROP
+	}
+
+	seek_ref := pkt[off+V1_AREC_REFH : off+V1_AREC_REFL+8]
+
+	// assume NACK
+
+	pkt[V1_CMD] = V1_NACK | V1_RECOVER_REF
+	pb.tail = pb.iphdr + off
+	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
+	pb.peer = "db"
+
+	// search for refs
+	//
+	// these operations are atomic because all access to db is from inside this go routine
+
+	if db.db == nil {
+		log.err("db find eas: db unavailable")
+		return DROP
+	}
+
+	var seek_mark M32
+
+	db.db.View(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(mark_bkt))
+		if bkt == nil {
+			return nil
+		}
+		val := bkt.Get(pkt[V1_HDR_LEN+V1_OID : V1_HDR_LEN+V1_OID+4])
+		if val != nil {
+			seek_mark = M32(be.Uint32(val))
+		}
+		return nil
+	})
+
+	if seek_mark == 0 {
+		log.err("db find refs: cannot find current mark for %v(%v) in db",
+			owners.name(seek_oid), seek_oid)
+		return DROP
+	}
+
+	db.db.View(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(ref_bkt))
+		if bkt == nil {
+			return nil
+		}
+
+		cur := bkt.Cursor()
+
+		for ref, db_arec := cur.Seek(seek_ref); ref != nil; ref, db_arec = cur.Next() {
+
+			// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
+
+			if O32(be.Uint32(db_arec[V1_OID:V1_OID+4])) != seek_oid {
+				continue
+			}
+			if !(M32(be.Uint32(db_arec[V1_MARK:V1_MARK+4]))+RCVY_EXPIRE < seek_mark) {
+				continue
+			}
+
+			copy(pkt[off:off+V1_AREC_LEN], db_arec[V1_MARK_LEN:V1_MARK_LEN+V1_AREC_LEN])
+
+			off += V1_AREC_LEN
+			if off >= RCVY_MAX*V1_AREC_LEN+V1_HDR_LEN+V1_MARK_LEN {
+				break
+			}
+		}
+		return nil
+	})
+
+	// change to ACK if any refs found
+
+	if off > V1_HDR_LEN+V1_MARK_LEN {
+		pkt[V1_CMD] = V1_ACK | V1_RECOVER_REF
+		pb.tail = pb.iphdr + off
+		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
+	}
+
+	pb.schan <- pb
+	return ACCEPT
+}
+
 func (db *DB) receive(pb *PktBuf) {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
@@ -687,6 +877,10 @@ func (db *DB) receive(pb *PktBuf) {
 		verdict = db.find_expired_eas(pb)
 	case V1_DATA | V1_RECOVER_EA:
 		verdict = db.remove_expired_eas(pb)
+	case V1_REQ | V1_RECOVER_REF:
+		verdict = db.find_expired_refs(pb)
+	case V1_DATA | V1_RECOVER_REF:
+		verdict = db.remove_expired_refs(pb)
 	case V1_DATA | V1_SAVE_OID:
 		db.save_oid(pb)
 	case V1_DATA | V1_SAVE_TIME_BASE:

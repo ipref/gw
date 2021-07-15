@@ -93,8 +93,8 @@ func parse_cli() {
 
 	if cli.mbroker {
 
-		cli.gw = "0.0.0.0"
-		cli.gw_ip = 0
+		cli.gw = "198.51.100.1"
+		cli.gw_ip = IP32(be.Uint32(net.ParseIP(cli.gw).To4()))
 		cli.ifc.MTU = 1500
 
 	} else {

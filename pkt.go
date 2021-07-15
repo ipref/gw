@@ -53,11 +53,11 @@ const ( // v1 item types
 
 const ( // v1 commands
 
-	V1_NOOP     = 0
-	V1_SET_AREC = 1
-	V1_SET_MARK = 2
-	V1_SET_SOFT = 3
-	//V1_PURGE  = 4
+	V1_NOOP           = 0
+	V1_SET_AREC       = 1
+	V1_SET_MARK       = 2
+	V1_SET_SOFT       = 3
+	V1_GET_REF        = 4
 	V1_INDUCE_ARP     = 5
 	V1_GET_EA         = 6
 	V1_MC_GET_EA      = 7

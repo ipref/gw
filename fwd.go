@@ -570,12 +570,16 @@ func fwd_to_gw() {
 				switch pb.pkt[pb.iphdr+V1_CMD] {
 				case V1_SET_AREC:
 					verdict = map_gw.set_new_address_records(pb)
+				case V1_REQ | V1_GET_REF:
+					verdict = map_gw.get_ref(pb)
 				case V1_SET_MARK:
 					verdict = map_gw.set_new_mark(pb)
 				case V1_SET_SOFT:
 					verdict = map_gw.update_soft(pb)
 				case V1_DATA | V1_RECOVER_EA:
 					verdict = map_gw.remove_expired_eas(pb)
+				case V1_DATA | V1_RECOVER_REF:
+					verdict = map_gw.query_expired_refs(pb)
 				default:
 					log.err("fwd_to_gw: unknown address records command: %v, ignoring", pb.pkt[pb.iphdr+V1_CMD])
 				}
@@ -626,6 +630,8 @@ func fwd_to_tun() {
 					verdict = map_tun.get_ea(pb)
 				case V1_SET_MARK:
 					verdict = map_tun.set_new_mark(pb)
+				case V1_DATA | V1_RECOVER_REF:
+					verdict = map_tun.remove_expired_refs(pb)
 				case V1_DATA | V1_RECOVER_EA:
 					verdict = map_tun.query_expired_eas(pb)
 				default:

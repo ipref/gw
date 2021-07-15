@@ -24,9 +24,13 @@ const (
 	MIN_REF     = 256 // low ref values are reserved
 	MAXTRIES    = 10  // num of tries to get unique random value before giving up
 
-	RCVY_MAX    = 7                      // max records to recover at a time
-	RCVY_EXPIRE = (MAPPER_TMOUT * 3) / 2 // extra time before attempting recovery
+	RCVY_INTERVAL = (MAPPER_TMOUT * 1000) / 3 // [ms] interval between recovery attempts
+	RCVY_PAUSE    = 257                       // [ms] pause between recovery batches
+	RCVY_MAX      = 7                         // max records to recover at a time
+	RCVY_EXPIRE   = (MAPPER_TMOUT * 3) / 2    // [s] extra time before attempting recovery
 )
+
+var refzero rff.Ref // constant rff.Ref{0,0}
 
 // -- ea gen -------------------------------------------------------------------
 
@@ -43,21 +47,19 @@ var gen_ea GenEA
 // trigger recovery of expired eas
 func (gen *GenEA) recover_expired_eas() {
 
-	const INTERVAL = (MAPPER_TMOUT * 1000) / 3 // [ms]
-	const PAUSE = 257                          // [ms]
-
 	pktid := uint16(prng.Intn(0x10000))
 
 	go func() {
+		sleep(prng.Intn(MAPPER_TMOUT/3)*1000, (MAPPER_TMOUT/8)*1000) // random start point
 		for {
-			sleep(INTERVAL, INTERVAL/8)
+			sleep(RCVY_INTERVAL, RCVY_INTERVAL/8)
 			gen.rcvy <- 0
 		}
 	}()
 
 	for search_ea := range gen.rcvy {
 
-		sleep(PAUSE, PAUSE/5) // small delay between recovery batches
+		sleep(RCVY_PAUSE, RCVY_PAUSE/5) // small delay between recovery batches
 
 		if pktid += 1; pktid == 0 {
 			pktid++
@@ -251,15 +253,160 @@ type GenREF struct {
 	allocated map[rff.Ref]bool
 	ref       chan rff.Ref // mapper random ref
 	recv      chan *PktBuf
+	rcvy      chan rff.Ref
 }
 
 var gen_ref GenREF
+
+// trigger recovery of expired refs
+func (gen *GenREF) recover_expired_refs() {
+
+	pktid := uint16(prng.Intn(0x10000))
+
+	go func() {
+		sleep(prng.Intn(MAPPER_TMOUT/3)*1000, (MAPPER_TMOUT/8)*1000) // random start point
+		for {
+			sleep(RCVY_INTERVAL, RCVY_INTERVAL/8)
+			gen.rcvy <- refzero
+		}
+	}()
+
+	for search_ref := range gen.rcvy {
+
+		sleep(RCVY_PAUSE, RCVY_PAUSE/5) // small delay between recovery batches
+
+		if pktid += 1; pktid == 0 {
+			pktid++
+		}
+
+		pb := <-getbuf
+		pb.write_v1_header(V1_REQ|V1_RECOVER_REF, pktid)
+		pkt := pb.pkt[pb.iphdr:]
+
+		off := V1_HDR_LEN
+
+		be.PutUint32(pkt[off+V1_OID:off+V1_OID+4], uint32(mapper_oid))
+		be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], 0)
+
+		off += V1_MARK_LEN
+
+		for ii := off; ii < V1_AREC_LEN; ii++ {
+			pkt[off+ii] = 0
+		}
+
+		be.PutUint64(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], search_ref.H)
+		be.PutUint64(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], search_ref.L)
+
+		off += V1_AREC_LEN
+
+		pb.tail = pb.iphdr + off
+		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
+		pb.peer = "recover ref"
+		pb.schan = gen.recv
+		log.debug("gen ref: recover refs starting from: %v", &search_ref)
+		db.recv <- pb
+	}
+}
+
+func (gen *GenREF) receive(pb *PktBuf) int {
+
+	if err := pb.validate_v1_header(pb.len()); err != nil {
+
+		log.err("gen ref: invalid v1 packet from %v:  %v", pb.peer, err)
+		return DROP
+	}
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+
+	cmd := pkt[V1_CMD]
+
+	if cli.trace {
+		pb.pp_raw("gen ref: ")
+	}
+
+	pktlen := len(pkt)
+
+	var ref rff.Ref
+
+	switch cmd {
+
+	case V1_ACK | V1_RECOVER_REF:
+
+		last_off := pktlen - V1_AREC_LEN
+
+		if last_off < V1_HDR_LEN+V1_MARK_LEN {
+			break // paranoia, should never happen
+		}
+
+		// trigger next batch
+
+		ref.H = be.Uint64(pkt[last_off+V1_AREC_REFH : last_off+V1_AREC_REFH+8])
+		ref.L = be.Uint64(pkt[last_off+V1_AREC_REFL : last_off+V1_AREC_REFL+8])
+
+		if ref.L == 0xffffffffffffffff {
+			ref.H++
+			ref.L = 0
+		} else {
+			ref.L++
+		}
+
+		gen.rcvy <- ref
+
+		// pass the list to fwd_to_gw
+
+		pkt[V1_CMD] = V1_DATA | V1_RECOVER_REF
+		pb.peer = "recover ref"
+		pb.schan = retbuf
+		recv_tun <- pb
+
+		return ACCEPT
+
+	case V1_NACK | V1_RECOVER_REF:
+
+		log.debug("gen ref: no more refs to recover")
+
+	case V1_DATA | V1_RECOVER_REF:
+
+		if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+			log.err("gen ref: packet too short, ignoring")
+			return DROP
+		}
+
+		off := V1_HDR_LEN + V1_MARK_LEN
+
+		if (pktlen-off)%V1_AREC_LEN != 0 {
+			log.err("gen ref: corrupted packet, ignoring")
+			return DROP
+		}
+
+		for ; off < pktlen; off += V1_AREC_LEN {
+
+			ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
+			ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+
+			if !ref.IsZero() {
+				delete(gen.allocated, ref)
+				if cli.debug["gen"] {
+					var ip IP32
+					var gw IP32
+					ip = IP32(be.Uint32(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4]))
+					gw = IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
+					log.debug("gen ref:  deleted allocated gw+ref(%v + %v) -> %v", gw, &ref, ip)
+				}
+			}
+		}
+
+	default:
+		log.err("gen ref:  unrecognized v1 cmd: 0x%x from %v", cmd, pb.peer)
+	}
+
+	return DROP
+}
 
 // generate random refs with second to last byte >= SECOND_BYTE
 func (gen *GenREF) next_ref() rff.Ref {
 
 	var ref rff.Ref
-	var refzero rff.Ref // constant rff.Ref{0,0}
 	creep := make([]byte, 16)
 
 	// clear ref before incrementing ii
@@ -284,17 +431,13 @@ func (gen *GenREF) next_ref() rff.Ref {
 			continue // already allocated, try another
 		}
 		gen.allocated[ref] = true
+		log.debug("gen ref: allocated ref(%v)", &ref)
 
 		return ref
 	}
 
 	log.err("gen_ref: cannot allocate ref")
 	return refzero
-}
-
-func (gen *GenREF) receive(pb *PktBuf) {
-
-	retbuf <- pb
 }
 
 func (gen *GenREF) start() {
@@ -310,10 +453,15 @@ func (gen *GenREF) start() {
 			}
 		}
 	}(gen)
+
+	// recover expired refs
+
+	go gen.recover_expired_refs()
 }
 
 func (gen *GenREF) init() {
 	gen.allocated = make(map[rff.Ref]bool)
 	gen.ref = make(chan rff.Ref, GENQLEN)
 	gen.recv = make(chan *PktBuf, PKTQLEN)
+	gen.rcvy = make(chan rff.Ref, PKTQLEN)
 }
