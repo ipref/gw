@@ -208,7 +208,7 @@ func get_arec_pkt(ea, ip, gw IP32, ref rff.Ref, oid O32, mark M32) *PktBuf {
 // -- mapper variables ---------------------------------------------------------
 
 const (
-	MAPPER_TMOUT   = 1800                          // [s] mapper record timeout
+	MAPPER_TMOUT   = 1800 * 8                      // [s] mapper record timeout
 	MAPPER_REFRESH = MAPPER_TMOUT - MAPPER_TMOUT/4 // [s] when to refresh
 )
 
