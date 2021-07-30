@@ -134,6 +134,7 @@ func start_tun() {
 		var cmd string
 		var out string
 		var ret int
+		var ufd int
 		var err error
 
 		// create tun device
@@ -144,16 +145,26 @@ func start_tun() {
 			pad   [40 - unix.IFNAMSIZ - 2]byte
 		}
 
-		fd, err = os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
+		ufd, err = unix.Open("/dev/net/tun", os.O_RDWR, 0)
 		if err != nil {
 			log.fatal("tun: cannot get tun device: %v", err)
 		}
 
 		ifreq := IfReq{flags: unix.IFF_TUN}
 
-		_, _, errno := unix.Syscall(unix.SYS_IOCTL, fd.Fd(), uintptr(unix.TUNSETIFF), uintptr(unsafe.Pointer(&ifreq)))
+		_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(ufd), uintptr(unix.TUNSETIFF), uintptr(unsafe.Pointer(&ifreq)))
 		if errno != 0 {
 			log.fatal("tun: cannot setup tun device, errno(%v)", errno)
+		}
+
+		err = unix.SetNonblock(ufd, true)
+		if err != nil {
+			log.fatal("tun: cannot make tun device non blocking, errno(%v)", errno)
+		}
+
+		fd = os.NewFile(uintptr(ufd), "/dev/net/tun")
+		if fd == nil {
+			log.fatal("tun: invalid tun device")
 		}
 
 		// bring tun device up
