@@ -2,16 +2,8 @@
 
 package main
 
-/* NOTE: We use cznic implementation of btree: modernc.org/b. It allows
-   interruptible traversal of the tree. Other implemenations, such as
-   github.com/google/btree, rely on closures as iterators. This makes
-   it more difficult to traverse in chunks while the tree is modified
-   by other go routines.
-*/
-
 import (
 	rff "github.com/ipref/ref"
-	"modernc.org/b"
 	"net"
 )
 
@@ -218,10 +210,10 @@ var map_tun MapTun // exclusively owned by fwd_to_tun
 // -- MapGw --------------------------------------------------------------------
 
 type MapGw struct {
-	their_ipref *b.Tree // map[uint32]IpRefRec		our_ea -> (their_gw, their_ref)
-	our_ipref   *b.Tree // map[uint32]IpRefRec		our_ip -> (our_gw,   our_ref)
-	oid         O32     // must be the same for both mgw and mtun
-	cur_mark    []M32   // current mark per oid
+	their_ipref map[IP32]IpRefRec // our_ea -> (their_gw, their_ref)
+	our_ipref   map[IP32]IpRefRec // our_ip -> (our_gw,   our_ref)
+	oid         O32               // must be the same for both mgw and mtun
+	cur_mark    []M32             // current mark per oid
 	soft        map[IP32]SoftRec
 	pfx         string // prefix for printing messages
 }
@@ -229,8 +221,8 @@ type MapGw struct {
 func (mgw *MapGw) init(oid O32) {
 
 	mgw.pfx = "mgw"
-	mgw.their_ipref = b.TreeNew(b.Cmp(addr_cmp))
-	mgw.our_ipref = b.TreeNew(b.Cmp(addr_cmp))
+	mgw.their_ipref = make(map[IP32]IpRefRec)
+	mgw.our_ipref = make(map[IP32]IpRefRec)
 	mgw.oid = oid
 	mgw.cur_mark = make([]M32, 2)
 	mgw.soft = make(map[IP32]SoftRec)
@@ -249,15 +241,13 @@ func (mgw *MapGw) set_cur_mark(oid O32, mark M32) {
 
 func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 
-	iprefrec, ok := mgw.their_ipref.Get(dst)
+	rec, ok := mgw.their_ipref[dst]
 	if !ok {
 		if cli.debug["mapper"] {
 			log.debug("mgw:  dst ipref not found for: %v", dst)
 		}
 		return IpRefRec{0, rff.Ref{0, 0}, 0, 0} // not found
 	}
-
-	rec := iprefrec.(IpRefRec)
 
 	if int(rec.oid) >= len(mgw.cur_mark) {
 		log.err("mgw:  invalid oid(%v) in their_ipref, ignoring record", rec.oid)
@@ -278,7 +268,7 @@ func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 		}
 		mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
 		rec.mark = mark
-		mgw.their_ipref.Set(dst, rec) // bump up expiration
+		mgw.their_ipref[dst] = rec // bump up expiration
 		pb := get_arec_pkt(dst, 0, rec.ip, rec.ref, rec.oid, rec.mark)
 		pbb := <-getbuf
 		pbb.copy_from(pb)
@@ -292,11 +282,9 @@ func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 
 func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 
-	iprefrec, ok := mgw.our_ipref.Get(src)
+	rec, ok := mgw.our_ipref[src]
 
 	if ok {
-
-		rec := iprefrec.(IpRefRec)
 
 		if int(rec.oid) >= len(mgw.cur_mark) {
 			log.err("mgw:  invalid oid(%v) in our_ipref, ignoring record", rec.oid)
@@ -318,7 +306,7 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 				}
 				mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
 				rec.mark = mark
-				mgw.our_ipref.Set(src, rec) // bump up expiration
+				mgw.our_ipref[src] = rec // bump up expiration
 				pb := get_arec_pkt(0, src, rec.ip, rec.ref, rec.oid, rec.mark)
 				pbb := <-getbuf
 				pbb.copy_from(pb)
@@ -341,8 +329,8 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 		return IpRefRec{0, rff.Ref{0, 0}, 0, 0}
 	}
 	mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
-	rec := IpRefRec{cli.gw_ip, ref, mgw.oid, mark}
-	mgw.our_ipref.Set(src, rec) // add new record
+	rec = IpRefRec{cli.gw_ip, ref, mgw.oid, mark}
+	mgw.our_ipref[src] = rec // add new record
 	pb := get_arec_pkt(0, src, rec.ip, rec.ref, rec.oid, rec.mark)
 	pbb := <-getbuf
 	pbb.copy_from(pb)
@@ -379,7 +367,7 @@ func (mgw *MapGw) insert_record(oid O32, mark M32, arec []byte) {
 		if cli.debug["mapper"] {
 			log.debug("mgw:  set their_ipref  %v  ->  %v + %v", ea, gw, &ref)
 		}
-		mgw.their_ipref.Set(ea, IpRefRec{gw, ref, oid, mark})
+		mgw.their_ipref[ea] = IpRefRec{gw, ref, oid, mark}
 
 	} else if ea == 0 && ip != 0 {
 
@@ -393,7 +381,7 @@ func (mgw *MapGw) insert_record(oid O32, mark M32, arec []byte) {
 		if cli.debug["mapper"] {
 			log.debug("mgw:  set our_ipref  %v  ->  %v + %v", ip, gw, &ref)
 		}
-		mgw.our_ipref.Set(ip, IpRefRec{gw, ref, oid, mark})
+		mgw.our_ipref[ip] = IpRefRec{gw, ref, oid, mark}
 
 	} else {
 		log.err("mgw:  invalid address record, %v %v %v %v, dropping record", ea, ip, gw, &ref)
@@ -574,13 +562,11 @@ func (mgw *MapGw) remove_expired_eas(pb *PktBuf) int {
 			continue
 		}
 
-		iprefrec, ok := mgw.their_ipref.Get(arec.ea)
+		rec, ok := mgw.their_ipref[arec.ea]
 
 		if !ok {
 			continue
 		}
-
-		rec := iprefrec.(IpRefRec)
 
 		if oid != rec.oid {
 			log.err("mgw:  remove expired ea(%v): pkt oid(%v) does not match record oid(%v)",
@@ -598,7 +584,7 @@ func (mgw *MapGw) remove_expired_eas(pb *PktBuf) int {
 			continue
 		}
 
-		mgw.their_ipref.Delete(arec.ea)
+		delete(mgw.their_ipref, arec.ea)
 
 		if cli.debug["mapper"] {
 			log.debug("mgw:  removed expired ea(%v): %v + %v mark(%v)",
@@ -647,7 +633,7 @@ func (mgw *MapGw) query_expired_refs(pb *PktBuf) int {
 		arec.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
 		arec.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
 
-		iprefrec, ok := mgw.our_ipref.Get(arec.ip)
+		rec, ok := mgw.our_ipref[arec.ip]
 
 		if !ok {
 			if cli.debug["mapper"] {
@@ -656,8 +642,6 @@ func (mgw *MapGw) query_expired_refs(pb *PktBuf) int {
 			}
 			continue
 		}
-
-		rec := iprefrec.(IpRefRec)
 
 		if rec.oid != oid {
 			if cli.debug["mapper"] {
@@ -694,7 +678,7 @@ func (mgw *MapGw) query_expired_refs(pb *PktBuf) int {
 			continue
 		}
 
-		mgw.our_ipref.Delete(arec.ip)
+		delete(mgw.our_ipref, arec.ip)
 		if cli.debug["mapper"] {
 			log.debug("mgw: removed expired gw+ref(%v + %v) -> %v rec.mark(%v) less than mark(%v)",
 				arec.gw, &arec.ref, arec.ip, rec.mark, mgw.cur_mark[rec.oid])
@@ -710,10 +694,10 @@ func (mgw *MapGw) query_expired_refs(pb *PktBuf) int {
 // -- MapTun -------------------------------------------------------------------
 
 type MapTun struct {
-	our_ip   *b.Tree // map[uint32]map[Ref]IpRec		our_gw   -> our_ref   -> our_ip
-	our_ea   *b.Tree // map[uint32]map[Ref]IpRec		their_gw -> their_ref -> our_ea
-	oid      O32     // must be the same for both mgw and mtun
-	cur_mark []M32   // current mark per oid
+	our_ip   map[IP32]map[rff.Ref]IpRec // our_gw   -> our_ref   -> our_ip
+	our_ea   map[IP32]map[rff.Ref]IpRec // their_gw -> their_ref -> our_ea
+	oid      O32                        // must be the same for both mgw and mtun
+	cur_mark []M32                      // current mark per oid
 	soft     map[IP32]SoftRec
 	pfx      string
 }
@@ -721,8 +705,8 @@ type MapTun struct {
 func (mtun *MapTun) init(oid O32) {
 
 	mtun.pfx = "mtun"
-	mtun.our_ip = b.TreeNew(b.Cmp(addr_cmp))
-	mtun.our_ea = b.TreeNew(b.Cmp(addr_cmp))
+	mtun.our_ip = make(map[IP32]map[rff.Ref]IpRec)
+	mtun.our_ea = make(map[IP32]map[rff.Ref]IpRec)
 	mtun.oid = oid
 	mtun.cur_mark = make([]M32, 2)
 	mtun.soft = make(map[IP32]SoftRec)
@@ -753,19 +737,17 @@ func (mtun *MapTun) set_soft(src IP32, soft SoftRec) {
 
 func (mtun *MapTun) get_dst_ip(gw IP32, ref rff.Ref) IP32 {
 
-	our_refs, ok := mtun.our_ip.Get(gw)
+	our_refs, ok := mtun.our_ip[gw]
 	if !ok {
 		log.err("mtun: local gw not in the map: %v", gw)
 		return 0
 	}
 
-	iprec, ok := our_refs.(*b.Tree).Get(ref)
+	rec, ok := our_refs[ref]
 	if !ok {
 		log.err("mtun: no local host mapped to ref: %v", &ref)
 		return 0
 	}
-
-	rec := iprec.(IpRec)
 
 	if int(rec.oid) >= len(mtun.cur_mark) {
 		log.err("mtun: invalid oid(%v) in our_ip, ignoring record", rec.oid)
@@ -786,7 +768,7 @@ func (mtun *MapTun) get_dst_ip(gw IP32, ref rff.Ref) IP32 {
 		}
 		mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
 		rec.mark = mark
-		our_refs.(*b.Tree).Set(ref, rec) // bump up expiration
+		our_refs[ref] = rec // bump up expiration
 		pb := get_arec_pkt(0, rec.ip, gw, ref, rec.oid, rec.mark)
 		pbb := <-getbuf
 		pbb.copy_from(pb)
@@ -799,18 +781,16 @@ func (mtun *MapTun) get_dst_ip(gw IP32, ref rff.Ref) IP32 {
 
 func (mtun *MapTun) get_src_iprec(gw IP32, ref rff.Ref) *IpRec {
 
-	their_refs, ok := mtun.our_ea.Get(gw)
+	their_refs, ok := mtun.our_ea[gw]
 	if !ok {
 		// unknown remote gw, allocate a map for it
-		their_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
-		mtun.our_ea.Set(gw, their_refs)
+		their_refs = make(map[rff.Ref]IpRec)
+		mtun.our_ea[gw] = their_refs
 	}
 
-	iprec, ok := their_refs.(*b.Tree).Get(ref)
+	rec, ok := their_refs[ref]
 
 	if ok {
-
-		rec := iprec.(IpRec)
 
 		if int(rec.oid) >= len(mtun.cur_mark) {
 			log.err("mtun: invalid oid(%v) in our_ea, ignoring record", rec.oid)
@@ -832,7 +812,7 @@ func (mtun *MapTun) get_src_iprec(gw IP32, ref rff.Ref) *IpRec {
 				}
 				mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
 				rec.mark = mark
-				their_refs.(*b.Tree).Set(ref, rec) // bump up expiration
+				their_refs[ref] = rec // bump up expiration
 				pb := get_arec_pkt(rec.ip, 0, gw, ref, rec.oid, rec.mark)
 				pbb := <-getbuf
 				pbb.copy_from(pb)
@@ -855,8 +835,8 @@ func (mtun *MapTun) get_src_iprec(gw IP32, ref rff.Ref) *IpRec {
 		return nil // cannot get new ea
 	}
 	mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
-	rec := IpRec{ea, mtun.oid, mark}
-	their_refs.(*b.Tree).Set(ref, rec)
+	rec = IpRec{ea, mtun.oid, mark}
+	their_refs[ref] = rec
 	pb := get_arec_pkt(rec.ip, 0, gw, ref, rec.oid, rec.mark)
 	pbb := <-getbuf
 	pbb.copy_from(pb)
@@ -889,15 +869,15 @@ func (mtun *MapTun) insert_record(oid O32, mark M32, arec []byte) {
 			return
 		}
 
-		their_refs, ok := mtun.our_ea.Get(gw)
+		their_refs, ok := mtun.our_ea[gw]
 		if !ok {
-			their_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
-			mtun.our_ea.Set(gw, their_refs)
+			their_refs = make(map[rff.Ref]IpRec)
+			mtun.our_ea[gw] = their_refs
 		}
 		if cli.debug["mapper"] {
 			log.debug("mtun: set their_refs  %v  ->  %v  ->  %v", gw, &ref, ea)
 		}
-		their_refs.(*b.Tree).Set(ref, IpRec{ea, oid, mark})
+		their_refs[ref] = IpRec{ea, oid, mark}
 
 	} else if ea == 0 && ip != 0 {
 
@@ -908,15 +888,15 @@ func (mtun *MapTun) insert_record(oid O32, mark M32, arec []byte) {
 			return
 		}
 
-		our_refs, ok := mtun.our_ip.Get(gw)
+		our_refs, ok := mtun.our_ip[gw]
 		if !ok {
-			our_refs = interface{}(b.TreeNew(b.Cmp(ref_cmp)))
-			mtun.our_ip.Set(gw, our_refs)
+			our_refs = make(map[rff.Ref]IpRec)
+			mtun.our_ip[gw] = our_refs
 		}
 		if cli.debug["mapper"] {
 			log.debug("mtun: set our_refs  %v  ->  %v  ->  %v", gw, &ref, ip)
 		}
-		our_refs.(*b.Tree).Set(ref, IpRec{ip, oid, mark})
+		our_refs[ref] = IpRec{ip, oid, mark}
 
 	} else {
 		log.err("mtun: invalid address record, %v %v %v %v, dropping record", ea, ip, gw, &ref)
@@ -1063,21 +1043,19 @@ func (mtun *MapTun) remove_expired_refs(pb *PktBuf) int {
 		arec.ip = IP32(be.Uint32(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4]))
 		arec.gw = IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
 
-		our_refs, ok := mtun.our_ip.Get(arec.gw)
+		our_refs, ok := mtun.our_ip[arec.gw]
 		if !ok {
 			//log.err("mtun: remove expired gw+ref(%v + %v) -> %v gw not found",
 			//	arec.gw, &arec.ref, arec.ip)
 			continue
 		}
 
-		iprec, ok := our_refs.(*b.Tree).Get(arec.ref)
+		rec, ok := our_refs[arec.ref]
 		if !ok {
 			//log.err("mtun: remove expired gw+ref(%v + %v) -> %v rec not found",
 			//	arec.gw, &arec.ref, arec.ip)
 			continue
 		}
-
-		rec := iprec.(IpRec)
 
 		if rec.oid != oid {
 			log.err("mtun: remove expired gw+ref(%v + %v) -> %v rec.oid(%v) does not match oid(%v)",
@@ -1097,7 +1075,7 @@ func (mtun *MapTun) remove_expired_refs(pb *PktBuf) int {
 			continue
 		}
 
-		our_refs.(*b.Tree).Delete(arec.ref)
+		delete(our_refs, arec.ref)
 
 		if cli.debug["mapper"] {
 			log.debug("mtun: removed expired gw+ref(%v + %v) -> %v",
@@ -1146,7 +1124,7 @@ func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
 		arec.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
 		arec.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
 
-		their_refs, ok := mtun.our_ea.Get(arec.gw)
+		their_refs, ok := mtun.our_ea[arec.gw]
 
 		if !ok {
 			if cli.debug["mapper"] {
@@ -1156,7 +1134,7 @@ func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
 			continue
 		}
 
-		iprec, ok := their_refs.(*b.Tree).Get(arec.ref)
+		rec, ok := their_refs[arec.ref]
 
 		if !ok {
 			if cli.debug["mapper"] {
@@ -1165,8 +1143,6 @@ func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
 			}
 			continue
 		}
-
-		rec := iprec.(IpRec)
 
 		if rec.oid != oid {
 			if cli.debug["mapper"] {
@@ -1193,7 +1169,7 @@ func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
 			continue
 		}
 
-		their_refs.(*b.Tree).Delete(arec.ref)
+		delete(their_refs, arec.ref)
 		if cli.debug["mapper"] {
 			log.debug("mtun: removed expired ea(%v): %v + %v rec.mark(%v) less than mark(%v)",
 				arec.ea, arec.gw, &arec.ref, rec.mark, mtun.cur_mark[rec.oid])
