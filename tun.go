@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2020 Waldemar Augustyn */
+/* Copyright (c) 2018-2021 Waldemar Augustyn */
 
 package main
 
