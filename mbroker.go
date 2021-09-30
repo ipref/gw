@@ -283,7 +283,7 @@ func mbroker() {
 		case V1_MC_GET_EA:
 			verdict = mb_mc_get_ea(pb)
 		default: // invalid
-			log.err("mb: invalid v1 cmd: %v", cmd)
+			log.err("mb: unknown pkt type[%02x]", pkt[V1_CMD])
 			verdict = DROP
 		}
 
