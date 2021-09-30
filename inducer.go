@@ -9,10 +9,10 @@ import (
 
 /* Induce address allocation
 
-Only active in standalone mapper broker mode. Induces allocation of ea and ref
-addresses in a predictable manner. Used for development and debugging of the
-mapper and the mapper broker without the need to run external mapper agents
-or ipref aware resolvers.
+Only active in devmode running as a standalone mapper broker. Induces
+allocation of ea and ref addresses in a predictable manner. Used for
+development and debugging of the mapper and the mapper broker without
+the need to run external mapper agents or ipref aware resolvers.
 */
 
 // -- ea allocation inducer ----------------------------------------------------

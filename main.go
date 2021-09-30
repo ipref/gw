@@ -120,7 +120,7 @@ func main() {
 
 	go mbroker_conn()
 
-	if cli.mbroker {
+	if cli.devmode {
 		go induce_ea_allocation()
 		go induce_ref_allocation()
 	}

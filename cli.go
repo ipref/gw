@@ -17,7 +17,7 @@ const (
 
 var cli struct { // no locks, once setup in cli, never modified thereafter
 	debuglist  string
-	mbroker    bool
+	devmode    bool
 	ticks      bool
 	trace      bool
 	stamps     bool
@@ -43,7 +43,7 @@ func parse_cli() {
 	flag.StringVar(&cli.debuglist, "debug", "", "enable debug in listed files, comma separated")
 	flag.BoolVar(&cli.ticks, "ticks", false, "include timer ticks in debug")
 	flag.BoolVar(&cli.trace, "trace", false, "enable packet trace")
-	flag.BoolVar(&cli.mbroker, "mbroker", false, "disable forwarding, run as standalone mapper broker for debugging")
+	flag.BoolVar(&cli.devmode, "devmode", false, "development mode, disable forwarding, run as a standalone mapper broker")
 	flag.BoolVar(&cli.stamps, "time-stamps", false, "print logs with time stamps")
 	flag.StringVar(&cli.datadir, "data", ddir, "data directory")
 	flag.StringVar(&cli.gw, "gateway", "", "ip address of the public network interface")
@@ -91,7 +91,7 @@ func parse_cli() {
 
 	log.set(cli.log_level, cli.stamps)
 
-	if cli.mbroker {
+	if cli.devmode {
 
 		cli.gw = "198.51.100.1"
 		cli.gw_ip = IP32(be.Uint32(net.ParseIP(cli.gw).To4()))

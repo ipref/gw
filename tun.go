@@ -15,7 +15,7 @@ var send_tun chan (*PktBuf)
 
 func tun_sender(fd *os.File) {
 
-	if cli.mbroker {
+	if cli.devmode {
 		return
 	}
 
@@ -54,7 +54,7 @@ func tun_sender(fd *os.File) {
 
 func tun_receiver(fd *os.File) {
 
-	if cli.mbroker {
+	if cli.devmode {
 		return
 	}
 
@@ -129,7 +129,7 @@ func start_tun() {
 
 	var fd *os.File
 
-	if !cli.mbroker {
+	if !cli.devmode {
 
 		var cmd string
 		var out string

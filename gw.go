@@ -261,7 +261,7 @@ func gw_sender(con net.PacketConn) {
 	var gw_network net.IPNet
 	var gw_nexthop IP32
 
-	if !cli.mbroker {
+	if !cli.devmode {
 
 		gw_network, gw_nexthop = get_gw_network()
 
@@ -420,7 +420,7 @@ func gw_sender(con net.PacketConn) {
 
 func gw_receiver(con net.PacketConn) {
 
-	if cli.mbroker {
+	if cli.devmode {
 		return
 	}
 
@@ -485,7 +485,7 @@ func start_gw() {
 
 	var con *raw.Conn
 
-	if !cli.mbroker {
+	if !cli.devmode {
 
 		var err error
 
