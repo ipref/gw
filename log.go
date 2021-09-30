@@ -38,7 +38,7 @@ func (l *Log) set(level uint, stamps bool) {
 
 func (l *Log) fatal(msg string, params ...interface{}) {
 
-	golog.Printf("FAT  "+msg, params...)
+	golog.Printf("F "+msg, params...)
 	select {
 	case goexit <- "fatal":
 		select {}
@@ -50,14 +50,14 @@ func (l *Log) fatal(msg string, params ...interface{}) {
 func (l *Log) err(msg string, params ...interface{}) {
 
 	if l.level <= ERROR {
-		golog.Printf("ERR  "+msg, params...)
+		golog.Printf("E "+msg, params...)
 	}
 }
 
 func (l *Log) info(msg string, params ...interface{}) {
 
 	if l.level <= INFO {
-		golog.Printf("info "+msg, params...)
+		golog.Printf("I "+msg, params...)
 	}
 }
 
@@ -83,13 +83,13 @@ func (l *Log) debug(msg string, params ...interface{}) {
 
 	if cli.debug[fname[bix:eix]] || cli.debug["all"] {
 		msg = fmt.Sprintf("%v(%v): ", fname[bix:], line) + msg
-		golog.Printf("dbg  "+msg, params...)
+		golog.Printf("D "+msg, params...)
 	}
 }
 
 func (l *Log) trace(msg string, params ...interface{}) {
 
 	if l.level <= TRACE {
-		golog.Printf("trc  "+msg, params...)
+		golog.Printf("T "+msg, params...)
 	}
 }
