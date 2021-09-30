@@ -293,16 +293,16 @@ func mbroker() {
 	}
 }
 
-func mbroker_recv(conn *net.UnixConn, schan chan<- *PktBuf) {
+func mbroker_recv(inst uint, conn *net.UnixConn, schan chan<- *PktBuf) {
 
 	peer := "unix[" + conn.RemoteAddr().String() + "]"
-	log.info("mbroker recv[%v] starting", peer)
+	log.info("mbroker recv[%v] instance(%v) starting", peer, inst)
 
 	for pb := range getbuf {
 
 		rlen, err := conn.Read(pb.pkt[pb.iphdr:])
 		if err != nil {
-			log.err("mbroker recv[%v] io error: %v", peer, err)
+			log.err("mbroker recv[%v] instance(%v) io error: %v", peer, inst, err)
 			conn.Close()
 			pb.write_v1_header(V1_NOOP, 0)
 			pb.peer = peer
@@ -313,12 +313,12 @@ func mbroker_recv(conn *net.UnixConn, schan chan<- *PktBuf) {
 		// check if packet is sane
 
 		if rlen < MIN_PKT_LEN {
-			log.err("mbroker recv[%v]: pkt  length(%v) to short", peer, rlen)
+			log.err("mbroker recv[%v] instance(%v): pkt  length(%v) to short", peer, inst, rlen)
 			retbuf <- pb
 			continue
 		}
 		if rlen&0x3 != 0 {
-			log.err("mbroker recv[%v]: pkt length(%v) not on word boundary", peer, rlen)
+			log.err("mbroker recv[%v] instance(%v): pkt length(%v) not on word boundary", peer, inst, rlen)
 			retbuf <- pb
 			continue
 		}
@@ -331,13 +331,13 @@ func mbroker_recv(conn *net.UnixConn, schan chan<- *PktBuf) {
 		mbchan <- pb
 	}
 
-	log.info("mbroker recv[%v] exiting", peer)
+	log.info("mbroker recv[%v] instance(%v) exiting", peer, inst)
 }
 
-func mbroker_send(conn *net.UnixConn, schan <-chan *PktBuf) {
+func mbroker_send(inst uint, conn *net.UnixConn, schan <-chan *PktBuf) {
 
 	peer := "unix[" + conn.RemoteAddr().String() + "]"
-	log.info("mbroker send[%v] starting", peer)
+	log.info("mbroker send[%v] instance(%v) starting", peer, inst)
 
 	for pb := range schan {
 
@@ -346,13 +346,13 @@ func mbroker_send(conn *net.UnixConn, schan <-chan *PktBuf) {
 		retbuf <- pb
 
 		if err != nil && err != io.EOF {
-			log.err("mbroker send[%v] io error: %v", peer, err)
+			log.err("mbroker send[%v] instance(%v) io error: %v", peer, inst, err)
 			conn.Close() // force mbroker_recv to exit
 			break
 		}
 	}
 
-	log.info("mbroker send[%v] exiting", peer)
+	log.info("mbroker send[%v] instance(%v) exiting", peer, inst)
 }
 
 func mbroker_conn() {
@@ -368,7 +368,7 @@ func mbroker_conn() {
 	}
 	os.Chmod(cli.sockname, 0660)
 
-	for {
+	for inst := uint(1); ; inst++ {
 		conn, err := agent.AcceptUnix()
 		if err != nil {
 			log.err("mbroker connection accept error: %v, ignoring", err)
@@ -378,8 +378,8 @@ func mbroker_conn() {
 			// both go routines to exit. We also need to force a send on
 			// the sending go routine so that it can error out.
 			schan := make(chan *PktBuf, PKTQLEN)
-			go mbroker_recv(conn, schan)
-			go mbroker_send(conn, schan)
+			go mbroker_recv(inst, conn, schan)
+			go mbroker_send(inst, conn, schan)
 		}
 	}
 }
