@@ -4,7 +4,7 @@ package main
 
 import (
 	"bytes"
-	"io"
+	"errors"
 	"net"
 	"os"
 	"path"
@@ -431,8 +431,10 @@ func mbroker_send(inst uint, conn *net.UnixConn, schan <-chan *PktBuf) {
 
 		retbuf <- pb
 
-		if err != nil && err != io.EOF {
-			log.err("mbroker send[%v] instance(%v) io error: %v", peer, inst, err)
+		if err != nil {
+			if !errors.Is(err, net.ErrClosed) {
+				log.err("mbroker send[%v] instance(%v) io error: %v", peer, inst, err)
+			}
 			conn.Close() // force mbroker_recv to exit
 			break
 		}
