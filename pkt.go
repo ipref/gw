@@ -66,8 +66,8 @@ const ( // v1 commands
 	V1_RECOVER_EA     = 10
 	V1_RECOVER_REF    = 11
 
-	V1_MC_HOST_DATA     = 14
-	V1_MC_GET_HOST_DATA = 15
+	V1_MC_HOST_DATA  = 14
+	V1_GET_HOST_DATA = 15
 )
 
 const ( // v1 command mode, top two bits
