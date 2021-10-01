@@ -244,6 +244,90 @@ func mb_set_mark(pb *PktBuf) int {
 	return DROP
 }
 
+func mb_mc_host_data(pb *PktBuf) int {
+
+	pkt := pb.pkt[pb.iphdr:pb.tail]
+
+	pktlen := len(pkt)
+
+	if pktlen < V1_HDR_LEN+4 { // batch id
+		log.err("mb: mc host data pkt: len(%v) too short, dropping", pktlen)
+		return DROP
+	}
+
+	if pkt[V1_CMD] != V1_REQ|V1_MC_HOST_DATA {
+		log.err("mb: mc host data pkt: non REQ mode [%02x], dropping", pkt[V1_CMD])
+		return DROP
+	}
+
+	off := V1_HDR_LEN
+
+	// extract  batch id
+
+	batch := be.Uint32(pkt[off : off+4])
+
+	off += 4
+
+	// extract source
+
+	var source string
+
+	for ix := 0; ix < 2; ix++ {
+
+		if pktlen <= off+4 {
+			log.err("mb: mc host data pkt: invalid source string, dropping")
+			return DROP
+		}
+
+		if pkt[off] != V1_TYPE_STRING || pktlen < (off+int(pkt[off+1])+5)&^3 {
+			log.err("mb: mc host data pkt: invalid source string length, dropping")
+			return DROP
+		}
+
+		source += string(pkt[off+2:off+2+int(pkt[off+1])]) + ":"
+
+		off += (int(pkt[off+1]) + 5) &^ 3
+	}
+
+	source = source[:len(source)-1] // strip right colon
+
+	wlen := off // length of the ACK pkt to send back
+
+	// extract address mapping
+
+	var arec AddrRec
+
+	log.info("source:  %v  batch [%08x]", source, batch)
+
+	for ; off <= pktlen-V1_AREC_LEN; off += V1_AREC_LEN {
+
+		arec.ip = IP32(be.Uint32(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4]))
+		arec.gw = IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
+		arec.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
+		arec.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+
+		if arec.ip == 0 {
+			log.info("   remove:    %v + %v", arec.gw, &arec.ref)
+		} else {
+			log.info("   new host:  %v + %v -> %v", arec.gw, &arec.ref, arec.ip)
+		}
+	}
+
+	if off != pktlen {
+		log.err("mb: mc host data pkt: garbage at end of packet")
+	}
+
+	// send ACK back
+
+	pkt[V1_CMD] = V1_ACK | (pkt[V1_CMD] & 0x3f)
+
+	pb.tail = pb.iphdr + wlen
+	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(wlen/4))
+	pb.peer = "mbroker"
+	pb.schan <- pb
+	return ACCEPT
+}
+
 func mbroker() {
 
 	mb.eaq = make(map[uint16]Eaq)
@@ -270,21 +354,21 @@ func mbroker() {
 			pb.pp_raw("mbroker in:  ")
 		}
 
-		var verdict int
+		verdict := DROP
 
 		switch cmd {
 
 		case V1_NOOP:
-			verdict = DROP
 		case V1_SET_MARK:
 			verdict = mb_set_mark(pb)
 		case V1_GET_EA:
 			verdict = mb_get_ea(pb)
 		case V1_MC_GET_EA:
 			verdict = mb_mc_get_ea(pb)
+		case V1_MC_HOST_DATA:
+			verdict = mb_mc_host_data(pb)
 		default: // invalid
 			log.err("mb: unknown pkt type[%02x]", pkt[V1_CMD])
-			verdict = DROP
 		}
 
 		if verdict == DROP {
@@ -340,6 +424,8 @@ func mbroker_send(inst uint, conn *net.UnixConn, schan <-chan *PktBuf) {
 	log.info("mbroker send[%v] instance(%v) starting", peer, inst)
 
 	for pb := range schan {
+
+		log.info("mbroker send[%v] instance(%v) sending: [%02x]", peer, inst, pb.pkt[pb.iphdr+V1_CMD])
 
 		_, err := conn.Write(pb.pkt[pb.iphdr:pb.tail])
 
