@@ -40,6 +40,11 @@ const ( // v1 constants
 	// v1 mark offsets
 	V1_OID  = 0
 	V1_MARK = 4
+	// v1 host data offsets
+	V1_HOST_DATA_BATCHID = 0
+	V1_HOST_DATA_COUNT   = 0
+	V1_HOST_DATA_HASH    = 4
+	V1_HOST_DATA_SOURCE  = 12
 )
 
 const ( // v1 item types
@@ -66,8 +71,8 @@ const ( // v1 commands
 	V1_RECOVER_EA     = 10
 	V1_RECOVER_REF    = 11
 
-	V1_MC_HOST_DATA  = 14
-	V1_GET_HOST_DATA = 15
+	V1_MC_HOST_DATA      = 14
+	V1_MC_HOST_DATA_HASH = 15
 )
 
 const ( // v1 command mode, top two bits
