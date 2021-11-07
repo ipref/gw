@@ -120,10 +120,10 @@ func main() {
 
 	go mbroker_conn()
 
-	if cli.devmode {
-		go induce_ea_allocation()
-		go induce_ref_allocation()
-	}
+	//if cli.devmode {
+	//	go induce_ea_allocation()
+	//	go induce_ref_allocation()
+	//}
 
 	msg := <-goexit
 	db.stop()
