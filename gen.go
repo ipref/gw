@@ -143,14 +143,14 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 
 		if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
 			log.err("gen ea:  packet too short, ignoring")
-			return DROP
+			break
 		}
 
 		off := V1_HDR_LEN + V1_MARK_LEN
 
 		if (pktlen-off)%V1_AREC_LEN != 0 {
 			log.err("gen ea:  corrupted packet, ignoring")
-			return DROP
+			break
 		}
 
 		for ; off < pktlen; off += V1_AREC_LEN {
@@ -171,7 +171,7 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 		}
 
 	default:
-		log.err("gen ea:  unrecognized v1 cmd: 0x%x from %v", cmd, pb.peer)
+		log.err("gen ea:  unrecognized v1 cmd[%02x] from %v", cmd, pb.peer)
 	}
 
 	return DROP
@@ -369,14 +369,14 @@ func (gen *GenREF) receive(pb *PktBuf) int {
 
 		if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
 			log.err("gen ref: packet too short, ignoring")
-			return DROP
+			break
 		}
 
 		off := V1_HDR_LEN + V1_MARK_LEN
 
 		if (pktlen-off)%V1_AREC_LEN != 0 {
 			log.err("gen ref: corrupted packet, ignoring")
-			return DROP
+			break
 		}
 
 		for ; off < pktlen; off += V1_AREC_LEN {
@@ -449,7 +449,9 @@ func (gen *GenREF) start() {
 			case gen.ref <- ref:
 				ref = gen.next_ref()
 			case pb := <-gen.recv:
-				gen.receive(pb)
+				if gen.receive(pb) == DROP {
+					retbuf <- pb
+				}
 			}
 		}
 	}(gen)
