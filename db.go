@@ -591,12 +591,12 @@ func (db *DB) find_expired_eas(pb *PktBuf) int {
 	//
 	// these operations are atomic because all access to db is from inside this go routine
 
+	var seek_mark M32
+
 	if db.db == nil {
 		log.err("db find eas: db unavailable")
-		return DROP
+		goto reply
 	}
-
-	var seek_mark M32
 
 	db.db.View(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(mark_bkt))
@@ -613,7 +613,7 @@ func (db *DB) find_expired_eas(pb *PktBuf) int {
 	if seek_mark == 0 {
 		log.err("db find eas: cannot find current mark for %v(%v) in db",
 			owners.name(seek_oid), seek_oid)
-		return DROP
+		goto reply
 	}
 
 	db.db.View(func(tx *bolt.Tx) error {
@@ -653,6 +653,7 @@ func (db *DB) find_expired_eas(pb *PktBuf) int {
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
 	}
 
+reply:
 	pb.schan <- pb
 	return ACCEPT
 }
@@ -781,12 +782,12 @@ func (db *DB) find_expired_refs(pb *PktBuf) int {
 	//
 	// these operations are atomic because all access to db is from inside this go routine
 
+	var seek_mark M32
+
 	if db.db == nil {
 		log.err("db find eas: db unavailable")
-		return DROP
+		goto reply
 	}
-
-	var seek_mark M32
 
 	db.db.View(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(mark_bkt))
@@ -803,7 +804,7 @@ func (db *DB) find_expired_refs(pb *PktBuf) int {
 	if seek_mark == 0 {
 		log.err("db find refs: cannot find current mark for %v(%v) in db",
 			owners.name(seek_oid), seek_oid)
-		return DROP
+		goto reply
 	}
 
 	db.db.View(func(tx *bolt.Tx) error {
@@ -843,6 +844,7 @@ func (db *DB) find_expired_refs(pb *PktBuf) int {
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
 	}
 
+reply:
 	pb.schan <- pb
 	return ACCEPT
 }
