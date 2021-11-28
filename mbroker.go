@@ -21,28 +21,31 @@ type Eaq struct {
 	wait *time.Timer
 }
 
-type MbData struct {
+type MB struct {
+	// ipref-plugin
 	cur_mark []M32
 	eacache  map[IpRef]IpRec
 	eaq      map[uint16]Eaq
+	//
+	recv chan *PktBuf
 }
 
-var mbchan chan *PktBuf
-var mb MbData
+var mb MB
 
 // send NACK after wait time expires
-func mb_wait(cmd byte, pktid uint16) {
+// normally, expected packet arrives before wait time and the timer is cancelled
+func (mb *MB) delayed_nack(cmd byte, pktid uint16) {
 
 	pb := <-getbuf
 	pb.write_v1_header(V1_NACK|cmd, pktid)
 	pb.tail = pb.iphdr + V1_HDR_LEN
 	be.PutUint16(pb.pkt[V1_PKTLEN:V1_PKTLEN+2], V1_HDR_LEN/4)
-	pb.peer = "mb_wait"
-	mbchan <- pb
+	pb.peer = "delayed NACK"
+	mb.recv <- pb
 }
 
 // get ea response from forwarders
-func mb_get_ea(rpb *PktBuf) int {
+func (mb *MB) get_ea(rpb *PktBuf) int {
 
 	rpkt := rpb.pkt[rpb.iphdr:rpb.tail]
 
@@ -125,7 +128,7 @@ func mb_get_ea(rpb *PktBuf) int {
 }
 
 // mc get ea request from ipref plugin
-func mb_mc_get_ea(pb *PktBuf) int {
+func (mb *MB) mc_get_ea(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 
@@ -196,7 +199,7 @@ func mb_mc_get_ea(pb *PktBuf) int {
 
 	// don't wait too long
 
-	wait := time.AfterFunc(GET_EA_WAIT, func() { mb_wait(V1_GET_EA, pktid) })
+	wait := time.AfterFunc(GET_EA_WAIT, func() { mb.delayed_nack(V1_GET_EA, pktid) })
 	mb.eaq[pktid] = Eaq{pb, wait}
 
 	// send to fwd_to_tun
@@ -204,12 +207,12 @@ func mb_mc_get_ea(pb *PktBuf) int {
 	rpb.tail = rpb.iphdr + V1_HDR_LEN + V1_MARK_LEN + V1_AREC_LEN
 	be.PutUint16(rpkt[V1_PKTLEN:V1_PKTLEN+2], (V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN)/4)
 	rpb.peer = "mbroker"
-	rpb.schan = mbchan
+	rpb.schan = mb.recv
 	recv_gw <- rpb
 	return ACCEPT
 }
 
-func mb_set_mark(pb *PktBuf) int {
+func (mb *MB) set_mark(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.iphdr:pb.tail]
 
@@ -236,7 +239,7 @@ func mb_set_mark(pb *PktBuf) int {
 }
 
 // helper function, caller must validate packet
-func parse_source(pkt []byte) (string, int, error) {
+func (mb *MB) parse_source(pkt []byte) (string, int, error) {
 
 	off := 0
 	source := ""
@@ -262,7 +265,7 @@ func parse_source(pkt []byte) (string, int, error) {
 	return source, off, nil
 }
 
-func mb_mc_host_data(pb *PktBuf) int {
+func (mb *MB) mc_host_data(pb *PktBuf) int {
 
 	if cli.devmode && rand.Intn(10) < 3 { // in devmode, drop packets randomly
 		return DROP
@@ -288,7 +291,7 @@ func mb_mc_host_data(pb *PktBuf) int {
 
 	// extract source
 
-	source, soff, err := parse_source(pkt[off:])
+	source, soff, err := mb.parse_source(pkt[off:])
 
 	if err != nil {
 		log.err("mb: mc host data pkt: %v, dropping", err)
@@ -330,7 +333,7 @@ func mb_mc_host_data(pb *PktBuf) int {
 	return ACCEPT
 }
 
-func mb_mc_host_data_hash(pb *PktBuf) int {
+func (mb *MB) mc_host_data_hash(pb *PktBuf) int {
 
 	if cli.devmode && rand.Intn(100) < 7 { // in devmode, drop packets randomly
 		return DROP
@@ -356,7 +359,7 @@ func mb_mc_host_data_hash(pb *PktBuf) int {
 
 	// extract source
 
-	source, _, err := parse_source(pkt[off:])
+	source, _, err := mb.parse_source(pkt[off:])
 
 	if err != nil {
 		log.err("mb: mc host data hash pkt: %v, dropping", err)
@@ -379,13 +382,9 @@ func mb_mc_host_data_hash(pb *PktBuf) int {
 	return ACCEPT
 }
 
-func mbroker() {
+func (mb *MB) receive() {
 
-	mb.eaq = make(map[uint16]Eaq)
-	mb.eacache = make(map[IpRef]IpRec)
-	mb.cur_mark = make([]M32, int(mapper_oid)+1)
-
-	for pb := range mbchan {
+	for pb := range mb.recv {
 
 		pkt := pb.pkt[pb.iphdr:pb.tail]
 
@@ -411,23 +410,23 @@ func mbroker() {
 
 		case V1_DATA | V1_SET_MARK:
 
-			verdict = mb_set_mark(pb)
+			verdict = mb.set_mark(pb)
 
 		case V1_ACK | V1_GET_EA, V1_NACK | V1_GET_EA:
 
-			verdict = mb_get_ea(pb)
+			verdict = mb.get_ea(pb)
 
 		case V1_REQ | V1_MC_GET_EA:
 
-			verdict = mb_mc_get_ea(pb)
+			verdict = mb.mc_get_ea(pb)
 
 		case V1_REQ | V1_MC_HOST_DATA:
 
-			verdict = mb_mc_host_data(pb)
+			verdict = mb.mc_host_data(pb)
 
 		case V1_REQ | V1_MC_HOST_DATA_HASH:
 
-			verdict = mb_mc_host_data_hash(pb)
+			verdict = mb.mc_host_data_hash(pb)
 
 		default:
 			log.err("mb: unknown pkt type[%02x]", pkt[V1_CMD])
@@ -439,7 +438,7 @@ func mbroker() {
 	}
 }
 
-func mbroker_recv(inst uint, conn *net.UnixConn, schan chan<- *PktBuf) {
+func (mb *MB) connect_recv(inst uint, conn *net.UnixConn, schan chan<- *PktBuf) {
 
 	peer := "unix[" + conn.RemoteAddr().String() + "]"
 	log.info("mbroker recv[%v] instance(%v) starting", peer, inst)
@@ -452,7 +451,7 @@ func mbroker_recv(inst uint, conn *net.UnixConn, schan chan<- *PktBuf) {
 			conn.Close()
 			pb.write_v1_header(V1_NOOP, 0)
 			pb.peer = peer
-			schan <- pb // force send which will cause mbroker_send to exit
+			schan <- pb // force send which will cause connect_send to exit
 			break
 		}
 
@@ -474,13 +473,13 @@ func mbroker_recv(inst uint, conn *net.UnixConn, schan chan<- *PktBuf) {
 		pb.tail = pb.iphdr + rlen
 		pb.peer = peer
 		pb.schan = schan
-		mbchan <- pb
+		mb.recv <- pb
 	}
 
 	log.info("mbroker recv[%v] instance(%v) exiting", peer, inst)
 }
 
-func mbroker_send(inst uint, conn *net.UnixConn, schan <-chan *PktBuf) {
+func (mb *MB) connect_send(inst uint, conn *net.UnixConn, schan <-chan *PktBuf) {
 
 	peer := "unix[" + conn.RemoteAddr().String() + "]"
 	log.info("mbroker send[%v] instance(%v) starting", peer, inst)
@@ -497,7 +496,7 @@ func mbroker_send(inst uint, conn *net.UnixConn, schan <-chan *PktBuf) {
 			if !errors.Is(err, net.ErrClosed) {
 				log.err("mbroker send[%v] instance(%v) io error: %v", peer, inst, err)
 			}
-			conn.Close() // force mbroker_recv to exit
+			conn.Close() // force connect_recv to exit
 			break
 		}
 	}
@@ -505,7 +504,7 @@ func mbroker_send(inst uint, conn *net.UnixConn, schan <-chan *PktBuf) {
 	log.info("mbroker send[%v] instance(%v) exiting", peer, inst)
 }
 
-func mbroker_conn() {
+func (mb *MB) connect() {
 
 	log.info("mbroker opening socket: %v", cli.sockname)
 
@@ -528,8 +527,24 @@ func mbroker_conn() {
 			// both go routines to exit. We also need to force a send on
 			// the sending go routine so that it can error out.
 			schan := make(chan *PktBuf, PKTQLEN)
-			go mbroker_recv(inst, conn, schan)
-			go mbroker_send(inst, conn, schan)
+			go mb.connect_recv(inst, conn, schan)
+			go mb.connect_send(inst, conn, schan)
 		}
 	}
+}
+
+func (mb *MB) start() {
+
+	go mb.connect()
+}
+
+func (mb *MB) init() {
+
+	mb.eaq = make(map[uint16]Eaq)
+	mb.eacache = make(map[IpRef]IpRec)
+	mb.cur_mark = make([]M32, int(mapper_oid)+1)
+
+	mb.recv = make(chan *PktBuf, PKTQLEN)
+
+	go mb.receive()
 }

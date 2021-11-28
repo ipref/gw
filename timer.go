@@ -96,7 +96,7 @@ func send_marker(mark M32, oid O32, from string) {
 		recv_tun <- pb
 		recv_gw <- pbb
 		db.recv <- pbc
-		mbchan <- pbd
+		mb.recv <- pbd
 
 	case arp_oid:
 

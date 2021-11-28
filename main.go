@@ -70,9 +70,7 @@ func main() {
 	go fwd_to_gw()
 	go fwd_to_tun()
 
-	mbchan = make(chan *PktBuf, PKTQLEN)
-	go mbroker()
-
+	mb.init()
 	owners.init()
 	marker.init()
 	gen_ea.init()
@@ -118,7 +116,7 @@ func main() {
 	go timer_tick()
 	go arp_tick()
 
-	go mbroker_conn()
+	mb.start()
 
 	//if cli.devmode {
 	//	go induce_ea_allocation()
