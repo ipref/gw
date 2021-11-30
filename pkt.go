@@ -184,6 +184,8 @@ func (pb *PktBuf) copy_from(pbo *PktBuf) {
 	pb.data = pbo.data
 	pb.tail = pbo.tail
 	pb.iphdr = pbo.iphdr
+	pb.peer = pbo.peer
+	pb.schan = pbo.schan
 	pb.icmp = pbo.icmp
 
 	copy(pb.pkt[pb.data:pb.tail], pbo.pkt[pb.data:pb.tail])

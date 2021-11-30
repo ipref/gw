@@ -82,15 +82,12 @@ func send_marker(mark M32, oid O32, from string) {
 	case mapper_oid:
 
 		pbb := <-getbuf
-		pbb.peer = pb.peer
 		pbb.copy_from(pb)
 
 		pbc := <-getbuf
-		pbc.peer = pb.peer
 		pbc.copy_from(pb)
 
 		pbd := <-getbuf
-		pbd.peer = pb.peer
 		pbd.copy_from(pb)
 
 		recv_tun <- pb
@@ -105,11 +102,9 @@ func send_marker(mark M32, oid O32, from string) {
 	default:
 
 		pbb := <-getbuf
-		pbb.peer = pb.peer
 		pbb.copy_from(pb)
 
 		pbc := <-getbuf
-		pbc.peer = pb.peer
 		pbc.copy_from(pb)
 
 		recv_tun <- pb

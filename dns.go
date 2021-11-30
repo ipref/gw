@@ -344,13 +344,12 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 			pb.tail = off
 			be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
 
+			pb.peer = "hosts"
 			pbb.copy_from(pb)
 
 			log.debug("dns watcher: sending packet with hosts records: %v(%v) mark(%v), num(%v)",
 				owners.name(oid), oid, mark, (off-V1_HDR_LEN-V1_MARK_LEN)/V1_AREC_LEN)
 
-			pb.peer = "hosts"
-			pbb.peer = "hosts"
 			recv_tun <- pb
 			recv_gw <- pbb
 
