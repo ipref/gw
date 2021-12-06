@@ -21,7 +21,7 @@ type Eaq struct {
 	wait *time.Timer
 }
 
-type Source struct {
+type DnsSrc struct {
 	source string
 	oid    O32
 	hash   uint64
@@ -35,8 +35,8 @@ type MB struct {
 	cur_mark []M32
 	eacache  map[IpRef]IpRec
 	eaq      map[uint16]Eaq
-	// dns agents
-	sources map[string]Source
+	// dns sources
+	dnssources map[string]DnsSrc
 	// base
 	recv chan *PktBuf
 }
@@ -313,6 +313,38 @@ func (mb *MB) mc_host_data(pb *PktBuf) int {
 
 	wlen := off // length of the ACK pkt to send back
 
+	// prepare SET_AREC packet
+
+	pba := <-getbuf
+	pba.write_v1_header(V1_DATA|V1_SET_AREC, 0)
+
+	dnssrc, ok := mb.dnssources[source]
+	if !ok {
+		dnssrc.source = source
+		dnssrc.oid = owners.get_oid(source)
+		mb.dnssources[source] = dnssrc
+	}
+	if dnssrc.mark <= dnssrc.xmark {
+		// new host data
+		dnssrc.hash = hash
+		dnssrc.recs = make(map[AddrRec]bool)
+		dnssrc.mark = marker.now()
+		dnssrc.xmark = dnssrc.mark + MAPPER_TMOUT
+		mb.dnssources[source] = dnssrc
+	}
+
+	pkta := pba.pkt[pba.iphdr:]
+	offa := V1_HDR_LEN
+
+	be.PutUint32(pkta[offa+V1_OID:offa+V1_OID+4], uint32(dnssrc.oid))
+	be.PutUint32(pkta[offa+V1_MARK:offa+V1_MARK+4], uint32(dnssrc.mark))
+
+	offa += V1_MARK_LEN
+
+	if len(pkta[offa:]) < len(pkt[off:]) {
+		log.fatal("mb: mc host data: agent packet larger than gw packets")
+	}
+
 	// extract address mapping
 
 	var arec AddrRec
@@ -327,11 +359,30 @@ func (mb *MB) mc_host_data(pb *PktBuf) int {
 		arec.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
 
 		log.info("   host:  %v + %v -> %v", arec.gw, &arec.ref, arec.ip)
+
+		copy(pkta[offa:], pkt[off:off+V1_AREC_LEN])
+		dnssrc.recs[arec] = true
+		offa += V1_AREC_LEN
 	}
 
 	if off != pktlen {
 		log.err("mb: mc host data pkt: garbage at end of packet")
 	}
+
+	// send arec records
+
+	pba.tail = pba.iphdr + offa
+	be.PutUint16(pkta[V1_PKTLEN:V1_PKTLEN+2], uint16(offa/4))
+	pba.peer = dnssrc.source
+
+	pbb := <-getbuf
+	pbb.copy_from(pba)
+	pbc := <-getbuf
+	pbc.copy_from(pba)
+
+	recv_tun <- pba
+	recv_gw <- pbb
+	db.recv <- pbc
 
 	// send ACK back
 
@@ -557,9 +608,9 @@ func (mb *MB) init() {
 	mb.eacache = make(map[IpRef]IpRec)
 	mb.cur_mark = make([]M32, int(mapper_oid)+1)
 
-	// dns agents
+	// dns sources
 
-	mb.sources = make(map[string]Source)
+	mb.dnssources = make(map[string]DnsSrc)
 
 	// base
 
