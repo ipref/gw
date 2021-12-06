@@ -21,12 +21,23 @@ type Eaq struct {
 	wait *time.Timer
 }
 
+type Source struct {
+	source string
+	oid    O32
+	hash   uint64
+	recs   map[AddrRec]bool // count, deduplicated
+	mark   M32
+	xmark  M32
+}
+
 type MB struct {
 	// ipref-plugin
 	cur_mark []M32
 	eacache  map[IpRef]IpRec
 	eaq      map[uint16]Eaq
-	//
+	// dns agents
+	sources map[string]Source
+	// base
 	recv chan *PktBuf
 }
 
@@ -540,9 +551,17 @@ func (mb *MB) start() {
 
 func (mb *MB) init() {
 
+	// ipref plugin
+
 	mb.eaq = make(map[uint16]Eaq)
 	mb.eacache = make(map[IpRef]IpRec)
 	mb.cur_mark = make([]M32, int(mapper_oid)+1)
+
+	// dns agents
+
+	mb.sources = make(map[string]Source)
+
+	// base
 
 	mb.recv = make(chan *PktBuf, PKTQLEN)
 
