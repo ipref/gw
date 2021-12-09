@@ -45,6 +45,11 @@ const ( // v1 constants
 	V1_HOST_DATA_COUNT   = 0
 	V1_HOST_DATA_HASH    = 4
 	V1_HOST_DATA_SOURCE  = 12
+	// v1 save dnssource offsets
+	V1_DNSSOURCE_MARK   = 4
+	V1_DNSSOURCE_XMARK  = 4
+	V1_DNSSOURCE_HASH   = 8
+	V1_DNSSOURCE_SOURCE = 16
 )
 
 const ( // v1 item types
@@ -73,6 +78,7 @@ const ( // v1 commands
 
 	V1_MC_HOST_DATA      = 14
 	V1_MC_HOST_DATA_HASH = 15
+	V1_SAVE_DNSSOURCE    = 16
 )
 
 const ( // v1 command mode, top two bits
@@ -709,8 +715,7 @@ var retbuf chan (*PktBuf)
 
 We use getbuf channel of length 1. As soon as it gets empty we try to put
 a packet into it.  We try to get it from the retbuf but if not availale we
-allocate a new one but no more than maxbuf in total. If we exceed this
-limit and no packets in retbuf, we wait until one is returned.
+allocate a new one but no more than maxbuf in total.
 */
 
 func pkt_buffers() {

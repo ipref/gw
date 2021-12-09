@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"strings"
 	"time"
 )
 
@@ -249,6 +250,58 @@ func (mb *MB) set_mark(pb *PktBuf) int {
 	return DROP
 }
 
+// helper function, pkt space must be guaranteed by the caller
+func (mb *MB) insert_source(source string, pkt []byte) int {
+
+	off := 0
+
+	for _, src := range strings.Split(source, ":") {
+
+		dnm := []byte(src)
+		dnmlen := len(dnm)
+
+		if 0 < dnmlen && dnmlen < 256 { // should be true since DNS names are shorter than 255 chars
+
+			pkt[off] = V1_TYPE_STRING
+			pkt[off+1] = byte(dnmlen)
+			copy(pkt[off+2:], dnm)
+
+			for off += dnmlen + 2; off&3 != 0; off++ {
+				pkt[off] = 0
+			}
+
+		} else {
+			log.fatal("mb: insert source: dns name too long(%v): %v", dnmlen, src)
+		}
+	}
+
+	return off
+}
+
+func (mb *MB) save_dnssource(dnssrc DnsSrc) {
+
+	// we skip oid and recs fields because they will be deduced when restoring from db
+
+	pb := <-getbuf
+	pb.peer = dnssrc.source
+
+	pb.write_v1_header(V1_DATA|V1_SAVE_DNSSOURCE, 0)
+	pkt := pb.pkt[pb.iphdr:]
+	off := V1_HDR_LEN
+
+	be.PutUint32(pkt[off+V1_DNSSOURCE_MARK:off+V1_DNSSOURCE_MARK+4], uint32(dnssrc.mark))
+	be.PutUint32(pkt[off+V1_DNSSOURCE_XMARK:off+V1_DNSSOURCE_XMARK+4], uint32(dnssrc.xmark))
+	be.PutUint64(pkt[off+V1_DNSSOURCE_HASH:off+V1_DNSSOURCE_HASH+8], dnssrc.hash)
+
+	off += V1_DNSSOURCE_SOURCE
+	off += mb.insert_source(dnssrc.source, pkt[off:])
+
+	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
+	pb.tail = pb.iphdr + off
+
+	db.recv <- pb
+}
+
 // helper function, caller must validate packet
 func (mb *MB) parse_source(pkt []byte) (string, int, error) {
 
@@ -331,6 +384,7 @@ func (mb *MB) mc_host_data(pb *PktBuf) int {
 		dnssrc.mark = marker.now()
 		dnssrc.xmark = dnssrc.mark + MAPPER_TMOUT
 		mb.dnssources[source] = dnssrc
+		mb.save_dnssource(dnssrc)
 		// make new records current
 		send_marker(dnssrc.mark, dnssrc.oid, dnssrc.source)
 	}
@@ -434,17 +488,22 @@ func (mb *MB) mc_host_data_hash(pb *PktBuf) int {
 
 	// send response
 
+	pkt[V1_CMD] = V1_NACK | (pkt[V1_CMD] & 0x3f)
+
 	dnssrc, ok := mb.dnssources[source]
-	if ok && dnssrc.hash == hash && len(dnssrc.recs) == int(count) {
-		// everything matches, bump up expiration
-		dnssrc.xmark = marker.now() + MAPPER_TMOUT
-		mb.dnssources[source] = dnssrc
-		pkt[V1_CMD] = V1_ACK | (pkt[V1_CMD] & 0x3f) // send ACK
-	} else {
-		// no match, start over, no need to expire any existing records this
-		// will be done when new batch packets arrive from dns agent
-		delete(mb.dnssources, source)
-		pkt[V1_CMD] = V1_NACK | (pkt[V1_CMD] & 0x3f) // send NACK
+	if ok {
+		if dnssrc.hash == hash && len(dnssrc.recs) == int(count) {
+			// everything matches, bump up expiration
+			dnssrc.xmark = marker.now() + MAPPER_TMOUT
+			mb.dnssources[source] = dnssrc
+			mb.save_dnssource(dnssrc)
+			pkt[V1_CMD] = V1_ACK | (pkt[V1_CMD] & 0x3f) // send ACK
+		} else {
+			// no match, start over, set xmark to expire on next expiration tick
+			dnssrc.xmark = marker.now()
+			mb.dnssources[source] = dnssrc
+			mb.save_dnssource(dnssrc)
+		}
 	}
 
 	if cli.devmode && rand.Intn(100) < 3 {
