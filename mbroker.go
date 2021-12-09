@@ -324,13 +324,15 @@ func (mb *MB) mc_host_data(pb *PktBuf) int {
 		dnssrc.oid = owners.get_oid(source)
 		mb.dnssources[source] = dnssrc
 	}
-	if dnssrc.mark <= dnssrc.xmark {
+	if dnssrc.hash != hash {
 		// new host data
 		dnssrc.hash = hash
 		dnssrc.recs = make(map[AddrRec]bool)
 		dnssrc.mark = marker.now()
 		dnssrc.xmark = dnssrc.mark + MAPPER_TMOUT
 		mb.dnssources[source] = dnssrc
+		// make new records current
+		send_marker(dnssrc.mark, dnssrc.oid, dnssrc.source)
 	}
 
 	pkta := pba.pkt[pba.iphdr:]
@@ -430,9 +432,20 @@ func (mb *MB) mc_host_data_hash(pb *PktBuf) int {
 
 	log.info("hash:  %v  hash(%v)[%016x]", source, count, hash)
 
-	// send ACK back
+	// send response
 
-	pkt[V1_CMD] = V1_ACK | (pkt[V1_CMD] & 0x3f)
+	dnssrc, ok := mb.dnssources[source]
+	if ok && dnssrc.hash == hash && len(dnssrc.recs) == int(count) {
+		// everything matches, bump up expiration
+		dnssrc.xmark = marker.now() + MAPPER_TMOUT
+		mb.dnssources[source] = dnssrc
+		pkt[V1_CMD] = V1_ACK | (pkt[V1_CMD] & 0x3f) // send ACK
+	} else {
+		// no match, start over, no need to expire any existing records this
+		// will be done when new batch packets arrive from dns agent
+		delete(mb.dnssources, source)
+		pkt[V1_CMD] = V1_NACK | (pkt[V1_CMD] & 0x3f) // send NACK
+	}
 
 	if cli.devmode && rand.Intn(100) < 3 {
 		pkt[V1_CMD] = V1_NACK | (pkt[V1_CMD] & 0x3f) // in devmode, send NACK randomly
