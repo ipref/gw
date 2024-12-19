@@ -1,5 +1,6 @@
 // Copyright (c) 2018 Waldemar Augustyn
 
+//go:build 386 || amd64 || amd64p32 || arm || arm64 || ppc64le || mipsle || mips64le || mips64p32le
 // +build 386 amd64 amd64p32 arm arm64 ppc64le mipsle mips64le mips64p32le
 
 package main

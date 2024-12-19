@@ -1,5 +1,6 @@
 // Copyright (c) 2018 Waldemar Augustyn
 
+//go:build armbe || arm64be || ppc64 || mips || mips64 || mips64p32 || ppc || s390 || s390x || sparc || sparc64
 // +build armbe arm64be ppc64 mips mips64 mips64p32 ppc s390 s390x sparc sparc64
 
 package main
