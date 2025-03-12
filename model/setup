@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+
+set -e
+shopt -s expand_aliases
+
+. common.sh
+
+# This doesn't configure NAT in the gateways, because we don't need it for the
+# test.
+
+# Create network namespaces
+ip netns add gw7
+ip netns add gw8
+ip netns add host711
+ip netns add host822
+
+gw7 ip link set dev lo up
+gw8 ip link set dev lo up
+host711 ip link set dev lo up
+host822 ip link set dev lo up
+
+# Configure gateways
+gw7 sysctl -w net.ipv4.ip_forward=1
+gw8 sysctl -w net.ipv4.ip_forward=1
+
+# Create veth pair to connect gw7/gw8
+gw7 ip link add dev vgw7gw8 type veth peer name vgw8gw7
+gw7 ip link set vgw8gw7 netns gw8
+
+gw7 ip addr add 192.168.10.97/24 dev vgw7gw8
+gw8 ip addr add 192.168.10.98/24 dev vgw8gw7
+
+gw7 ip link set vgw7gw8 up
+gw8 ip link set vgw8gw7 up
+
+# Create two veth pairs to connect gwX/hostXXX
+gw7 ip link add dev vgw7host711 type veth peer name vhost711gw7
+gw8 ip link add dev vgw8host822 type veth peer name vhost822gw8
+gw7 ip link set vhost711gw7 netns host711
+gw8 ip link set vhost822gw8 netns host822
+
+gw7 ip addr add 192.168.97.1/24 dev vgw7host711
+gw8 ip addr add 192.168.98.2/24 dev vgw8host822
+
+host711 ip addr add 192.168.97.11/24 dev vhost711gw7
+host822 ip addr add 192.168.98.22/24 dev vhost822gw8
+
+gw7 ip link set vgw7host711 up
+gw8 ip link set vgw8host822 up
+host711 ip link set vhost711gw7 up
+host822 ip link set vhost822gw8 up
+
+# Configure default routes
+host711 ip route add default via 192.168.97.1 dev vhost711gw7
+host822 ip route add default via 192.168.98.2 dev vhost822gw8
+
+# Create hosts files
+mkdir -p /etc/netns/{gw7,gw8,host711,host822}
+
+cat > /etc/netns/gw7/hosts << EOF
+127.0.0.1       gw7
+192.168.10.98   gw8
+192.168.97.11   host711    #= pub 192.168.10.97 + 10711
+10.248.22.222   host822    #= ext 192.168.10.98 + 20822
+EOF
+cat > /etc/netns/gw8/hosts << EOF
+192.168.10.97   gw7
+127.0.0.1       gw8
+10.255.11.111   host711    #= ext 192.168.10.97 + 10711
+192.168.98.22   host822    #= pub 192.168.10.98 + 20822
+EOF
+cat > /etc/netns/host711/hosts << EOF
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
+192.168.97.1    gw7
+127.0.0.1       host711
+10.248.22.222   host822
+EOF
+cat > /etc/netns/host822/hosts << EOF
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
+192.168.98.2    gw8
+10.255.11.111   host711
+127.0.0.1       host822
+EOF
