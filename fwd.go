@@ -18,529 +18,401 @@ import rff "github.com/ipref/ref"
                ╰──────────╯     ┗━━━━━━━━━━━━┛     ╰──────────╯
 */
 
-func insert_ipref_option(pb *PktBuf) int {
+const (
+	ICMP_NO_ENCAP = iota
+	ICMP_ENCAP
+	ICMP_DROP
+)
 
+func icmp_action(icmp_type byte) int {
+	// TODO Add more
+	switch icmp_type {
+	case ICMP_DEST_UNREACH, ICMP_TIME_EXCEEDED, ICMP_REDIRECT, ICMP_SOURCE_QUENCH:
+		return ICMP_ENCAP
+	case ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST:
+		return ICMP_NO_ENCAP
+	default:
+		return ICMP_DROP
+	}
+}
+
+func (mgw *MapGw) get_srcdst_ipref(src, dst IP32) (
+		iprefsrc, iprefdst IpRefRec, ok bool) {
+
+	iprefsrc = mgw.get_src_ipref(src)
+	if iprefsrc.ip == 0 {
+		log.err("encap:   unknown src address: %v %v, dropping", src, dst)
+		return
+	}
+
+	iprefdst = mgw.get_dst_ipref(dst)
+	if iprefdst.ip == 0 {
+		log.err("encap:   unknown dst address: %v %v, sending icmp", src, dst)
+		// TODO
+		return
+		// pb.icmp.typ = ICMP_DEST_UNREACH
+		// pb.icmp.code = ICMP_NET_UNREACH
+		// pb.icmp.mtu = 0
+		// icmpreq <- pb
+	}
+
+	ok = true
+	return
+}
+
+func (mgw *MapGw) get_srcdst_ipref_rev(src, dst IP32, rev bool) (
+		iprefsrc, iprefdst IpRefRec, ok bool) {
+
+	if rev {
+		iprefdst, iprefsrc, ok = mgw.get_srcdst_ipref(dst, src)
+	} else {
+		iprefsrc, iprefdst, ok = mgw.get_srcdst_ipref(src, dst)
+	}
+	return
+}
+
+// Encapsulate an IP packet, replacing the IP header with an IPREF header.
+func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int) bool {
+
+	if pb.typ != PKT_IP {
+		log.fatal("encap:   not an ip packet")
+	}
 	pkt := pb.pkt
 
-	if (be.Uint16(pkt[pb.iphdr+IP_FRAG:pb.iphdr+IP_FRAG+2]) & 0x1fff) != 0 {
-		log.debug("inserting opt: pkt is a fragment, dropping")
-		return DROP
+	if pb.tail - pb.data < IP_HDR_MIN_LEN {
+		log.err("encap:   invalid packet (too small), dropping")
+		return false
+	}
+	if (pkt[pb.data+IP_VER] & 0xf0 != 0x40) {
+		log.err("encap:   packet is not IPv4, dropping")
+		return false
+	}
+	if (pkt[pb.data+IP_VER] & 0x0f != 5) {
+		log.err("encap:   packet has options, dropping")
+		return false
+	}
+	if (be.Uint16(pkt[pb.data+IP_FRAG:pb.data+IP_FRAG+2]) & 0x3fff) != 0 {
+		log.err("encap:   packet is a fragment, dropping")
+		return false
 	}
 
-	src := IP32(be.Uint32(pkt[pb.iphdr+IP_SRC : pb.iphdr+IP_SRC+4]))
-	dst := IP32(be.Uint32(pkt[pb.iphdr+IP_DST : pb.iphdr+IP_DST+4]))
+	ttl := pkt[pb.data+IP_TTL]
+	proto := pkt[pb.data+IP_PROTO]
+	var srcdst [8]byte
+	copy(srcdst[:], pkt[pb.data+IP_SRC:])
+	src := IP32(be.Uint32(pkt[pb.data+IP_SRC : pb.data+IP_SRC+4]))
+	dst := IP32(be.Uint32(pkt[pb.data+IP_DST : pb.data+IP_DST+4]))
+	l4 := pb.data + IP_HDR_MIN_LEN
 
-	iprefdst := map_gw.get_dst_ipref(dst)
-	if iprefdst.ip == 0 {
-		log.err("inserting opt: unknown dst address: %v %v , sending icmp", src, dst)
-		pb.icmp.typ = ICMP_DEST_UNREACH
-		pb.icmp.code = ICMP_NET_UNREACH
-		pb.icmp.mtu = 0
-		icmpreq <- pb
-		return STOLEN
+	iprefsrc, iprefdst, ok := map_gw.get_srcdst_ipref_rev(src, dst, rev_srcdst)
+	if !ok {
+		return false
 	}
 
-	iprefsrc := map_gw.get_src_ipref(src)
-	if iprefsrc.ip == 0 {
-		log.err("inserting opt: unknown src address: %v %v , dropping", src, dst)
-		return DROP // couldn't get src ipref for some reason
-	}
-
-	// get soft state
+	// get soft state and set pb src/dst
 
 	soft, ok := map_gw.soft[iprefdst.ip]
 	if !ok {
 		soft.init(iprefdst.ip) // missing soft state, use defaults
 	}
+	pb.src = iprefsrc.ip
+	pb.dst = iprefdst.ip
+	pb.sport = soft.port
+	pb.dport = IPREF_PORT // TODO
 
-	// insert option
+	// replace IP header with IPREF header
 
-	if pb.iphdr < OPTLEN {
-		log.err("inserting opt: no space for ipref option, dropping")
-		return DROP
+	reflen := max(min_reflen(iprefsrc.ref), min_reflen(iprefdst.ref))
+	if l4 < 12 + reflen*2 {
+		if len(pkt) < 12 + reflen*2 + (pb.tail - l4) {
+			log.err("encap:   not enough space for ipref header, dropping")
+			return false
+		} else {
+			// This should only happen for packets inside ICMP, which should be pretty small.
+			copy(pkt[12 + reflen*2:], pkt[l4:pb.tail])
+			l4 = 12 + reflen*2
+		}
 	}
+	pb.data = l4 - 12 - reflen*2
+	pb.typ = PKT_IPREF
 
-	var optlen int
+	pkt[pb.data] = (0x1 << 4) | encode_reflen(reflen) << 2
+	pkt[pb.data+1] = 0
+	pkt[pb.data+2] = ttl
+	pkt[pb.data+3] = proto
 
-	iphdrlen := pb.iphdr_len()
-
-	if iprefsrc.ref.H == 0 && iprefdst.ref.H == 0 {
-		pb.data = pb.iphdr - OPTLEN + 16 // both refs 64 bit
-		optlen = IPREF_OPT64_LEN
-	} else {
-		pb.data = pb.iphdr - OPTLEN // at least one 128 bit ref
-		optlen = IPREF_OPT128_LEN
-	}
-
-	copy(pkt[pb.data:pb.data+iphdrlen], pkt[pb.iphdr:pb.iphdr+iphdrlen])
-	pb.set_iphdr()
-
-	udp := pb.iphdr + iphdrlen
-	be.PutUint16(pkt[udp+UDP_SPORT:udp+UDP_SPORT+2], soft.port)
-	be.PutUint16(pkt[udp+UDP_DPORT:udp+UDP_DPORT+2], IPREF_PORT)
-	be.PutUint16(pkt[udp+UDP_LEN:udp+UDP_LEN+2], uint16(pb.tail-udp))
-	be.PutUint16(pkt[udp+UDP_CSUM:udp+UDP_CSUM+2], 0)
-
-	encap := udp + 8
-	pkt[encap+ENCAP_TTL] = pkt[pb.iphdr+8]
-	pkt[encap+ENCAP_PROTO] = pkt[pb.iphdr+IP_PROTO]
-	pkt[encap+ENCAP_HOPS] = soft.hops
-	pkt[encap+ENCAP_RSVD] = 0
-
-	opt := encap + 4
-	pkt[opt+OPT_OPT] = IPREF_OPT
-	pkt[opt+OPT_LEN] = byte(optlen)
-	if optlen == IPREF_OPT128_LEN {
-		be.PutUint64(pkt[opt+OPT_SREF128:opt+OPT_SREF128+8], iprefsrc.ref.H)
-		be.PutUint64(pkt[opt+OPT_SREF128+8:opt+OPT_SREF128+16], iprefsrc.ref.L)
-		be.PutUint64(pkt[opt+OPT_DREF128:opt+OPT_DREF128+8], iprefdst.ref.H)
-		be.PutUint64(pkt[opt+OPT_DREF128+8:opt+OPT_DREF128+16], iprefdst.ref.L)
-	} else {
-		be.PutUint64(pkt[opt+OPT_SREF64:opt+OPT_SREF64+8], iprefsrc.ref.L)
-		be.PutUint64(pkt[opt+OPT_DREF64:opt+OPT_DREF64+8], iprefdst.ref.L)
-	}
-	be.PutUint16(pkt[opt+OPT_RSVD:opt+OPT_RSVD+2], 0)
+	i := pb.data + 4
+	be.PutUint32(pkt[i:i+4], uint32(iprefsrc.ip))
+	i += 4
+	be.PutUint32(pkt[i:i+4], uint32(iprefdst.ip))
+	i += 4
+	encode_ref(pkt[i:i+reflen], iprefsrc.ref)
+	i += reflen
+	encode_ref(pkt[i:i+reflen], iprefdst.ref)
 
 	// adjust layer 4 headers
 
-	l4 := opt + optlen
-
-	switch pkt[encap+ENCAP_PROTO] {
+	switch proto {
 
 	case TCP: // subtract ip src/dst addresses from csum
+
+		if pb.tail - l4 < 18 {
+			log.err("encap:   invalid tcp packet, dropping")
+			return false
+		}
 
 		tcp_csum := be.Uint16(pkt[l4+TCP_CSUM : l4+TCP_CSUM+2])
 
 		if tcp_csum != 0 {
-			tcp_csum = csum_subtract(tcp_csum^0xffff, pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_DST+4])
+			tcp_csum = csum_subtract(tcp_csum^0xffff, srcdst[:])
 			be.PutUint16(pkt[l4+TCP_CSUM:l4+TCP_CSUM+2], tcp_csum^0xffff)
 		}
 
 	case UDP: // subtract ip src/dst addresses from csum
 
+		if pb.tail - l4 < 8 {
+			log.err("encap:   invalid udp packet, dropping")
+			return false
+		}
+
 		udp_csum := be.Uint16(pkt[l4+UDP_CSUM : l4+UDP_CSUM+2])
 
 		if udp_csum != 0 {
-			udp_csum = csum_subtract(udp_csum^0xffff, pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_DST+4])
+			udp_csum = csum_subtract(udp_csum^0xffff, srcdst[:])
 			be.PutUint16(pkt[l4+UDP_CSUM:l4+UDP_CSUM+2], udp_csum^0xffff)
 		}
 
-	case ICMP: // replace inner ip addresses with their ipref equivalents
+	case ICMP: // replace inner ip packet with ipref packet
 
-		if pkt[l4+ICMP_TYPE] != ICMP_DEST_UNREACH &&
-			pkt[l4+ICMP_TYPE] != ICMP_TIME_EXCEEDED &&
-			pkt[l4+ICMP_TYPE] != ICMP_REDIRECT &&
-			pkt[l4+ICMP_TYPE] != ICMP_SOURCE_QUENCH {
-			break
+		if icmp_depth <= 0 {
+			log.err("encap:   icmp depth limit reached, dropping")
+			return false
 		}
 
-		icmp_csum := be.Uint16(pkt[l4+ICMP_CSUM:l4+ICMP_CSUM+2]) ^ 0xffff
-
-		inner := l4 + ICMP_DATA
-
-		inner_src := IP32(be.Uint32(pkt[inner+IP_SRC : inner+IP_SRC+4]))
-		inner_dst := IP32(be.Uint32(pkt[inner+IP_DST : inner+IP_DST+4]))
-
-		if (pkt[inner+IP_VER] & 0x0f) != 5 {
-			log.err("inserting opt: icmp inner header has options  %v  %v, leaving as is", src, dst)
-			break
+		if pb.tail - l4 < ICMP_DATA {
+			log.err("encap:   invalid icmp packet")
+			return false
 		}
 
-		inner_dstipref := map_gw.get_dst_ipref(inner_src)
+		switch icmp_action(pkt[l4+ICMP_TYPE]) {
 
-		if inner_dstipref.ip == 0 {
-			log.err("inserting opt:  cannot find ipref addr for icmp inner src %v  %v, leaving as is", src, dst)
-			break
-		}
+		case ICMP_DROP:
 
-		inner_srcipref := map_gw.get_src_ipref(inner_dst)
+			log.err("encap:   unrecognized icmp type (%v)", pkt[l4+ICMP_TYPE])
+			return false
 
-		if inner_srcipref.ip == 0 {
-			log.err("inserting opt:  cannot find ipref addr for icmp inner dst %v  %v, leaving as is", src, dst)
-			break
-		}
+		case ICMP_ENCAP:
 
-		var inner_optlen int
-
-		if inner_srcipref.ref.H == 0 && inner_dstipref.ref.H == 0 {
-			inner_optlen = IPREF_OPT64_LEN
-		} else {
-			inner_optlen = IPREF_OPT128_LEN
-		}
-
-		if len(pkt)-pb.tail < inner_optlen {
-			log.err("inserting opt:  not enough room to expand inner header %v  %v, leaving as is", src, dst)
-			break
-		}
-
-		// insert inner ipref option
-
-		inner_opt := inner + 5*4
-
-		copy(pkt[inner_opt+inner_optlen:], pkt[inner_opt:pb.tail])
-		pb.tail += inner_optlen
-
-		pkt[inner_opt+OPT_OPT] = IPREF_OPT
-		pkt[inner_opt+OPT_LEN] = byte(inner_optlen)
-		be.PutUint16(pkt[inner_opt+OPT_RSVD:inner_opt+OPT_RSVD+2], 0)
-		if inner_optlen == IPREF_OPT128_LEN {
-			be.PutUint64(pkt[inner_opt+OPT_SREF128:inner_opt+OPT_SREF128+8], inner_srcipref.ref.H)
-			be.PutUint64(pkt[inner_opt+OPT_SREF128+8:inner_opt+OPT_SREF128+16], inner_srcipref.ref.L)
-			be.PutUint64(pkt[inner_opt+OPT_DREF128:inner_opt+OPT_DREF128+8], inner_dstipref.ref.H)
-			be.PutUint64(pkt[inner_opt+OPT_DREF128+8:inner_opt+OPT_DREF128+16], inner_dstipref.ref.L)
-		} else {
-			be.PutUint64(pkt[inner_opt+OPT_SREF64:inner_opt+OPT_SREF64+8], inner_srcipref.ref.L)
-			be.PutUint64(pkt[inner_opt+OPT_DREF64:inner_opt+OPT_DREF64+8], inner_dstipref.ref.L)
-		}
-
-		// adjust csum, in calculations ignore option because it will be removed
-
-		inner_l4 := inner_opt + inner_optlen
-
-		switch pkt[inner+IP_PROTO] {
-
-		case TCP: // subtract inner ip addresses
-
-			if inner_l4+TCP_CSUM+2 <= pb.tail {
-
-				inner_tcp_csum := be.Uint16(pkt[inner_l4+TCP_CSUM : inner_l4+TCP_CSUM+2])
-
-				if inner_tcp_csum != 0 {
-
-					icmp_csum = csum_subtract(icmp_csum, pkt[inner_l4+TCP_CSUM:inner_l4+TCP_CSUM+2])
-
-					inner_tcp_csum = csum_subtract(inner_tcp_csum^0xffff, pkt[inner+IP_SRC:inner+IP_DST+4])
-					be.PutUint16(pkt[inner_l4+TCP_CSUM:inner_l4+TCP_CSUM+2], inner_tcp_csum^0xffff)
-
-					icmp_csum = csum_add(icmp_csum, pkt[inner_l4+TCP_CSUM:inner_l4+TCP_CSUM+2])
-				}
+			inner_pb := PktBuf{
+				pkt: pkt[l4+ICMP_DATA:],
+				typ: PKT_IP,
+				data: 0,
+				tail: min(pb.tail - l4 - ICMP_DATA, 576)}
+			if !ipref_encap(&inner_pb, true, icmp_depth - 1) {
+				log.err("encap:   dropping icmp due to invalid inner packet")
+				return false
 			}
-
-		case UDP: // subtract inner ip addresses
-
-			if inner_l4+UDP_CSUM+2 <= pb.tail {
-
-				inner_udp_csum := be.Uint16(pkt[inner_l4+UDP_CSUM : inner_l4+UDP_CSUM+2])
-
-				if inner_udp_csum != 0 {
-
-					icmp_csum = csum_subtract(icmp_csum, pkt[inner_l4+UDP_CSUM:inner_l4+UDP_CSUM+2])
-
-					inner_udp_csum = csum_subtract(inner_udp_csum^0xffff, pkt[inner+IP_SRC:inner+IP_DST+4])
-					be.PutUint16(pkt[inner_l4+UDP_CSUM:inner_l4+UDP_CSUM+2], inner_udp_csum^0xffff)
-
-					icmp_csum = csum_add(icmp_csum, pkt[inner_l4+UDP_CSUM:inner_l4+UDP_CSUM+2])
-				}
+			if inner_pb.data != 0 {
+				copy(pkt[l4+ICMP_DATA:], inner_pb.pkt[inner_pb.data:inner_pb.tail])
 			}
+			pb.tail = inner_pb.tail - inner_pb.data + l4 + ICMP_DATA
 		}
-
-		inner_csum := be.Uint16(pkt[inner+IP_CSUM:inner+IP_CSUM+2]) ^ 0xffff
-
-		inner_csum = csum_subtract(inner_csum, pkt[inner+IP_VER:inner+IP_VER+2])
-		inner_csum = csum_subtract(inner_csum, pkt[inner+IP_SRC:inner+IP_DST+4])
-
-		icmp_csum = csum_subtract(icmp_csum, pkt[inner+IP_VER:inner+IP_VER+2])
-		icmp_csum = csum_subtract(icmp_csum, pkt[inner+IP_CSUM:inner+IP_CSUM+2])
-		icmp_csum = csum_subtract(icmp_csum, pkt[inner+IP_SRC:inner+IP_DST+4])
-
-		pkt[inner+IP_VER] += byte(inner_optlen / 4)
-		be.PutUint32(pkt[inner+IP_SRC:inner+IP_SRC+4], uint32(inner_srcipref.ip))
-		be.PutUint32(pkt[inner+IP_DST:inner+IP_DST+4], uint32(inner_dstipref.ip))
-		inner_csum = csum_add(inner_csum, pkt[inner+IP_VER:inner+IP_VER+2])
-		inner_csum = csum_add(inner_csum, pkt[inner+IP_SRC:inner+IP_DST+4])
-
-		be.PutUint16(pkt[inner+IP_CSUM:inner+IP_CSUM+2], inner_csum^0xffff)
-
-		icmp_csum = csum_add(icmp_csum, pkt[inner+IP_VER:inner+IP_VER+2])
-		icmp_csum = csum_add(icmp_csum, pkt[inner+IP_CSUM:inner+IP_CSUM+2])
-		icmp_csum = csum_add(icmp_csum, pkt[inner+IP_SRC:inner+IP_DST+4])
-
-		be.PutUint16(pkt[l4+ICMP_CSUM:l4+ICMP_CSUM+2], icmp_csum^0xffff)
 	}
 
-	// adjust ip header
-
-	be.PutUint16(pkt[pb.iphdr+IP_LEN:pb.iphdr+IP_LEN+2], uint16(pb.len()))
-	pkt[pb.iphdr+IP_PROTO] = UDP
-	be.PutUint16(pkt[pb.iphdr+IP_CSUM:pb.iphdr+IP_CSUM+2], 0)
-	be.PutUint32(pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_SRC+4], uint32(iprefsrc.ip))
-	be.PutUint32(pkt[pb.iphdr+IP_DST:pb.iphdr+IP_DST+4], uint32(iprefdst.ip))
-
-	ip_csum := csum_add(0, pkt[pb.iphdr:pb.iphdr+iphdrlen])
-	be.PutUint16(pkt[pb.iphdr+IP_CSUM:pb.iphdr+IP_CSUM+2], ip_csum^0xffff)
-
-	return ACCEPT
+	return true
 }
 
-func remove_ipref_option(pb *PktBuf) int {
+func (mtun *MapTun) get_srcdst_ip(sref_ip IP32, sref rff.Ref,
+		dref_ip IP32, dref rff.Ref) (src_ea, dst_ip IP32, ok bool) {
 
-	pkt := pb.pkt
-	reflen := pb.reflen(pb.iphdr)
-
-	if reflen == 0 {
-		log.err("removing opt:  not an ipref packet, dropping")
-		return DROP
+	src_ea = IP32(0)
+	if iprec := mtun.get_src_iprec(sref_ip, sref); iprec != nil {
+		src_ea = iprec.ip
 	}
+	if src_ea == 0 {
+		log.err("deencap: unknown src ipref address  %v + %v, dropping",
+			sref_ip, sref)
+		return // couldn't assign ea for some reason
+	}
+
+	dst_ip = mtun.get_dst_ip(dref_ip, dref)
+	if dst_ip == 0 {
+		log.err("deencap: unknown local destination  %v + %v, dropping",
+			dref_ip, &dref)
+		return
+	}
+
+	ok = true
+	return
+}
+
+func (mtun *MapTun) get_srcdst_ip_rev(sref_ip IP32, sref rff.Ref,
+		dref_ip IP32, dref rff.Ref, rev bool) (src_ea, dst_ip IP32, ok bool) {
+
+	if rev {
+		dst_ip, src_ea, ok = mtun.get_srcdst_ip(dref_ip, dref, sref_ip, sref)
+	} else {
+		src_ea, dst_ip, ok = mtun.get_srcdst_ip(sref_ip, sref, dref_ip, dref)
+	}
+	return
+}
+
+// De-encapsulate an IPREF packet, replacing the IPREF header with an IP header.
+func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool, icmp_depth int) bool {
+
+	if pb.typ != PKT_IPREF {
+		log.fatal("deencap: not an ipref packet")
+	}
+	pkt := pb.pkt
+
+	if pb.tail - pb.data < 20 || !pb.ipref_ver_ok() || !pb.ipref_reserved_ok() {
+		log.err("deencap: invalid ipref packet, dropping")
+		return false
+	}
+	reflen := pb.ipref_reflen()
+	if reflen == 0 || pb.tail - pb.data - 12 < pb.ipref_reflen() * 2 {
+		log.err("deencap: invalid ipref packet, dropping")
+		return false
+	}
+	ttl := pb.ipref_ttl()
+	proto := pb.ipref_proto()
+	sref_ip := IP32(be.Uint32(pb.ipref_sref_ip()))
+	dref_ip := IP32(be.Uint32(pb.ipref_dref_ip()))
+	sref := pb.ipref_sref()
+	dref := pb.ipref_dref()
+	l4 := pb.data + 12 + pb.ipref_reflen() * 2
 
 	// map addresses
 
-	var sref rff.Ref
-	var dref rff.Ref
-
-	iphdrlen := pb.iphdr_len()
-	udp := pb.iphdr + iphdrlen
-	encap := udp + 8
-	opt := encap + 4
-
-	src := IP32(be.Uint32(pkt[pb.iphdr+IP_SRC : pb.iphdr+IP_SRC+4]))
-	dst := IP32(be.Uint32(pkt[pb.iphdr+IP_DST : pb.iphdr+IP_DST+4]))
-
-	if reflen == IPREF_OPT128_LEN {
-		sref.H = be.Uint64(pkt[opt+OPT_SREF128 : opt+OPT_SREF128+8])
-		sref.L = be.Uint64(pkt[opt+OPT_SREF128+8 : opt+OPT_SREF128+8+8])
-		dref.H = be.Uint64(pkt[opt+OPT_DREF128 : opt+OPT_DREF128+8])
-		dref.L = be.Uint64(pkt[opt+OPT_DREF128+8 : opt+OPT_DREF128+8+8])
-	} else if reflen == IPREF_OPT64_LEN {
-		sref.H = 0
-		sref.L = be.Uint64(pkt[opt+OPT_SREF64 : opt+OPT_SREF64+8])
-		dref.H = 0
-		dref.L = be.Uint64(pkt[opt+OPT_DREF64 : opt+OPT_DREF64+8])
-	} else {
-		log.err("removing opt: invalid ipref option length: %v, dropping", reflen)
-		return DROP
-	}
-
-	dst_ip := map_tun.get_dst_ip(dst, dref)
-	if dst_ip == 0 {
-		log.err("removing opt:  unknown local destination  %v + %v  %v + %v, dropping",
-			src, &sref, dst, &dref)
-		return DROP // drop silently
-	}
-
-	src_ea := IP32(0)
-	if iprec := map_tun.get_src_iprec(src, sref); iprec != nil {
-		src_ea = iprec.ip
-	}
-
-	if src_ea == 0 {
-		log.err("removing opt:  unknown src ipref address  %v + %v  %v + %v, dropping",
-			src, &sref, dst, &dref)
-		return DROP // couldn't assign ea for some reason
+	src_ea, dst_ip, ok := map_tun.get_srcdst_ip_rev(sref_ip, sref, dref_ip, dref, rev_srcdst)
+	if !ok {
+		return false
 	}
 
 	// update soft state and tell the other forwarder if changed
 
-	soft, ok := map_tun.soft[src]
-	if !ok {
-		soft.init(src)
-		soft.port = 0 // force change
+	if update_soft {
+
+		soft, ok := map_tun.soft[pb.src]
+		if !ok {
+			soft.init(pb.src)
+			soft.port = 0 // force change
+		}
+
+		if soft.gw != pb.src {
+			log.err("deencap: soft record gw %v does not match src %v, resetting", soft.gw, pb.src)
+			soft.init(pb.src)
+			soft.port = 0 // force change
+		}
+
+		if soft.port != pb.sport {
+			soft.port = pb.sport
+			map_tun.set_soft(pb.src, soft)
+		}
 	}
 
-	if soft.gw != src {
-		log.err("removing opt:  soft record gw %v does not match src %v, resetting", soft.gw, src)
-		soft.init(src)
-		soft.port = 0 // force change
+	// replace IPREF header with IP header
+
+	if l4 < IP_HDR_MIN_LEN { // this should be impossible
+		log.err("deencap: not enough space for ip header, dropping")
+		return false
 	}
+	pb.data = l4 - IP_HDR_MIN_LEN
+	pb.typ = PKT_IP
 
-	if soft.ttl != pkt[encap+ENCAP_HOPS] ||
-		soft.hops != pkt[encap+ENCAP_TTL] ||
-		soft.port != be.Uint16(pkt[udp+UDP_SPORT:udp+UDP_SPORT+2]) {
-
-		soft.ttl = pkt[encap+ENCAP_HOPS]
-		soft.hops = pkt[encap+ENCAP_TTL]
-		soft.port = be.Uint16(pkt[udp+UDP_SPORT : udp+UDP_SPORT+2])
-
-		map_tun.set_soft(src, soft)
+	pkt[pb.data+IP_VER] = 0x45
+	pkt[pb.data+IP_DSCP] = 0
+	if (pb.tail - pb.data) >> 16 != 0 {
+		log.err("deencap: packet too large")
+		return false
 	}
+	be.PutUint16(pkt[pb.data+IP_LEN:pb.data+IP_LEN+2], uint16(pb.tail - pb.data))
+	be.PutUint16(pkt[pb.data+IP_ID:pb.data+IP_ID+2], 0)
+	be.PutUint16(pkt[pb.data+IP_FRAG:pb.data+IP_FRAG+2], 0)
+	pkt[pb.data+IP_TTL] = ttl
+	pkt[pb.data+IP_PROTO] = proto
+	be.PutUint16(pkt[pb.data+IP_CSUM:pb.data+IP_CSUM+2], 0)
+	be.PutUint32(pkt[pb.data+IP_SRC:pb.data+IP_SRC+4], uint32(src_ea))
+	be.PutUint32(pkt[pb.data+IP_DST:pb.data+IP_DST+4], uint32(dst_ip))
 
-	// adjust ip header
-
-	pktlen := be.Uint16(pkt[pb.iphdr+IP_LEN : pb.iphdr+IP_LEN+2])
-	pktlen -= 8 + 4 + uint16(reflen)
-
-	be.PutUint16(pkt[pb.iphdr+IP_LEN:pb.iphdr+IP_LEN+2], pktlen)
-	pkt[pb.iphdr+IP_PROTO] = pkt[encap+ENCAP_PROTO]
-	be.PutUint32(pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_SRC+4], uint32(src_ea))
-	be.PutUint32(pkt[pb.iphdr+IP_DST:pb.iphdr+IP_DST+4], uint32(dst_ip))
-
-	// strip option
-
-	pb.iphdr += 8 + 4 + reflen // udp header + encap + opt
-	copy(pkt[pb.iphdr:pb.iphdr+iphdrlen], pkt[pb.data:pb.data+iphdrlen])
-	pb.data = pb.iphdr
+	// compute IP checksum
+	ip_csum := csum_add(0, pkt[pb.data:pb.data+IP_HDR_MIN_LEN])
+	be.PutUint16(pkt[pb.data+IP_CSUM:pb.data+IP_CSUM+2], ip_csum^0xffff)
 
 	// adjust layer 4 headers
 
-	l4 := pb.iphdr + iphdrlen
-
-	switch pkt[pb.iphdr+IP_PROTO] {
+	switch proto {
 
 	case TCP: // add ip src/dst addresses to csum
+
+		if pb.tail - l4 < 18 {
+			log.err("deencap: invalid tcp packet, dropping")
+			return false
+		}
 
 		tcp_csum := be.Uint16(pkt[l4+TCP_CSUM : l4+TCP_CSUM+2])
 
 		if tcp_csum != 0 {
-			tcp_csum = csum_add(tcp_csum^0xffff, pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_DST+4])
+			tcp_csum = csum_add(tcp_csum^0xffff, pkt[pb.data+IP_SRC:pb.data+IP_DST+4])
 			be.PutUint16(pkt[l4+TCP_CSUM:l4+TCP_CSUM+2], tcp_csum^0xffff)
 		}
 
 	case UDP: // add ip src/dst addresses to csum
 
+		if pb.tail - l4 < 8 {
+			log.err("deencap: invalid udp packet, dropping")
+			return false
+		}
+
 		udp_csum := be.Uint16(pkt[l4+UDP_CSUM : l4+UDP_CSUM+2])
 
 		if udp_csum != 0 {
-			udp_csum = csum_add(udp_csum^0xffff, pkt[pb.iphdr+IP_SRC:pb.iphdr+IP_DST+4])
+			udp_csum = csum_add(udp_csum^0xffff, pkt[pb.data+IP_SRC:pb.data+IP_DST+4])
 			be.PutUint16(pkt[l4+UDP_CSUM:l4+UDP_CSUM+2], udp_csum^0xffff)
 		}
 
-	case ICMP: // replace inner ipref addresses with their ea/ip equivalents
+	case ICMP: // replace inner ipref packet with ip packet
 
-		if pkt[l4+ICMP_TYPE] != ICMP_DEST_UNREACH &&
-			pkt[l4+ICMP_TYPE] != ICMP_TIME_EXCEEDED &&
-			pkt[l4+ICMP_TYPE] != ICMP_REDIRECT &&
-			pkt[l4+ICMP_TYPE] != ICMP_SOURCE_QUENCH {
-			break
+		if icmp_depth <= 0 {
+			log.err("deencap: icmp depth limit reached, dropping")
+			return false
 		}
 
-		icmp_csum := be.Uint16(pkt[l4+ICMP_CSUM:l4+ICMP_CSUM+2]) ^ 0xffff
-
-		inner := l4 + ICMP_DATA
-
-		if (pkt[inner+IP_VER] & 0x0f) == 5 {
-			log.err("removing opt: icmp inner header has no options  %v %v, leaving as is", src, dst)
-			break
+		if pb.tail - l4 < ICMP_DATA {
+			log.err("deencap: invalid icmp packet")
+			return false
 		}
 
-		inner_opt := inner + 5*4
+		switch icmp_action(pkt[l4+ICMP_TYPE]) {
 
-		if pkt[inner_opt+OPT_OPT] != IPREF_OPT {
-			log.err("removing opt: icmp inner header option is not ipref  %v %v, leaving as is", src, dst)
-			break
-		}
+		case ICMP_DROP:
 
-		var inner_srcipref IpRefRec
-		var inner_dstipref IpRefRec
+			log.err("deencap: unrecognized icmp type (%v)", pkt[l4+ICMP_TYPE])
+			return false
 
-		inner_srcipref.ip = IP32(be.Uint32(pkt[inner+IP_SRC : inner+IP_SRC+4]))
-		inner_dstipref.ip = IP32(be.Uint32(pkt[inner+IP_DST : inner+IP_DST+4]))
+		case ICMP_ENCAP:
 
-		inner_optlen := int(pkt[inner_opt+OPT_LEN])
-
-		if inner_optlen == IPREF_OPT128_LEN {
-			inner_srcipref.ref.H = be.Uint64(pkt[inner_opt+OPT_SREF128 : inner_opt+OPT_SREF128+8])
-			inner_srcipref.ref.L = be.Uint64(pkt[inner_opt+OPT_SREF128+8 : inner_opt+OPT_SREF128+16])
-			inner_dstipref.ref.H = be.Uint64(pkt[inner_opt+OPT_DREF128 : inner_opt+OPT_DREF128+8])
-			inner_dstipref.ref.L = be.Uint64(pkt[inner_opt+OPT_DREF128+8 : inner_opt+OPT_DREF128+16])
-		} else if inner_optlen == IPREF_OPT64_LEN {
-			inner_srcipref.ref.H = 0
-			inner_srcipref.ref.L = be.Uint64(pkt[inner_opt+OPT_SREF64 : inner_opt+OPT_SREF64+8])
-			inner_dstipref.ref.H = 0
-			inner_dstipref.ref.L = be.Uint64(pkt[inner_opt+OPT_DREF64 : inner_opt+OPT_DREF64+8])
-		} else {
-			log.err("removing opt: invalid inner ipref option length: %v, dropping", inner_optlen)
-			return DROP
-		}
-
-		// remove inner ipref option
-
-		copy(pkt[inner_opt:], pkt[inner_opt+inner_optlen:])
-		pb.tail -= inner_optlen
-
-		pktlen := be.Uint16(pkt[pb.iphdr+IP_LEN : pb.iphdr+IP_LEN+2])
-		be.PutUint16(pkt[pb.iphdr+IP_LEN:pb.iphdr+IP_LEN+2], pktlen-uint16(inner_optlen))
-
-		// get addresses
-
-		inner_dst := IP32(0)
-		if iprec := map_tun.get_src_iprec(inner_srcipref.ip, inner_srcipref.ref); iprec != nil {
-			inner_dst = iprec.ip
-		}
-		if inner_dst == 0 {
-			log.err("removing opt: cannot find ea for icmp inner src ipref: %v + %v, leaving as is",
-				inner_srcipref.ip, &inner_srcipref.ref)
-			break
-		}
-
-		inner_src := map_tun.get_dst_ip(inner_dstipref.ip, inner_dstipref.ref)
-		if inner_src == 0 {
-			log.err("removing opt: cannot find ip for icmp inner dst ipref: %v + %v, leaving as is",
-				inner_dstipref.ip, &inner_dstipref.ref)
-			break
-		}
-
-		// adjust csum
-
-		var inner_csum uint16
-
-		inner_csum = be.Uint16(pkt[inner+IP_CSUM:inner+IP_CSUM+2]) ^ 0xffff
-		inner_csum = csum_subtract(inner_csum, pkt[inner+IP_VER:inner+IP_VER+2])
-		inner_csum = csum_subtract(inner_csum, pkt[inner+IP_SRC:inner+IP_DST+4])
-
-		icmp_csum = csum_subtract(icmp_csum, pkt[inner+IP_VER:inner+IP_VER+2])
-		icmp_csum = csum_subtract(icmp_csum, pkt[inner+IP_CSUM:inner+IP_CSUM+2])
-		icmp_csum = csum_subtract(icmp_csum, pkt[inner+IP_SRC:inner+IP_DST+4])
-
-		pkt[inner+IP_VER] -= byte(inner_optlen / 4)
-		be.PutUint32(pkt[inner+IP_SRC:inner+IP_SRC+4], uint32(inner_src))
-		be.PutUint32(pkt[inner+IP_DST:inner+IP_DST+4], uint32(inner_dst))
-		inner_csum = csum_add(inner_csum, pkt[inner+IP_VER:inner+IP_VER+2])
-		inner_csum = csum_add(inner_csum, pkt[inner+IP_SRC:inner+IP_DST+4])
-
-		be.PutUint16(pkt[inner+IP_CSUM:inner+IP_CSUM+2], inner_csum^0xffff)
-
-		icmp_csum = csum_add(icmp_csum, pkt[inner+IP_VER:inner+IP_VER+2])
-		icmp_csum = csum_add(icmp_csum, pkt[inner+IP_CSUM:inner+IP_CSUM+2])
-		icmp_csum = csum_add(icmp_csum, pkt[inner+IP_SRC:inner+IP_DST+4])
-
-		inner_l4 := inner_opt
-
-		switch pkt[inner+IP_PROTO] {
-
-		case TCP: // add inner ip addresses
-
-			if inner_l4+TCP_CSUM+2 <= pb.tail {
-
-				inner_tcp_csum := be.Uint16(pkt[inner_l4+TCP_CSUM : inner_l4+TCP_CSUM+2])
-
-				if inner_tcp_csum != 0 {
-
-					icmp_csum = csum_subtract(icmp_csum, pkt[inner_l4+TCP_CSUM:inner_l4+TCP_CSUM+2])
-
-					inner_tcp_csum = csum_add(inner_tcp_csum^0xffff, pkt[inner+IP_SRC:inner+IP_DST+4])
-					be.PutUint16(pkt[inner_l4+TCP_CSUM:inner_l4+TCP_CSUM+2], inner_tcp_csum^0xffff)
-
-					icmp_csum = csum_add(icmp_csum, pkt[inner_l4+TCP_CSUM:inner_l4+TCP_CSUM+2])
-				}
+			inner_pb := PktBuf{
+				pkt: pkt[l4+ICMP_DATA:],
+				typ: PKT_IPREF,
+				data: 0,
+				tail: min(pb.tail - l4 - ICMP_DATA, 576)}
+			if !ipref_deencap(&inner_pb, false, true, icmp_depth - 1) {
+				log.err("deencap: dropping icmp due to invalid inner packet")
+				return false
 			}
-
-		case UDP: // add inner ip addresses
-
-			if inner_l4+UDP_CSUM+2 <= pb.tail {
-
-				inner_udp_csum := be.Uint16(pkt[inner_l4+UDP_CSUM : inner_l4+UDP_CSUM+2])
-
-				if inner_udp_csum != 0 {
-
-					icmp_csum = csum_subtract(icmp_csum, pkt[inner_l4+UDP_CSUM:inner_l4+UDP_CSUM+2])
-
-					inner_udp_csum = csum_add(inner_udp_csum^0xffff, pkt[inner+IP_SRC:inner+IP_DST+4])
-					be.PutUint16(pkt[inner_l4+UDP_CSUM:inner_l4+UDP_CSUM+2], inner_udp_csum^0xffff)
-
-					icmp_csum = csum_add(icmp_csum, pkt[inner_l4+UDP_CSUM:inner_l4+UDP_CSUM+2])
-				}
+			if inner_pb.data != 0 {
+				copy(pkt[l4+ICMP_DATA:], inner_pb.pkt[inner_pb.data:inner_pb.tail])
 			}
+			pb.tail = inner_pb.tail - inner_pb.data + l4 + ICMP_DATA
+			pkt[l4+ICMP_CSUM] = 0
+			pkt[l4+ICMP_CSUM+1] = 0
+			icmp_csum := csum_add(0, pkt[l4:pb.tail])
+			be.PutUint16(pkt[l4+ICMP_CSUM:l4+ICMP_CSUM+2], icmp_csum^0xffff)
 		}
-
-		be.PutUint16(pkt[l4+ICMP_CSUM:l4+ICMP_CSUM+2], icmp_csum^0xffff)
 	}
 
-	// adjust ip header csum
-
-	be.PutUint16(pkt[pb.iphdr+IP_CSUM:pb.iphdr+IP_CSUM+2], 0)
-	ip_csum := csum_add(0, pkt[pb.iphdr:pb.iphdr+iphdrlen])
-	be.PutUint16(pkt[pb.iphdr+IP_CSUM:pb.iphdr+IP_CSUM+2], ip_csum^0xffff)
-
-	return ACCEPT
+	return true
 }
 
 func fwd_to_gw() {
@@ -548,18 +420,17 @@ func fwd_to_gw() {
 	for pb := range recv_tun {
 
 		verdict := DROP
-		pb.set_iphdr()
 
-		switch {
+		switch pb.typ {
 
-		case pb.pkt[pb.iphdr]&0xf0 == 0x40:
+		case PKT_IP:
 
-			verdict = insert_ipref_option(pb)
-			if verdict == ACCEPT {
+			if ipref_encap(pb, false, 1) {
+				verdict = ACCEPT
 				send_gw <- pb
 			}
 
-		case pb.pkt[pb.iphdr] == V1_SIG:
+		case PKT_V1:
 
 			if err := pb.validate_v1_header(pb.len()); err != nil {
 
@@ -567,7 +438,7 @@ func fwd_to_gw() {
 
 			} else {
 
-				switch pb.pkt[pb.iphdr+V1_CMD] {
+				switch pb.pkt[pb.data+V1_CMD] {
 				case V1_SET_AREC:
 					verdict = map_gw.set_new_address_records(pb)
 				case V1_REQ | V1_GET_REF:
@@ -581,12 +452,12 @@ func fwd_to_gw() {
 				case V1_DATA | V1_RECOVER_REF:
 					verdict = map_gw.query_expired_refs(pb)
 				default:
-					log.err("fwd_to_gw: unknown address records command: %v, ignoring", pb.pkt[pb.iphdr+V1_CMD])
+					log.err("fwd_to_gw: unknown address records command: %v, ignoring", pb.pkt[pb.data+V1_CMD])
 				}
 			}
 
 		default:
-			log.err("fwd_to_gw: unknown packet signature: 0x%02x, dropping", pb.pkt[pb.data])
+			log.fatal("fwd_to_gw: unknown packet type: %v", pb.typ)
 		}
 
 		if verdict == DROP {
@@ -600,22 +471,17 @@ func fwd_to_tun() {
 	for pb := range recv_gw {
 
 		verdict := DROP
-		pb.set_iphdr()
 
-		switch {
+		switch pb.typ {
 
-		case len(pb.pkt)-pb.data < MIN_PKT_LEN:
+		case PKT_IPREF:
 
-			log.err("fwd_to_tun in: short packet data/end(%v/%v), dropping", pb.data, len(pb.pkt))
-
-		case pb.pkt[pb.iphdr]&0xf0 == 0x40:
-
-			verdict = remove_ipref_option(pb)
-			if verdict == ACCEPT {
+			if ipref_deencap(pb, true, false, 1) {
+				verdict = ACCEPT
 				send_tun <- pb
 			}
 
-		case pb.pkt[pb.iphdr] == V1_SIG:
+		case PKT_V1:
 
 			if err := pb.validate_v1_header(pb.len()); err != nil {
 
@@ -623,7 +489,7 @@ func fwd_to_tun() {
 
 			} else {
 
-				switch pb.pkt[pb.iphdr+V1_CMD] {
+				switch pb.pkt[pb.data+V1_CMD] {
 				case V1_SET_AREC:
 					verdict = map_tun.set_new_address_records(pb)
 				case V1_REQ | V1_GET_EA:
@@ -635,12 +501,12 @@ func fwd_to_tun() {
 				case V1_DATA | V1_RECOVER_EA:
 					verdict = map_tun.query_expired_eas(pb)
 				default:
-					log.err("fwd_to_tun: unknown address records command: %v, ignoring", pb.pkt[pb.iphdr+V1_CMD])
+					log.err("fwd_to_tun: unknown address records command: %v, ignoring", pb.pkt[pb.data+V1_CMD])
 				}
 			}
 
 		default:
-			log.err("fwd_to_tun: unknown packet signature: 0x%02x, dropping", pb.pkt[pb.data])
+			log.fatal("fwd_to_tun: unknown packet type: %v", pb.typ)
 		}
 
 		if verdict == DROP {

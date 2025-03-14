@@ -104,8 +104,6 @@ type SoftRec struct {
 	gw   IP32
 	port uint16
 	mtu  uint16
-	ttl  byte
-	hops byte
 }
 
 func (sft *SoftRec) init(gw IP32) {
@@ -113,8 +111,6 @@ func (sft *SoftRec) init(gw IP32) {
 	sft.gw = gw
 	sft.port = IPREF_PORT
 	sft.mtu = uint16(cli.ifc.MTU)
-	sft.ttl = 1
-	sft.hops = 1
 }
 
 func ref_cmp(a, b interface{}) int {
@@ -148,7 +144,7 @@ func send_soft_rec(soft SoftRec) {
 
 	pb := <-getbuf
 
-	pkt := pb.pkt[pb.iphdr:]
+	pkt := pb.pkt[pb.data:]
 
 	pb.write_v1_header(V1_SET_SOFT, 0)
 
@@ -157,11 +153,8 @@ func send_soft_rec(soft SoftRec) {
 	be.PutUint32(pkt[off+V1_SOFT_GW:off+V1_SOFT_GW+4], uint32(soft.gw))
 	be.PutUint16(pkt[off+V1_SOFT_MTU:off+V1_SOFT_MTU+2], soft.mtu)
 	be.PutUint16(pkt[off+V1_SOFT_PORT:off+V1_SOFT_PORT+2], soft.port)
-	pkt[off+V1_SOFT_TTL] = soft.ttl
-	pkt[off+V1_SOFT_HOPS] = soft.hops
-	be.PutUint16(pkt[off+V1_SOFT_RSVD:off+V1_SOFT_RSVD+2], 0)
 
-	pb.tail = pb.iphdr + V1_HDR_LEN + V1_SOFT_LEN
+	pb.tail = pb.data + V1_HDR_LEN + V1_SOFT_LEN
 	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((V1_HDR_LEN+V1_SOFT_LEN)/4))
 
 	recv_tun <- pb
@@ -172,7 +165,7 @@ func get_arec_pkt(ea, ip, gw IP32, ref rff.Ref, oid O32, mark M32) *PktBuf {
 
 	pb := <-getbuf
 
-	pkt := pb.pkt[pb.iphdr:]
+	pkt := pb.pkt[pb.data:]
 
 	pb.write_v1_header(V1_SET_AREC, 0)
 
@@ -390,7 +383,7 @@ func (mgw *MapGw) insert_record(oid O32, mark M32, arec []byte) {
 
 func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
 	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
 		log.err("mgw:  SET_AREC packet too short, dropping")
@@ -415,7 +408,7 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 
 func (mgw *MapGw) get_ref(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 
 	if err := pb.validate_v1_header(len(pkt)); err != nil {
 		log.err("mgw:  invalid GET_REF pkt from %v: %v", pb.peer, err)
@@ -444,7 +437,7 @@ func (mgw *MapGw) get_ref(pb *PktBuf) int {
 		// NACK
 		pkt[V1_CMD] = V1_NACK | V1_GET_REF
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(V1_HDR_LEN/4))
-		pb.tail = pb.iphdr + V1_HDR_LEN
+		pb.tail = pb.data + V1_HDR_LEN
 	} else {
 		// ACK
 		pkt[V1_CMD] = V1_ACK | V1_GET_REF
@@ -468,7 +461,7 @@ func (mgw *MapGw) get_ref(pb *PktBuf) int {
 
 func (mgw *MapGw) set_new_mark(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 	if len(pkt) != V1_HDR_LEN+V1_MARK_LEN || pkt[V1_CMD] != V1_SET_MARK {
 		log.err("mgw:  invalid SET_MARK packet: PKT %08x data/tail(%v/%v), dropping",
 			be.Uint32(pb.pkt[pb.data:pb.data+4]), pb.data, pb.tail)
@@ -487,7 +480,7 @@ func (mgw *MapGw) set_new_mark(pb *PktBuf) int {
 
 func (mgw *MapGw) update_soft(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 
 	if len(pkt) != V1_HDR_LEN+V1_SOFT_LEN || pkt[V1_CMD] != V1_SET_SOFT {
 
@@ -504,13 +497,10 @@ func (mgw *MapGw) update_soft(pb *PktBuf) int {
 	soft.gw = IP32(be.Uint32(pkt[off+V1_SOFT_GW : off+V1_SOFT_GW+4]))
 	soft.port = be.Uint16(pkt[off+V1_SOFT_PORT : off+V1_SOFT_PORT+2])
 	soft.mtu = be.Uint16(pkt[off+V1_SOFT_MTU : off+V1_SOFT_MTU+2])
-	soft.ttl = pkt[off+V1_SOFT_TTL]
-	soft.hops = pkt[off+V1_SOFT_HOPS]
 
 	if soft.port != 0 {
 		if cli.debug["mapper"] {
-			log.debug("mgw:  update soft %v:%v mtu(%v) ttl/hops %v/%v", soft.gw, soft.port,
-				soft.mtu, soft.ttl, soft.hops)
+			log.debug("mgw:  update soft %v:%v mtu(%v)", soft.gw, soft.port, soft.mtu)
 		}
 		mgw.soft[soft.gw] = soft
 	} else {
@@ -525,7 +515,7 @@ func (mgw *MapGw) update_soft(pb *PktBuf) int {
 
 func (mgw *MapGw) remove_expired_eas(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
 
 	off := V1_HDR_LEN
@@ -600,7 +590,7 @@ func (mgw *MapGw) remove_expired_eas(pb *PktBuf) int {
 
 func (mgw *MapGw) query_expired_refs(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
 
 	off := V1_HDR_LEN
@@ -726,8 +716,7 @@ func (mtun *MapTun) set_cur_mark(oid O32, mark M32) {
 func (mtun *MapTun) set_soft(src IP32, soft SoftRec) {
 
 	if cli.debug["mapper"] {
-		log.debug("mtun: set soft %v:%v mtu(%v) ttl/hops %v/%v", soft.gw, soft.port,
-			soft.mtu, soft.ttl, soft.hops)
+		log.debug("mtun: set soft %v:%v mtu(%v)", soft.gw, soft.port, soft.mtu)
 	}
 
 	mtun.soft[src] = soft
@@ -905,7 +894,7 @@ func (mtun *MapTun) insert_record(oid O32, mark M32, arec []byte) {
 
 func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
 	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
 		log.err("mtun: SET_AREC packet too short, dropping")
@@ -930,7 +919,7 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
 func (mtun *MapTun) get_ea(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 
 	if err := pb.validate_v1_header(len(pkt)); err != nil {
 		log.err("mtun: invalid GET_EA pkt from %v: %v", pb.peer, err)
@@ -964,7 +953,7 @@ func (mtun *MapTun) get_ea(pb *PktBuf) int {
 		// NACK
 		pkt[V1_CMD] = V1_NACK | V1_GET_EA
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(V1_HDR_LEN/4))
-		pb.tail = pb.iphdr + V1_HDR_LEN
+		pb.tail = pb.data + V1_HDR_LEN
 	} else {
 		// ACK
 		pkt[V1_CMD] = V1_ACK | V1_GET_EA
@@ -986,7 +975,7 @@ func (mtun *MapTun) get_ea(pb *PktBuf) int {
 
 func (mtun *MapTun) set_new_mark(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 	if len(pkt) != V1_HDR_LEN+V1_MARK_LEN || pkt[V1_CMD] != V1_SET_MARK {
 		log.err("mtun: invalid SET_MARK packet: PKT %08x data/tail(%v/%v), dropping",
 			be.Uint32(pb.pkt[pb.data:pb.data+4]), pb.data, pb.tail)
@@ -1005,7 +994,7 @@ func (mtun *MapTun) set_new_mark(pb *PktBuf) int {
 
 func (mtun *MapTun) remove_expired_refs(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
 
 	off := V1_HDR_LEN
@@ -1091,7 +1080,11 @@ func (mtun *MapTun) remove_expired_refs(pb *PktBuf) int {
 
 func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	if pb.typ != PKT_V1 {
+		log.fatal("mtun: invalid packet type")
+	}
+
+	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
 
 	off := V1_HDR_LEN

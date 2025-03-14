@@ -17,7 +17,7 @@ const ( // v1 constants
 	V1_HDR_LEN  = 8
 	V1_AREC_LEN = 4 + 4 + 4 + 8 + 8     // ea + ip + gw + ref.h + ref.l
 	V1_MARK_LEN = 4 + 4                 // oid + mark
-	V1_SOFT_LEN = 4 + 2 + 2 + 1 + 1 + 2 // gw + mtu + port + ttl + hops + rsvd
+	V1_SOFT_LEN = 4 + 2 + 2             // gw + mtu + port
 	// v1 header offsets
 	V1_VER      = 0
 	V1_CMD      = 1
@@ -34,9 +34,6 @@ const ( // v1 constants
 	V1_SOFT_GW   = 0
 	V1_SOFT_MTU  = 4
 	V1_SOFT_PORT = 6
-	V1_SOFT_TTL  = 8
-	V1_SOFT_HOPS = 9
-	V1_SOFT_RSVD = 10
 	// v1 mark offsets
 	V1_OID  = 0
 	V1_MARK = 4
@@ -97,35 +94,37 @@ const ( // packet handling verdicts
 )
 
 const (
-	MIN_PKT_LEN      = V1_HDR_LEN
-	ICMP             = 1
-	TCP              = 6
-	UDP              = 17
-	ECHO             = 7
-	DISCARD          = 9
-	IPREF_PORT       = 1045
-	IPREF_OPT        = 0x9E // C(1) + CLS(0) + OptNum(30) (rfc3692 EXP 30)
-	IPREF_OPT64_LEN  = 4 + 8 + 8
-	IPREF_OPT128_LEN = 4 + 16 + 16
-	OPTLEN           = 8 + 4 + 4 + 16 + 16 // udphdr + encap + opt + ref + ref
-	TUN_HDR_LEN      = 4
-	TUN_IFF_TUN      = uint16(0x0001)
-	TUN_IPv4         = uint16(0x0800)
-	PKTQLEN          = 2
+	MIN_PKT_LEN       = V1_HDR_LEN
+	ICMP              = 1
+	TCP               = 6
+	UDP               = 17
+	ECHO              = 7
+	DISCARD           = 9
+	IPREF_PORT        = 1045
+	IPREF_HDR_MAX_LEN = 4 + 4 + 4 + 16 + 16
+	IPREF_OPT         = 0x9E // C(1) + CLS(0) + OptNum(30) (rfc3692 EXP 30)
+	IPREF_OPT64_LEN   = 4 + 8 + 8
+	IPREF_OPT128_LEN  = 4 + 16 + 16
+	OPTLEN            = 8 + 4 + 4 + 16 + 16 // udphdr + encap + opt + ref + ref
+	TUN_HDR_LEN       = 4
+	TUN_IFF_TUN       = uint16(0x0001)
+	TUN_IPv4          = uint16(0x0800)
+	PKTQLEN           = 2
 	// TUN header offsets
 	TUN_FLAGS = 0
 	TUN_PROTO = 2
 	// IP header offests
-	IP_VER   = 0
-	IP_DSCP  = 1
-	IP_LEN   = 2
-	IP_ID    = 4
-	IP_FRAG  = 6
-	IP_TTL   = 8
-	IP_PROTO = 9
-	IP_CSUM  = 10
-	IP_SRC   = 12
-	IP_DST   = 16
+	IP_VER         = 0
+	IP_DSCP        = 1
+	IP_LEN         = 2
+	IP_ID          = 4
+	IP_FRAG        = 6
+	IP_TTL         = 8
+	IP_PROTO       = 9
+	IP_CSUM        = 10
+	IP_SRC         = 12
+	IP_DST         = 16
+	IP_HDR_MIN_LEN = 20
 	// UDP offsets
 	UDP_SPORT = 0
 	UDP_DPORT = 2
@@ -156,6 +155,11 @@ const (
 	OPT_DREF128 = 20
 )
 
+const (
+	PKT_IPREF = iota + 1
+	PKT_IP
+	PKT_V1
+)
 type IcmpReq struct { // params for icmp requests
 	typ  byte // type is a reserved keyword so we use Polish spelling
 	code byte
@@ -163,19 +167,31 @@ type IcmpReq struct { // params for icmp requests
 }
 type PktBuf struct {
 	pkt   []byte
-	data  int
-	tail  int
-	iphdr int
+	typ   int // PKT_IPREF, PKT_V1, ...
+	data  int // the beginning of the packet data; all data before should be ignored
+	tail  int // the end of the packet data; all data after should be ignored
+	src   IP32
+	dst   IP32
+	sport uint16
+	dport uint16
 	peer  string         // peer or source name, human readable
 	schan chan<- *PktBuf // send to or source channel
 	icmp  IcmpReq
 }
 
+func (pb *PktBuf) len() int {
+	return pb.tail - pb.data
+}
+
 func (pb *PktBuf) clear() {
 
+	pb.typ = 0
 	pb.data = 0
 	pb.tail = 0
-	pb.iphdr = 0
+	pb.src = IP32(0)
+	pb.dst = IP32(0)
+	pb.sport = 0
+	pb.dport = 0
 	pb.peer = ""
 	pb.schan = nil
 	pb.icmp = IcmpReq{0, 0, 0}
@@ -187,9 +203,13 @@ func (pb *PktBuf) copy_from(pbo *PktBuf) {
 		log.fatal("pkt: buffer too small to copy from another pkt")
 	}
 
+	pb.typ = pbo.typ
 	pb.data = pbo.data
 	pb.tail = pbo.tail
-	pb.iphdr = pbo.iphdr
+	pb.src = pbo.src
+	pb.dst = pbo.dst
+	pb.sport = pbo.sport
+	pb.dport = pbo.dport
 	pb.peer = pbo.peer
 	pb.schan = pbo.schan
 	pb.icmp = pbo.icmp
@@ -197,7 +217,7 @@ func (pb *PktBuf) copy_from(pbo *PktBuf) {
 	copy(pb.pkt[pb.data:pb.tail], pbo.pkt[pb.data:pb.tail])
 }
 
-func ip_proto(proto byte) string {
+func ip_proto_name(proto byte) string {
 
 	switch proto {
 	case TCP:
@@ -219,13 +239,7 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 	// V1 SET_MARK(1)  mapper(1)  mark(12342)  data/tail(12/68)
 	// PKT 0532ab04 data/tail(18/20)
 
-	iphdr := pb.data // pb.iphdr may not be set, let's use pb.data instead
-	if pb.iphdr-pb.data == ETHER_HDRLEN {
-		iphdr = pb.iphdr // skip ether header
-	} else if pb.iphdr-pb.data == TUN_HDR_LEN {
-		iphdr = pb.iphdr // skip tun header
-	}
-	pkt := pb.pkt[iphdr:]
+	pkt := pb.pkt[pb.data:pb.tail]
 
 	// data too far into the buffer
 
@@ -235,60 +249,53 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 		return
 	}
 
-	reflen := pb.reflen(iphdr)
+	switch pb.typ {
 
-	// IPREF packet
+	case PKT_IPREF:
 
-	if reflen != 0 {
-
-		var sref rff.Ref
-		var dref rff.Ref
-
-		udp := int(pkt[IP_VER]&0xf) * 4
-		encap := udp + 8
-		opt := encap + 4
-
-		if reflen == IPREF_OPT128_LEN {
-			sref.H = be.Uint64(pkt[opt+OPT_SREF128 : opt+OPT_SREF128+8])
-			sref.L = be.Uint64(pkt[opt+OPT_SREF128+8 : opt+OPT_SREF128+8+8])
-			dref.H = be.Uint64(pkt[opt+OPT_DREF128 : opt+OPT_DREF128+8])
-			dref.L = be.Uint64(pkt[opt+OPT_DREF128+8 : opt+OPT_DREF128+8+8])
-		} else if reflen == IPREF_OPT64_LEN {
-			sref.H = 0
-			sref.L = be.Uint64(pkt[opt+OPT_SREF64 : opt+OPT_SREF64+8])
-			dref.H = 0
-			dref.L = be.Uint64(pkt[opt+OPT_DREF64 : opt+OPT_DREF64+8])
+		if len(pkt) < 20 || !pb.ipref_ver_ok() || !pb.ipref_reserved_ok() {
+			break
 		}
+		reflen := pb.ipref_reflen()
+		if reflen == 0 || len(pkt) - 12 < pb.ipref_reflen() * 2 {
+			break
+		}
+		proto := pb.ipref_proto()
+		sref_ip := pb.ipref_sref_ip()
+		dref_ip := pb.ipref_dref_ip()
+		sref := pb.ipref_sref()
+		dref := pb.ipref_dref()
 
 		ss = fmt.Sprintf("IPREF(%v)  %v + %v  %v + %v  len(%v)  data/tail(%v/%v)",
-			ip_proto(pkt[encap+ENCAP_PROTO]),
-			net.IP(pkt[IP_SRC:IP_SRC+4]),
+			ip_proto_name(proto),
+			net.IP(sref_ip),
 			&sref,
-			net.IP(pkt[IP_DST:IP_DST+4]),
+			net.IP(dref_ip),
 			&dref,
-			be.Uint16(pkt[IP_LEN:IP_LEN+2]),
+			len(pkt),
 			pb.data, pb.tail)
 
 		return
-	}
 
-	// IP packet
+	case PKT_IP:
 
-	if pkt[IP_VER]&0xf0 == 0x40 && len(pkt) >= 20 {
-
+		if len(pkt) < 20 || pkt[IP_VER]&0xf0 != 0x40 {
+			break
+		}
 		ss = fmt.Sprintf("IP(%v)  %v  %v  len(%v)  data/tail(%v/%v)",
-			ip_proto(pkt[IP_PROTO]),
+			ip_proto_name(pkt[IP_PROTO]),
 			net.IP(pkt[IP_SRC:IP_SRC+4]),
 			net.IP(pkt[IP_DST:IP_DST+4]),
 			be.Uint16(pkt[IP_LEN:IP_LEN+2]),
 			pb.data, pb.tail)
 
 		return
-	}
 
-	// V1 packet
+	case PKT_V1:
 
-	if pkt[V1_VER] == V1_SIG && len(pkt) >= V1_HDR_LEN {
+		if len(pkt) < V1_HDR_LEN || pkt[V1_VER] != V1_SIG {
+			break
+		}
 
 		ss = "V1"
 
@@ -427,10 +434,7 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 		return
 	}
 
-	// unknown or invalid packet
-
-	ss = fmt.Sprintf("PKT  %08x  data/tail(%v/%v)", be.Uint32(pkt[0:4]), pb.data, pb.tail)
-
+	ss = fmt.Sprintf("PKT  type(%02x)  %08x  data/tail(%v/%v)", pb.typ, be.Uint32(pkt[0:4]), pb.data, pb.tail)
 	return
 }
 
@@ -459,178 +463,288 @@ func (pb *PktBuf) pp_raw(pfx string) {
 func (pb *PktBuf) pp_net(pfx string) {
 
 	// IP(udp) 4500  192.168.84.93  10.254.22.202  len(64) id(1) ttl(64) csum:0000
-	// IPREF(udp) 4500  192.168.84.93 + 8af2819566  10.254.22.202 + 31fba013c  len(64) id(1) ttl(64) csum:0000
+	// IPREF(udp) 4500  192.168.84.93 + 8af2819566  10.254.22.202 + 31fba013c  len(64) ttl(64)
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 
-	// Non-IP
+	switch pb.typ {
 
-	if (len(pkt) < 20) || (pkt[IP_VER]&0xf0 != 0x40) || (len(pkt) < int(pkt[IP_VER]&0xf)*4) {
-		log.trace(pfx + pb.pp_pkt())
+	case PKT_IPREF:
+
+		if len(pkt) < 20 || !pb.ipref_ver_ok() || !pb.ipref_reserved_ok() {
+			break
+		}
+		reflen := pb.ipref_reflen()
+		if reflen == 0 || len(pkt) - 12 < pb.ipref_reflen() * 2 {
+			break
+		}
+		ttl := pb.ipref_ttl()
+		proto := pb.ipref_proto()
+		sref_ip := pb.ipref_sref_ip()
+		dref_ip := pb.ipref_dref_ip()
+		sref := pb.ipref_sref()
+		dref := pb.ipref_dref()
+
+		log.trace("%vIPREF(%v)  %v + %v  %v + %v  len(%v) ttl(%v)",
+			pfx,
+			ip_proto_name(proto),
+			IP32(be.Uint32(sref_ip)),
+			&sref,
+			IP32(be.Uint32(dref_ip)),
+			&dref,
+			len(pkt),
+			ttl)
 		return
-	}
 
-	reflen := pb.reflen(pb.iphdr)
+	case PKT_IP:
 
-	// IPREF
-
-	if reflen == IPREF_OPT128_LEN || reflen == IPREF_OPT64_LEN {
-
-		var sref rff.Ref
-		var dref rff.Ref
-
-		udp := int(pkt[IP_VER]&0xf) * 4
-		encap := udp + 8
-		opt := encap + 4
-
-		if reflen == IPREF_OPT128_LEN {
-			sref.H = be.Uint64(pkt[opt+OPT_SREF128 : opt+OPT_SREF128+8])
-			sref.L = be.Uint64(pkt[opt+OPT_SREF128+8 : opt+OPT_SREF128+8+8])
-			dref.H = be.Uint64(pkt[opt+OPT_DREF128 : opt+OPT_DREF128+8])
-			dref.L = be.Uint64(pkt[opt+OPT_DREF128+8 : opt+OPT_DREF128+8+8])
-		} else if reflen == IPREF_OPT64_LEN {
-			sref.H = 0
-			sref.L = be.Uint64(pkt[opt+OPT_SREF64 : opt+OPT_SREF64+8])
-			dref.H = 0
-			dref.L = be.Uint64(pkt[opt+OPT_DREF64 : opt+OPT_DREF64+8])
+		if len(pkt) < 20 || pkt[IP_VER]&0xf0 != 0x40 {
+			break
 		}
 
-		log.trace("%vIPREF(%v)  %v + %v  %v + %v  len(%v) id(%v) ttl(%v) csum: %04x",
+		log.trace("%vIP(%v)  %v  %v  len(%v) id(%v) ttl(%v) csum: %04x",
 			pfx,
-			ip_proto(pkt[encap+ENCAP_PROTO]),
+			ip_proto_name(pkt[IP_PROTO]),
 			IP32(be.Uint32(pkt[IP_SRC:IP_SRC+4])),
-			&sref,
 			IP32(be.Uint32(pkt[IP_DST:IP_DST+4])),
-			&dref,
 			be.Uint16(pkt[IP_LEN:IP_LEN+2]),
 			be.Uint16(pkt[IP_ID:IP_ID+2]),
 			pkt[IP_TTL],
 			be.Uint16(pkt[IP_CSUM:IP_CSUM+2]))
-
 		return
 	}
 
-	// IP
-
-	log.trace("%vIP(%v)  %v  %v  len(%v) id(%v) ttl(%v) csum: %04x",
-		pfx,
-		ip_proto(pkt[IP_PROTO]),
-		IP32(be.Uint32(pkt[IP_SRC:IP_SRC+4])),
-		IP32(be.Uint32(pkt[IP_DST:IP_DST+4])),
-		be.Uint16(pkt[IP_LEN:IP_LEN+2]),
-		be.Uint16(pkt[IP_ID:IP_ID+2]),
-		pkt[IP_TTL],
-		be.Uint16(pkt[IP_CSUM:IP_CSUM+2]))
+	log.trace(pfx + pb.pp_pkt())
 }
 
 func (pb *PktBuf) pp_tran(pfx string) {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
+	var proto byte
 
-	// Non-IP
+	switch pb.typ {
 
-	if (len(pkt) < 20) || (pkt[IP_VER]&0xf0 != 0x40) || (len(pkt) < int(pkt[IP_VER]&0xf)*4) {
+	case PKT_IPREF:
+
+		if len(pkt) < 20 || !pb.ipref_ver_ok() || !pb.ipref_reserved_ok() {
+			return
+		}
+		reflen := pb.ipref_reflen()
+		if reflen == 0 || len(pkt) - 12 < pb.ipref_reflen() * 2 {
+			return
+		}
+		proto = pb.ipref_proto()
+		pkt = pkt[12 + pb.ipref_reflen() * 2:]
+
+	case PKT_IP:
+
+		if len(pkt) < 20 || pkt[IP_VER]&0xf0 != 0x40 || pkt[IP_VER]&0x0f != 5 {
+			return
+		}
+		proto = pkt[IP_PROTO]
+		pkt = pkt[20:]
+
+	default:
 		return
 	}
 
-	l4 := int(pkt[IP_VER]&0xf) * 4
-	reflen := pb.reflen(pb.iphdr)
-	if reflen != 0 {
-		l4 += 8 + 4 + reflen
-	}
-
-	switch pkt[IP_PROTO] {
+	switch proto {
 	case TCP:
 	case UDP:
 
 		// UDP  1045  1045  len(96) csum 0
 
-		if len(pkt) < l4+8 {
+		if len(pkt) < 8 {
 			return
 		}
 		log.trace("%vUDP  %v  %v  len(%v) csum: %04x",
 			pfx,
-			be.Uint16(pkt[l4+UDP_SPORT:l4+UDP_SPORT+2]),
-			be.Uint16(pkt[l4+UDP_DPORT:l4+UDP_DPORT+2]),
-			be.Uint16(pkt[l4+UDP_LEN:l4+UDP_LEN+2]),
-			be.Uint16(pkt[l4+UDP_CSUM:l4+UDP_CSUM+2]))
+			be.Uint16(pkt[UDP_SPORT:UDP_SPORT+2]),
+			be.Uint16(pkt[UDP_DPORT:UDP_DPORT+2]),
+			be.Uint16(pkt[UDP_LEN:UDP_LEN+2]),
+			be.Uint16(pkt[UDP_CSUM:UDP_CSUM+2]))
 
 	case ICMP:
 	}
 }
 
-func (pb *PktBuf) set_iphdr() int {
-
-	pb.iphdr = pb.data
-	return pb.iphdr
+func (pb *PktBuf) ipref_ver_ok() bool {
+	return pb.pkt[pb.data] >> 4 == 0x1
 }
 
-func (pb *PktBuf) iphdr_len() int {
-	return int((pb.pkt[pb.iphdr] & 0x0f) * 4)
+func (pb *PktBuf) ipref_reflen() int {
+
+	switch (pb.pkt[pb.data] >> 2) & 0x3 {
+	case 0:
+		return 4
+	case 1:
+		return 8
+	case 2:
+		return 16
+	default:
+		return 0
+	}
 }
 
-func (pb *PktBuf) len() int {
-	return int(pb.tail - pb.data)
+func encode_reflen(reflen int) byte {
+
+	switch reflen {
+	case 4:
+		return 0
+	case 8:
+		return 1
+	case 16:
+		return 2
+	default:
+		return 0
+	}
 }
 
-func (pb *PktBuf) reflen(iphdr int) (reflen int) {
+func (pb *PktBuf) ipref_reserved_ok() bool {
+	return pb.pkt[pb.data] & 0x3 == 0 && pb.pkt[pb.data + 1] == 0
+}
 
-	pkt := pb.pkt[iphdr:]
+func (pb *PktBuf) ipref_ttl() byte {
+	return pb.pkt[pb.data + 2]
+}
 
-	if len(pkt) < 20 {
-		return // pkt way too short
+func (pb *PktBuf) ipref_proto() byte {
+	return pb.pkt[pb.data + 3]
+}
+
+func (pb *PktBuf) ipref_sref_ip() []byte {
+	return pb.pkt[pb.data + 4 : pb.data + 8]
+}
+
+func (pb *PktBuf) ipref_dref_ip() []byte {
+	return pb.pkt[pb.data + 8 : pb.data + 12]
+}
+
+func (pb *PktBuf) ipref_sref() rff.Ref {
+	reflen := pb.ipref_reflen()
+	return decode_ref(pb.pkt[pb.data + 12 : pb.data + 12 + reflen])
+}
+
+func (pb *PktBuf) ipref_dref() rff.Ref {
+	reflen := pb.ipref_reflen()
+	return decode_ref(pb.pkt[pb.data + 12 + reflen : pb.data + 12 + reflen*2])
+}
+
+func min_reflen(ref rff.Ref) int {
+
+	if ref.H == 0 {
+		if ref.L >> 32 == 0 {
+			return 4
+		} else {
+			return 8
+		}
+	} else {
+		if ref.H >> 32 == 0 {
+			return 12
+		} else {
+			return 16
+		}
+	}
+}
+
+func encode_ref(bs []byte, ref rff.Ref) {
+
+	switch len(bs) {
+	case 4:
+		be.PutUint32(bs, uint32(ref.L))
+	case 8:
+		be.PutUint64(bs, ref.L)
+	case 12:
+		be.PutUint32(bs[:4], uint32(ref.H))
+		be.PutUint64(bs[4:], ref.L)
+	case 16:
+		be.PutUint64(bs[:8], ref.H)
+		be.PutUint64(bs[8:], ref.L)
+	default:
+		log.fatal("invalid %v", len(bs))
+	}
+}
+
+func decode_ref(bs []byte) (ref rff.Ref) {
+
+	switch len(bs) {
+	case 4:
+		ref.L = uint64(be.Uint32(bs))
+	case 8:
+		ref.L = be.Uint64(bs)
+	case 12:
+		ref.H = uint64(be.Uint32(bs[:4]))
+		ref.L = be.Uint64(bs[4:])
+	case 16:
+		ref.H = be.Uint64(bs[:8])
+		ref.L = be.Uint64(bs[8:])
+	default:
+		log.fatal("invalid %v", len(bs))
+	}
+	return ref
+}
+
+func (pb *PktBuf) verify_csum() bool {
+
+	pkt := pb.pkt[pb.data:pb.tail]
+	var proto byte
+
+	switch pb.typ {
+
+	case PKT_IPREF:
+
+		if len(pkt) < 20 || !pb.ipref_ver_ok() || !pb.ipref_reserved_ok() {
+			return false
+		}
+		reflen := pb.ipref_reflen()
+		if reflen == 0 || len(pkt) - 12 < pb.ipref_reflen() * 2 {
+			return false
+		}
+		proto = pb.ipref_proto()
+		pkt = pkt[12 + pb.ipref_reflen() * 2:]
+
+	case PKT_IP:
+
+		if len(pkt) < 20 || pkt[IP_VER]&0xf0 != 0x40 || pkt[IP_VER]&0x0f != 5 {
+			return false
+		}
+		proto = pkt[IP_PROTO]
+		ip_csum := csum_add(0, pkt[:IP_HDR_MIN_LEN])
+		if be.Uint16(pkt[IP_CSUM:IP_CSUM+2]) != ip_csum^0xffff {
+			return false
+		}
+		pkt = pkt[20:]
+
+	default:
+		return true
 	}
 
-	udp := int(pkt[IP_VER]&0xf) * 4
-	encap := udp + 8
-	opt := encap + 4
+	switch proto {
+	case TCP: // TODO
+	case UDP:
 
-	if pkt[IP_VER]&0xf0 == 0x40 &&
-		len(pkt) >= opt+4 &&
-		pkt[IP_PROTO] == UDP &&
-		(be.Uint16(pkt[udp+UDP_SPORT:udp+UDP_SPORT+2]) == IPREF_PORT || be.Uint16(pkt[udp+UDP_DPORT:udp+UDP_DPORT+2]) == IPREF_PORT) &&
-		pkt[opt+OPT_OPT] == IPREF_OPT {
+		if len(pkt) < 8 {
+			return false
+		}
+		udp_csum := csum_add(0, []byte{0, proto})
+		udp_csum = csum_add(0, pkt[UDP_LEN:UDP_LEN+2])
+		udp_csum = csum_add(0, pkt)
+		if be.Uint16(pkt[UDP_CSUM:UDP_CSUM+2]) != udp_csum^0xffff {
+			return false
+		}
 
-		reflen = int(pkt[opt+OPT_LEN])
+	case ICMP:
 
-		if (reflen != IPREF_OPT128_LEN && reflen != IPREF_OPT64_LEN) || len(pkt) < opt+reflen {
-			reflen = 0 // not a valid ipref packet after all
+		if len(pkt) < 8 {
+			return false
+		}
+		icmp_csum := csum_add(0, pkt)
+		if be.Uint16(pkt[ICMP_CSUM:ICMP_CSUM+2]) != icmp_csum^0xffff {
+			return false
 		}
 	}
 
-	return
-}
-
-// calculate iphdr csum and l4 csum
-func (pb *PktBuf) verify_csum() (uint16, uint16) {
-
-	var iphdr_csum uint16
-	var l4_csum uint16
-
-	pkt := pb.pkt[pb.iphdr:pb.tail]
-
-	// iphdr csum
-
-	iphdr_csum = csum_add(0, pkt[:pb.iphdr_len()])
-
-	// l4 csum
-
-	off := pb.iphdr_len()
-
-	l4_csum = csum_add(0, pkt[IP_SRC:IP_DST+4])
-
-	switch pkt[IP_PROTO] {
-	case TCP:
-	case UDP:
-
-		l4_csum = csum_add(l4_csum, []byte{0, pkt[IP_PROTO]})
-		l4_csum = csum_add(l4_csum, pkt[off+UDP_LEN:off+UDP_LEN+2])
-		l4_csum = csum_add(l4_csum, pkt[off:])
-
-	case ICMP:
-	}
-
-	return iphdr_csum ^ 0xffff, l4_csum ^ 0xffff
+	return true
 }
 
 // Add buffer bytes to csum. Input csum and result are not inverted.
@@ -667,7 +781,8 @@ func csum_subtract(csum uint16, buf []byte) uint16 {
 
 func (pb *PktBuf) write_v1_header(cmd byte, pktid uint16) {
 
-	pkt := pb.pkt[pb.iphdr:]
+	pb.typ = PKT_V1
+	pkt := pb.pkt[pb.data:]
 
 	if len(pkt) < V1_HDR_LEN {
 		log.fatal("pkt: not enough space for v1 header")
@@ -682,8 +797,8 @@ func (pb *PktBuf) write_v1_header(cmd byte, pktid uint16) {
 
 func (pb *PktBuf) validate_v1_header(rlen int) error {
 
-	pb.tail = pb.iphdr + rlen
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pb.tail = pb.data + rlen
+	pkt := pb.pkt[pb.data:pb.tail]
 
 	if len(pkt) < V1_HDR_LEN {
 		return fmt.Errorf("pkt too short: %v bytes", rlen)
@@ -730,7 +845,7 @@ func pkt_buffers() {
 		if allocated < cli.maxbuf {
 			select {
 			case pb = <-retbuf:
-				pb.pkt[pb.iphdr] = 0xbd // corrupt IP header to detect reuse of freed pkt
+				pb.pkt[pb.data] = 0xbd // corrupt IP header to detect reuse of freed pkt
 			default:
 				pb = &PktBuf{pkt: make([]byte, cli.pktbuflen, cli.pktbuflen)}
 				allocated += 1

@@ -113,7 +113,7 @@ func (m *Mark) restore_time_base() {
 
 		pb := <-getbuf
 		pb.write_v1_header(V1_SAVE_TIME_BASE, 0)
-		pkt := pb.pkt[pb.iphdr:]
+		pkt := pb.pkt[pb.data:]
 
 		off := V1_HDR_LEN
 		pkt[off] = V1_TYPE_STRING
@@ -121,7 +121,7 @@ func (m *Mark) restore_time_base() {
 		copy(pkt[off+2:], tbase)
 
 		off += (len(tbase) + 5) &^ 3
-		pb.tail = pb.iphdr + off
+		pb.tail = pb.data + off
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
 
 		pb.peer = "marker"
@@ -241,7 +241,7 @@ func (mtun *MapTun) restore_refs() {
 
 func (db *DB) save_oid(pb *PktBuf) {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 
 	if len(pkt) < V1_HDR_LEN+4+4 {
 		log.err("db save oid: pktlen(%v) too short, dropping", len(pkt))
@@ -277,7 +277,7 @@ func (db *DB) save_oid(pb *PktBuf) {
 
 func (db *DB) save_time_base(pb *PktBuf) {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 
 	if len(pkt) < V1_HDR_LEN+4+4 {
 		log.err("db save time base: pktlen(%v) too short, dropping", len(pkt))
@@ -312,7 +312,7 @@ func (db *DB) save_time_base(pb *PktBuf) {
 
 func (db *DB) save_mark(pb *PktBuf) {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 
 	if len(pkt) < V1_HDR_LEN+V1_MARK_LEN {
 		log.err("db save mark: pktlen(%v) too short, dropping", len(pkt))
@@ -428,7 +428,7 @@ func (db *DB) insert_record(db_arec []byte) {
 
 func (db *DB) save_arec(pb *PktBuf) {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
 	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
 		log.err("db save arec: packet too short, ignoring")
@@ -467,7 +467,7 @@ func (db *DB) save_arec(pb *PktBuf) {
 
 func (db *DB) remove_expired_eas(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
 	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
 		log.err("db remove eas: packet too short, ignoring")
@@ -555,7 +555,7 @@ func (db *DB) remove_expired_eas(pb *PktBuf) int {
 
 func (db *DB) find_expired_eas(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
 	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
 		log.err("db find eas: packet too short, ignoring")
@@ -583,7 +583,7 @@ func (db *DB) find_expired_eas(pb *PktBuf) int {
 	// assume NACK
 
 	pkt[V1_CMD] = V1_NACK | V1_RECOVER_EA
-	pb.tail = pb.iphdr + off
+	pb.tail = pb.data + off
 	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
 	pb.peer = "db"
 
@@ -649,7 +649,7 @@ func (db *DB) find_expired_eas(pb *PktBuf) int {
 
 	if off > V1_HDR_LEN+V1_MARK_LEN {
 		pkt[V1_CMD] = V1_ACK | V1_RECOVER_EA
-		pb.tail = pb.iphdr + off
+		pb.tail = pb.data + off
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
 	}
 
@@ -660,7 +660,7 @@ reply:
 
 func (db *DB) remove_expired_refs(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
 	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
 		log.err("db remove refs: packet too short, ignoring")
@@ -746,7 +746,7 @@ func (db *DB) remove_expired_refs(pb *PktBuf) int {
 
 func (db *DB) find_expired_refs(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
 	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
 		log.err("db find refs: packet too short, ignoring")
@@ -774,7 +774,7 @@ func (db *DB) find_expired_refs(pb *PktBuf) int {
 	// assume NACK
 
 	pkt[V1_CMD] = V1_NACK | V1_RECOVER_REF
-	pb.tail = pb.iphdr + off
+	pb.tail = pb.data + off
 	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
 	pb.peer = "db"
 
@@ -840,7 +840,7 @@ func (db *DB) find_expired_refs(pb *PktBuf) int {
 
 	if off > V1_HDR_LEN+V1_MARK_LEN {
 		pkt[V1_CMD] = V1_ACK | V1_RECOVER_REF
-		pb.tail = pb.iphdr + off
+		pb.tail = pb.data + off
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
 	}
 
@@ -851,7 +851,7 @@ reply:
 
 func (db *DB) receive(pb *PktBuf) {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 
 	if err := pb.validate_v1_header(len(pkt)); err != nil {
 

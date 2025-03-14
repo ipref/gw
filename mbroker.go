@@ -50,7 +50,7 @@ func (mb *MB) delayed_nack(cmd byte, pktid uint16) {
 
 	pb := <-getbuf
 	pb.write_v1_header(V1_NACK|cmd, pktid)
-	pb.tail = pb.iphdr + V1_HDR_LEN
+	pb.tail = pb.data + V1_HDR_LEN
 	be.PutUint16(pb.pkt[V1_PKTLEN:V1_PKTLEN+2], V1_HDR_LEN/4)
 	pb.peer = "delayed NACK"
 	mb.recv <- pb
@@ -59,7 +59,7 @@ func (mb *MB) delayed_nack(cmd byte, pktid uint16) {
 // get ea response from forwarders
 func (mb *MB) get_ea(rpb *PktBuf) int {
 
-	rpkt := rpb.pkt[rpb.iphdr:rpb.tail]
+	rpkt := rpb.pkt[rpb.data:rpb.tail]
 
 	// find related originator pkt in eaq
 
@@ -117,12 +117,12 @@ func (mb *MB) get_ea(rpb *PktBuf) int {
 
 		copy(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], rpkt[roff+V1_AREC_EA:roff+V1_AREC_EA+4])
 		pkt[V1_CMD] = V1_ACK | V1_MC_GET_EA
-		pb.tail = pb.iphdr + V1_HDR_LEN + V1_AREC_LEN
+		pb.tail = pb.data + V1_HDR_LEN + V1_AREC_LEN
 
 	case V1_NACK | V1_GET_EA:
 
 		pkt[V1_CMD] = V1_NACK | V1_MC_GET_EA
-		pb.tail = pb.iphdr + V1_HDR_LEN
+		pb.tail = pb.data + V1_HDR_LEN
 
 	default:
 		log.err("mb: get ea pkt: not a response [%02x], dropping", pkt[V1_CMD])
@@ -130,7 +130,7 @@ func (mb *MB) get_ea(rpb *PktBuf) int {
 		return DROP // rpb
 	}
 
-	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((pb.tail-pb.iphdr)/4))
+	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((pb.tail-pb.data)/4))
 	log.debug("mb: out to  %v: %v\n", pb.peer, pb.pp_pkt())
 	if cli.trace {
 		pb.pp_raw("mbroker out: ")
@@ -142,7 +142,7 @@ func (mb *MB) get_ea(rpb *PktBuf) int {
 // mc get ea request from ipref plugin
 func (mb *MB) mc_get_ea(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 
 	if len(pkt) < V1_HDR_LEN+V1_AREC_LEN {
 		log.err("mb: mc get ea pkt: len(%v) too short, dropping", len(pkt))
@@ -174,7 +174,7 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 			pkt[V1_CMD] = V1_ACK | V1_MC_GET_EA
 			be.PutUint32(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], uint32(iprec.ip))
 			be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((wlen / 4)))
-			pb.tail = pb.iphdr + wlen
+			pb.tail = pb.data + wlen
 
 			log.debug("mb: out to  %v: %v\n", pb.peer, pb.pp_pkt())
 			if cli.trace {
@@ -198,7 +198,7 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 
 	rpb := <-getbuf
 	rpb.write_v1_header(V1_REQ|V1_GET_EA, pktid)
-	rpkt := rpb.pkt[rpb.iphdr:]
+	rpkt := rpb.pkt[rpb.data:]
 
 	off = V1_HDR_LEN
 
@@ -216,7 +216,7 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 
 	// send to fwd_to_tun
 
-	rpb.tail = rpb.iphdr + V1_HDR_LEN + V1_MARK_LEN + V1_AREC_LEN
+	rpb.tail = rpb.data + V1_HDR_LEN + V1_MARK_LEN + V1_AREC_LEN
 	be.PutUint16(rpkt[V1_PKTLEN:V1_PKTLEN+2], (V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN)/4)
 	rpb.peer = "mbroker"
 	rpb.schan = mb.recv
@@ -226,7 +226,7 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 
 func (mb *MB) set_mark(pb *PktBuf) int {
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 
 	if len(pkt) < V1_HDR_LEN+V1_MARK_LEN {
 		log.err("mb: set mark pkt: len(%v) too short, dropping", len(pkt))
@@ -286,7 +286,7 @@ func (mb *MB) save_dnssource(dnssrc DnsSrc) {
 	pb.peer = dnssrc.source
 
 	pb.write_v1_header(V1_DATA|V1_SAVE_DNSSOURCE, 0)
-	pkt := pb.pkt[pb.iphdr:]
+	pkt := pb.pkt[pb.data:]
 	off := V1_HDR_LEN
 
 	be.PutUint32(pkt[off+V1_DNSSOURCE_MARK:off+V1_DNSSOURCE_MARK+4], uint32(dnssrc.mark))
@@ -297,7 +297,7 @@ func (mb *MB) save_dnssource(dnssrc DnsSrc) {
 	off += mb.insert_source(dnssrc.source, pkt[off:])
 
 	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
-	pb.tail = pb.iphdr + off
+	pb.tail = pb.data + off
 
 	db.recv <- pb
 }
@@ -335,7 +335,7 @@ func (mb *MB) mc_host_data(pb *PktBuf) int {
 		return DROP
 	}
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 
 	pktlen := len(pkt)
 
@@ -389,7 +389,7 @@ func (mb *MB) mc_host_data(pb *PktBuf) int {
 		send_marker(dnssrc.mark, dnssrc.oid, dnssrc.source)
 	}
 
-	pkta := pba.pkt[pba.iphdr:]
+	pkta := pba.pkt[pba.data:]
 	offa := V1_HDR_LEN
 
 	be.PutUint32(pkta[offa+V1_OID:offa+V1_OID+4], uint32(dnssrc.oid))
@@ -427,7 +427,7 @@ func (mb *MB) mc_host_data(pb *PktBuf) int {
 
 	// send arec records
 
-	pba.tail = pba.iphdr + offa
+	pba.tail = pba.data + offa
 	be.PutUint16(pkta[V1_PKTLEN:V1_PKTLEN+2], uint16(offa/4))
 	pba.peer = dnssrc.source
 
@@ -444,7 +444,7 @@ func (mb *MB) mc_host_data(pb *PktBuf) int {
 
 	pkt[V1_CMD] = V1_ACK | (pkt[V1_CMD] & 0x3f)
 
-	pb.tail = pb.iphdr + wlen
+	pb.tail = pb.data + wlen
 	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(wlen/4))
 	pb.peer = "mbroker"
 	pb.schan <- pb
@@ -457,7 +457,7 @@ func (mb *MB) mc_host_data_hash(pb *PktBuf) int {
 		return DROP
 	}
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 
 	pktlen := len(pkt)
 
@@ -520,7 +520,7 @@ func (mb *MB) receive() {
 
 	for pb := range mb.recv {
 
-		pkt := pb.pkt[pb.iphdr:pb.tail]
+		pkt := pb.pkt[pb.data:pb.tail]
 
 		if err := pb.validate_v1_header(len(pkt)); err != nil {
 
@@ -579,7 +579,7 @@ func (mb *MB) connect_recv(inst uint, conn *net.UnixConn, schan chan<- *PktBuf) 
 
 	for pb := range getbuf {
 
-		rlen, err := conn.Read(pb.pkt[pb.iphdr:])
+		rlen, err := conn.Read(pb.pkt[pb.data:])
 		if err != nil {
 			log.err("mbroker recv[%v] instance(%v) io error: %v", peer, inst, err)
 			conn.Close()
@@ -604,7 +604,7 @@ func (mb *MB) connect_recv(inst uint, conn *net.UnixConn, schan chan<- *PktBuf) 
 
 		// send to mbroker
 
-		pb.tail = pb.iphdr + rlen
+		pb.tail = pb.data + rlen
 		pb.peer = peer
 		pb.schan = schan
 		mb.recv <- pb
@@ -620,9 +620,9 @@ func (mb *MB) connect_send(inst uint, conn *net.UnixConn, schan <-chan *PktBuf) 
 
 	for pb := range schan {
 
-		//log.info("mbroker send[%v] instance(%v) sending: [%02x]", peer, inst, pb.pkt[pb.iphdr+V1_CMD])
+		//log.info("mbroker send[%v] instance(%v) sending: [%02x]", peer, inst, pb.pkt[pb.data+V1_CMD])
 
-		_, err := conn.Write(pb.pkt[pb.iphdr:pb.tail])
+		_, err := conn.Write(pb.pkt[pb.data:pb.tail])
 
 		retbuf <- pb
 

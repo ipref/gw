@@ -5,7 +5,6 @@ package main
 import (
 	"bufio"
 	"github.com/mdlayher/raw"
-	"golang.org/x/net/bpf"
 	"net"
 	"os"
 	"strconv"
@@ -244,8 +243,8 @@ func induce_arp(nexthop IP32) {
 	pb := <-getbuf
 
 	pb.write_v1_header(V1_INDUCE_ARP, 0)
-	pb.tail = pb.iphdr + V1_HDR_LEN + 4
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pb.tail = pb.data + V1_HDR_LEN + 4
+	pkt := pb.pkt[pb.data:pb.tail]
 	off := V1_HDR_LEN
 	be.PutUint32(pkt[off:off+4], uint32(nexthop))
 	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(len(pkt)/4))
@@ -254,7 +253,7 @@ func induce_arp(nexthop IP32) {
 	send_gw <- pb
 }
 
-func gw_sender(con net.PacketConn) {
+func gw_sender(con *net.UDPConn) {
 
 	arpcache = make(map[IP32]*ArpRec)
 
@@ -269,23 +268,17 @@ func gw_sender(con net.PacketConn) {
 		log.info("gw nexthop: %v", gw_nexthop)
 	}
 
-	arp_marker := marker.now()
+	// arp_marker := marker.now()
 
 	for pb := range send_gw {
 
-		if len(pb.pkt)-int(pb.data) < MIN_PKT_LEN {
-
-			log.err("gw out:  short packet data/end(%v/%v), dropping", pb.data, len(pb.pkt))
-			retbuf <- pb
-			continue
-		}
-
 		var arprec *ArpRec
 
-		if pb.pkt[pb.data+V1_VER] == V1_SIG {
+		switch pb.typ {
 
-			pb.set_iphdr()
-			pkt := pb.pkt[pb.iphdr:pb.tail]
+		case PKT_V1:
+
+			pkt := pb.pkt[pb.data:pb.tail]
 
 			if pkt[V1_CMD] == V1_SET_MARK {
 
@@ -294,7 +287,7 @@ func gw_sender(con net.PacketConn) {
 				off := V1_HDR_LEN
 				oid := O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
 				if oid == arp_oid {
-					arp_marker = M32(be.Uint32(pkt[off+V1_MARK : off+V1_MARK+4]))
+					// arp_marker = M32(be.Uint32(pkt[off+V1_MARK : off+V1_MARK+4]))
 				} else {
 					log.err("gw out:  arp timer update oid(%v) does not match arp_oid(%v), ignoring", oid, arp_oid)
 				}
@@ -305,7 +298,7 @@ func gw_sender(con net.PacketConn) {
 
 				// update arprec following query
 
-				ip := IP32(be.Uint32(pb.pkt[pb.iphdr+V1_HDR_LEN : pb.iphdr+V1_HDR_LEN+4]))
+				ip := IP32(be.Uint32(pb.pkt[pb.data+V1_HDR_LEN : pb.data+V1_HDR_LEN+4]))
 				arprec = get_arprec(ip)
 				arprec.fill_from_proc(ip)
 
@@ -315,110 +308,48 @@ func gw_sender(con net.PacketConn) {
 				continue
 			}
 
-		} else {
+		case PKT_IPREF:
 
-			// find next hop
-
-			nexthop := IP32(0)
-			dst := net.IP(pb.pkt[pb.iphdr+IP_DST : pb.iphdr+IP_DST+4])
-
-			if gw_network.Contains(dst) {
-				nexthop = IP32(be.Uint32(dst))
-			} else if gw_nexthop == 0 {
-				icmpreq <- pb
-				continue // no route to destination
-			} else {
-				nexthop = gw_nexthop
+			if cli.debug["gw"] {
+				log.debug("gw out:  %v", pb.pp_pkt())
 			}
 
-			// find next hop's mac address
-
-			arprec = get_arprec(nexthop)
-
-			if len(arprec.pbq) != 0 {
-				if len(arprec.pbq) < ARP_MAX_QUEUE {
-					if cli.debug["gw"] {
-						log.debug("gw out:  already incuding arp for %v, queuing packet", nexthop)
-					}
-					arprec.pbq = append(arprec.pbq, pb)
-				} else {
-					if cli.debug["gw"] {
-						log.debug("gw out:  queue waiting for %v arp full, dropping packet", nexthop)
-					}
-					retbuf <- pb
-				}
-				continue
+			if cli.trace {
+				pb.pp_net("gw out:  ")
+				pb.pp_tran("gw out:  ")
+				pb.pp_raw("gw out:  ")
 			}
 
-			arprec.pbq = append(arprec.pbq, pb)
+			src := []byte{0, 0, 0, 0}
+			be.PutUint32(src, uint32(pb.src))
+			dst := []byte{0, 0, 0, 0}
+			be.PutUint32(dst, uint32(pb.dst))
 
-			if arprec.flags&ARP_FLAG_COMPLETED == 0 {
-				if cli.debug["gw"] {
-					log.debug("gw out:  mac unavailable for %v, inducing arp", nexthop)
-				}
-				go induce_arp(nexthop)
-				continue
+			if !gw_network.Contains(dst) {
+				log.fatal("gw out:  dst(%v) not in network", pb.dst)
+			}
+			if pb.src != cli.gw_ip {
+				log.fatal("gw out:  src(%v) is not gateway", pb.src)
 			}
 
-			if arprec.expire < arp_marker {
-				arprec.expire = arp_marker + ARP_REC_EXPIRE
-				if cli.debug["gw"] {
-					log.debug("gw out:  mac for %v, expired, induce arp", nexthop)
-				}
-				go induce_arp(nexthop)
+			daddr := net.UDPAddr{dst, int(pb.dport), ""}
+			wlen, err := con.WriteToUDP(pb.pkt[pb.data:pb.tail], &daddr)
+			if err != nil {
+				log.fatal("gw out: write failed: %v", err)
 			}
-		}
-
-		if arprec.flags&ARP_FLAG_COMPLETED == 0 {
-
-			for ix, pb := range arprec.pbq {
-				if ix == 0 {
-					icmpreq <- pb // no route to destination, first packet on the queue
-				} else {
-					retbuf <- pb // drop the rest
-				}
+			if wlen != pb.tail - pb.data {
+				log.fatal("gw out: write failed")
 			}
-			arprec.pbq = arprec.pbq[0:0]
 
-		} else {
+			retbuf <- pb
 
-			for _, pb := range arprec.pbq {
-
-				if pb.data < ETHER_HDRLEN {
-					log.fatal("gw out: not enough space for ether header data/tail(%v/%v)", pb.data, pb.tail)
-				}
-
-				pb.data -= ETHER_HDRLEN
-				copy(pb.pkt[pb.data+ETHER_DST_MAC:pb.data+ETHER_DST_MAC+6], arprec.macaddr.HardwareAddr)
-				copy(pb.pkt[pb.data+ETHER_SRC_MAC:pb.data+ETHER_SRC_MAC+6], cli.ifc.HardwareAddr)
-				be.PutUint16(pb.pkt[pb.data+ETHER_TYPE:pb.data+ETHER_TYPE+2], ETHER_IPv4)
-
-				if cli.debug["gw"] {
-					log.debug("gw out:  %v", pb.pp_pkt())
-				}
-
-				if cli.trace {
-					pb.pp_net("gw out:  ")
-					pb.pp_tran("gw out:  ")
-					pb.pp_raw("gw out:  ")
-				}
-
-				wlen, err := con.WriteTo(pb.pkt[pb.data:pb.tail], &arprec.macaddr)
-				if err != nil {
-					log.err("gw out:  raw pkt send to %v failed: %v)",
-						arprec.macaddr.HardwareAddr, err)
-				} else if wlen != pb.tail-pb.data {
-					log.err("gw out:  raw pkt send to %v truncated wlen(%v) data/tail(%v/%v)",
-						arprec.macaddr.HardwareAddr, wlen, pb.data, pb.tail)
-				}
-				retbuf <- pb
-			}
-			arprec.pbq = arprec.pbq[0:0]
+		default:
+			log.fatal("gw out: unknown packet type: %v", pb.typ)
 		}
 	}
 }
 
-func gw_receiver(con net.PacketConn) {
+func gw_receiver(con *net.UDPConn) {
 
 	if cli.devmode {
 		return
@@ -427,40 +358,26 @@ func gw_receiver(con net.PacketConn) {
 	for {
 
 		pb := <-getbuf
-		pb.data = 2 // make sure IP header is on 32 bit boundary
-		pkt := pb.pkt[pb.data:]
-		pktlen := 0
+		pb.typ = PKT_IPREF
+		pb.data = TUN_HDR_LEN + IPREF_HDR_MAX_LEN - IP_HDR_MIN_LEN
 
-		rlen, haddr, err := con.ReadFrom(pkt)
+		rlen, addr, err := con.ReadFromUDP(pb.pkt[pb.data:])
 		if cli.debug["gw"] {
-			log.debug("gw in: src mac: %v  rcvlen(%v)", haddr, rlen)
+			log.debug("gw in: src IP: %v  rcvlen(%v)", addr, rlen)
 		}
-		if rlen == 0 {
+		if err != nil {
 			log.err("gw in: read failed: %v", err)
 			goto drop
 		}
-
-		if rlen < ETHER_HDRLEN+20 {
-			log.err("gw in: packet too short: %v bytes, dropping", rlen)
+		if rlen == 0 || rlen == len(pb.pkt) - pb.data {
+			log.err("gw in: read failed")
 			goto drop
 		}
-
-		if be.Uint16(pkt[ETHER_TYPE:ETHER_TYPE+2]) != ETHER_IPv4 ||
-			pkt[ETHER_HDRLEN+IP_VER]&0xf0 != 0x40 {
-
-			log.err("gw in: not an IPv4 packet, dropping")
-			goto drop
-		}
-
-		pktlen = int(be.Uint16(pkt[ETHER_HDRLEN+IP_LEN : ETHER_HDRLEN+IP_LEN+2]))
-		if len(pkt)-ETHER_HDRLEN < pktlen {
-			log.err("gw in: packet truncated, dropping")
-			goto drop
-		}
-
-		pb.data += ETHER_HDRLEN
-		pb.tail = pb.data + pktlen
-		pb.set_iphdr()
+		pb.tail = pb.data + rlen
+		pb.src = IP32(be.Uint32(addr.IP))
+		pb.sport = uint16(addr.Port)
+		pb.dst = cli.gw_ip
+		pb.dport = IPREF_PORT
 
 		if cli.debug["gw"] {
 			log.debug("gw in: %v", pb.pp_pkt())
@@ -483,56 +400,17 @@ func gw_receiver(con net.PacketConn) {
 
 func start_gw() {
 
-	var con *raw.Conn
+	var con *net.UDPConn
 
 	if !cli.devmode {
 
 		var err error
 
-		con, err = raw.ListenPacket(&cli.ifc, ETHER_IPv4, &raw.Config{false, true, []bpf.RawInstruction{}, 0})
+		gw_ip := []byte{0, 0, 0, 0}
+		be.PutUint32(gw_ip, uint32(cli.gw_ip))
+		con, err = net.ListenUDP("udp4", &net.UDPAddr{gw_ip, IPREF_PORT, ""})
 		if err != nil {
-			log.fatal("gw: cannot get raw socket: %v", err)
-		}
-
-		/* filter IPREF packets: UDP with src or dst equal to IPREF_PORT
-
-		Kernel will still be forwarding these packets. Use netfilter to silently
-		drop them. For example, the following firewall-cmd rules could be used:
-
-		firewall-cmd --add-rich-rule 'rule source-port port=1045 protocol=udp drop'
-		firewall-cmd --add-rich-rule 'rule port port=1045 protocol=udp drop'
-		firewall-cmd --runtime-to-permanent
-
-		*/
-
-		filter, err := bpf.Assemble([]bpf.Instruction{
-			bpf.LoadAbsolute{Off: ETHER_TYPE, Size: 2},
-			bpf.JumpIf{Cond: bpf.JumpEqual, Val: ETHER_IPv4, SkipTrue: 1},
-			bpf.RetConstant{Val: 0}, // not IPv4 packet
-			bpf.LoadAbsolute{Off: ETHER_HDRLEN + IP_DST, Size: 4},
-			bpf.JumpIf{Cond: bpf.JumpEqual, Val: uint32(cli.gw_ip), SkipTrue: 1},
-			bpf.RetConstant{Val: 0}, // not our gateway IP address
-			bpf.LoadAbsolute{Off: ETHER_HDRLEN + IP_PROTO, Size: 1},
-			bpf.JumpIf{Cond: bpf.JumpEqual, Val: UDP, SkipTrue: 1},
-			bpf.RetConstant{Val: 0}, // not UDP
-			bpf.LoadMemShift{Off: ETHER_HDRLEN + IP_VER},
-			bpf.LoadIndirect{Off: ETHER_HDRLEN + UDP_SPORT, Size: 2},
-			bpf.JumpIf{Cond: bpf.JumpNotEqual, Val: IPREF_PORT, SkipTrue: 1},
-			bpf.RetConstant{Val: uint32(cli.pktbuflen)}, // src port match, copy packet
-			bpf.LoadIndirect{Off: ETHER_HDRLEN + UDP_DPORT, Size: 2},
-			bpf.JumpIf{Cond: bpf.JumpNotEqual, Val: IPREF_PORT, SkipTrue: 1},
-			bpf.RetConstant{Val: uint32(cli.pktbuflen)}, // dst port match, copy packet
-			bpf.RetConstant{Val: 0},                     // no match, ignore packet
-		})
-
-		if err != nil {
-			log.fatal("gw: cannot assemble bpf filter: %v", err)
-		}
-
-		err = con.SetBPF(filter)
-
-		if err != nil {
-			log.fatal("gw: cannot set bpf filter: %v", err)
+			log.fatal("gw: cannot listen on UDP: %v", err)
 		}
 
 		log.info("gw: gateway %v %v mtu(%v) %v pkt buffers",

@@ -21,15 +21,6 @@ func tun_sender(fd *os.File) {
 
 	for pb := range send_tun {
 
-		if pb.data < TUN_HDR_LEN {
-			log.fatal("tun out: not enough space for tun header data/tail(%v/%v)", pb.data, pb.tail)
-		}
-
-		pb.data -= TUN_HDR_LEN
-
-		be.PutUint16(pb.pkt[pb.data+TUN_FLAGS:pb.data+TUN_FLAGS+2], TUN_IFF_TUN)
-		be.PutUint16(pb.pkt[pb.data+TUN_PROTO:pb.data+TUN_PROTO+2], TUN_IPv4)
-
 		if cli.debug["tun"] {
 			log.debug("tun out: %v", pb.pp_pkt())
 		}
@@ -39,6 +30,16 @@ func tun_sender(fd *os.File) {
 			pb.pp_tran("tun out: ")
 			pb.pp_raw("tun out: ")
 		}
+
+		if pb.data < TUN_HDR_LEN {
+			log.err("tun out: not enough space for tun header data/tail(%v/%v), dropping", pb.data, pb.tail)
+			retbuf <- pb
+			continue
+		}
+		pb.data -= TUN_HDR_LEN
+
+		be.PutUint16(pb.pkt[pb.data+TUN_FLAGS:pb.data+TUN_FLAGS+2], TUN_IFF_TUN)
+		be.PutUint16(pb.pkt[pb.data+TUN_PROTO:pb.data+TUN_PROTO+2], TUN_IPv4)
 
 		wlen, err := fd.Write(pb.pkt[pb.data:pb.tail])
 		if err != nil {
@@ -64,10 +65,7 @@ func tun_receiver(fd *os.File) {
 	for {
 
 		pb := <-getbuf
-		pb.data = ETHER_HDRLEN + OPTLEN
-		pb.data += 3
-		pb.data &^= 3 // align IP header on 32bit boundary
-		pb.data -= TUN_HDR_LEN
+		pb.data = IPREF_HDR_MAX_LEN - TUN_HDR_LEN - IP_HDR_MIN_LEN
 		pkt := pb.pkt[pb.data:]
 
 		maxmsg := 3
@@ -80,7 +78,7 @@ func tun_receiver(fd *os.File) {
 			time.Sleep(769 * time.Millisecond)
 		}
 
-		if rlen < TUN_HDR_LEN+20 {
+		if rlen < TUN_HDR_LEN+IP_HDR_MIN_LEN {
 			log.err("tun in: packet too short, dropping")
 			retbuf <- pb
 			continue
@@ -101,6 +99,7 @@ func tun_receiver(fd *os.File) {
 
 		pb.tail = pb.data + rlen
 		pb.data += TUN_HDR_LEN
+		pb.typ = PKT_IP
 		pkt = pb.pkt[pb.data:pb.tail]
 
 		if pkt[IP_VER]&0xf0 != 0x40 {
@@ -108,8 +107,6 @@ func tun_receiver(fd *os.File) {
 			retbuf <- pb
 			continue
 		}
-
-		pb.set_iphdr()
 
 		if cli.debug["tun"] {
 			log.debug("tun in: %v", pb.pp_pkt())

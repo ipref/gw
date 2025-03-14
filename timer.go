@@ -71,12 +71,12 @@ func send_marker(mark M32, oid O32, from string) {
 	pb.peer = from
 
 	pb.write_v1_header(V1_DATA|V1_SET_MARK, 0)
-	pkt := pb.pkt[pb.iphdr:]
+	pkt := pb.pkt[pb.data:]
 	off := V1_HDR_LEN
 	be.PutUint32(pkt[off+V1_OID:off+V1_OID+4], uint32(oid))
 	be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], uint32(mark))
 	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((V1_HDR_LEN+V1_MARK_LEN)/4))
-	pb.tail = pb.iphdr + V1_HDR_LEN + V1_MARK_LEN
+	pb.tail = pb.data + V1_HDR_LEN + V1_MARK_LEN
 
 	switch oid {
 	case mapper_oid:

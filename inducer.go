@@ -32,7 +32,7 @@ func allocate_eas(gw []IP32, ref rff.Ref, from, to uint64) {
 
 		pb := <-getbuf
 		pb.write_v1_header(V1_REQ|V1_GET_EA, pktid)
-		pkt := pb.pkt[pb.iphdr:]
+		pkt := pb.pkt[pb.data:]
 
 		off := V1_HDR_LEN
 
@@ -49,7 +49,7 @@ func allocate_eas(gw []IP32, ref rff.Ref, from, to uint64) {
 
 		// send to fwd_to_tun and forget it
 
-		pb.tail = pb.iphdr + V1_HDR_LEN + V1_MARK_LEN + V1_AREC_LEN
+		pb.tail = pb.data + V1_HDR_LEN + V1_MARK_LEN + V1_AREC_LEN
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], (V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN)/4)
 		pb.peer = "ea allocation inducer"
 		pb.schan = retbuf
@@ -106,7 +106,7 @@ func allocate_refs(base, from, to IP32) {
 
 		pb := <-getbuf
 		pb.write_v1_header(V1_REQ|V1_GET_REF, pktid)
-		pkt := pb.pkt[pb.iphdr:]
+		pkt := pb.pkt[pb.data:]
 
 		off := V1_HDR_LEN
 
@@ -123,7 +123,7 @@ func allocate_refs(base, from, to IP32) {
 
 		// send to fwd_to_gw and forget it
 
-		pb.tail = pb.iphdr + V1_HDR_LEN + V1_MARK_LEN + V1_AREC_LEN
+		pb.tail = pb.data + V1_HDR_LEN + V1_MARK_LEN + V1_AREC_LEN
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], (V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN)/4)
 		pb.peer = "ref allocation inducer"
 		pb.schan = retbuf

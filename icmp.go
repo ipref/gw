@@ -6,9 +6,11 @@ var icmpreq chan (*PktBuf)
 
 const (
 	// icmp types
+	ICMP_ECHO_REPLY    = 0
 	ICMP_DEST_UNREACH  = 3
 	ICMP_SOURCE_QUENCH = 4
 	ICMP_REDIRECT      = 5
+	ICMP_ECHO_REQUEST  = 8
 	ICMP_TIME_EXCEEDED = 11
 
 	// icmp codes for ICMP_DEST_UNREACH

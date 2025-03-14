@@ -67,7 +67,7 @@ func (gen *GenEA) recover_expired_eas() {
 
 		pb := <-getbuf
 		pb.write_v1_header(V1_REQ|V1_RECOVER_EA, pktid)
-		pkt := pb.pkt[pb.iphdr:]
+		pkt := pb.pkt[pb.data:]
 
 		off := V1_HDR_LEN
 
@@ -84,7 +84,7 @@ func (gen *GenEA) recover_expired_eas() {
 
 		off += V1_AREC_LEN
 
-		pb.tail = pb.iphdr + off
+		pb.tail = pb.data + off
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
 		pb.peer = "recover ea"
 		pb.schan = gen.recv
@@ -101,7 +101,7 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 		return DROP
 	}
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 
 	cmd := pkt[V1_CMD]
 
@@ -281,7 +281,7 @@ func (gen *GenREF) recover_expired_refs() {
 
 		pb := <-getbuf
 		pb.write_v1_header(V1_REQ|V1_RECOVER_REF, pktid)
-		pkt := pb.pkt[pb.iphdr:]
+		pkt := pb.pkt[pb.data:]
 
 		off := V1_HDR_LEN
 
@@ -299,7 +299,7 @@ func (gen *GenREF) recover_expired_refs() {
 
 		off += V1_AREC_LEN
 
-		pb.tail = pb.iphdr + off
+		pb.tail = pb.data + off
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
 		pb.peer = "recover ref"
 		pb.schan = gen.recv
@@ -310,13 +310,17 @@ func (gen *GenREF) recover_expired_refs() {
 
 func (gen *GenREF) receive(pb *PktBuf) int {
 
+	if pb.typ != PKT_V1 {
+		log.fatal("gen ref: invalid packet type")
+	}
+
 	if err := pb.validate_v1_header(pb.len()); err != nil {
 
 		log.err("gen ref: invalid v1 packet from %v:  %v", pb.peer, err)
 		return DROP
 	}
 
-	pkt := pb.pkt[pb.iphdr:pb.tail]
+	pkt := pb.pkt[pb.data:pb.tail]
 
 	cmd := pkt[V1_CMD]
 

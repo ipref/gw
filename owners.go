@@ -88,7 +88,7 @@ func (o *Owners) register(oid O32, name string) error {
 
 	pb := <-getbuf
 	pb.write_v1_header(V1_SAVE_OID, 0)
-	pkt := pb.pkt[pb.iphdr:]
+	pkt := pb.pkt[pb.data:]
 
 	off := V1_HDR_LEN
 	be.PutUint32(pkt[off:off+4], uint32(oid))
@@ -99,7 +99,7 @@ func (o *Owners) register(oid O32, name string) error {
 	copy(pkt[off+2:], name)
 
 	off += (len(name) + 5) &^ 3
-	pb.tail = pb.iphdr + off
+	pb.tail = pb.data + off
 	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
 
 	pb.peer = "owners"

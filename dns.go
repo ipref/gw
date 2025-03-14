@@ -238,7 +238,7 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 		// v1 header
 
 		pb.write_v1_header(V1_SET_AREC, 0)
-		pkt := pb.pkt[pb.iphdr:]
+		pkt := pb.pkt[pb.data:]
 
 		// mark
 
