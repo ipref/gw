@@ -10,6 +10,23 @@ import (
 	"unsafe"
 )
 
+const (
+	TUN_HDR_LEN = 4
+	TUN_IFF_TUN = uint16(0x0001)
+	TUN_IPv4    = uint16(0x0800)
+	// TUN header offsets
+	TUN_FLAGS = 0
+	TUN_PROTO = 2
+	// ETHER types
+	ETHER_IPv4 = 0x0800
+	ETHER_IPv6 = 0x86dd
+	// ETHER offsets
+	ETHER_DST_MAC = 0
+	ETHER_SRC_MAC = 6
+	ETHER_TYPE    = 12
+	ETHER_HDRLEN = 6 + 6 + 2
+)
+
 var recv_tun chan (*PktBuf)
 var send_tun chan (*PktBuf)
 
@@ -169,7 +186,7 @@ func start_tun() {
 		ifcname := strings.Trim(string(ifreq.name[:]), "\x00")
 		ea_ip := cli.ea_ip + 1 // hard code .1 as tun ip address
 		ea_masklen := cli.ea_masklen
-		mtu := cli.ifc.MTU - OPTLEN
+		mtu := cli.ifc.MTU - UDP_HDR_LEN - IPREF_HDR_MAX_LEN + IP_HDR_MIN_LEN
 
 		cmd, out, ret = shell("ip l set %v mtu %v", ifcname, mtu)
 		if ret != 0 {

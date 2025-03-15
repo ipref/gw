@@ -65,7 +65,7 @@ const ( // v1 commands
 	V1_SET_MARK       = 2
 	V1_SET_SOFT       = 3
 	V1_GET_REF        = 4
-	V1_INDUCE_ARP     = 5
+	V1_INDUCE_ARP     = 5 // TODO remove (obsolete)
 	V1_GET_EA         = 6
 	V1_MC_GET_EA      = 7
 	V1_SAVE_OID       = 8
@@ -102,17 +102,7 @@ const (
 	DISCARD           = 9
 	IPREF_PORT        = 1045
 	IPREF_HDR_MAX_LEN = 4 + 4 + 4 + 16 + 16
-	IPREF_OPT         = 0x9E // C(1) + CLS(0) + OptNum(30) (rfc3692 EXP 30)
-	IPREF_OPT64_LEN   = 4 + 8 + 8
-	IPREF_OPT128_LEN  = 4 + 16 + 16
-	OPTLEN            = 8 + 4 + 4 + 16 + 16 // udphdr + encap + opt + ref + ref
-	TUN_HDR_LEN       = 4
-	TUN_IFF_TUN       = uint16(0x0001)
-	TUN_IPv4          = uint16(0x0800)
 	PKTQLEN           = 2
-	// TUN header offsets
-	TUN_FLAGS = 0
-	TUN_PROTO = 2
 	// IP header offests
 	IP_VER         = 0
 	IP_DSCP        = 1
@@ -126,10 +116,11 @@ const (
 	IP_DST         = 16
 	IP_HDR_MIN_LEN = 20
 	// UDP offsets
-	UDP_SPORT = 0
-	UDP_DPORT = 2
-	UDP_LEN   = 4
-	UDP_CSUM  = 6
+	UDP_SPORT   = 0
+	UDP_DPORT   = 2
+	UDP_LEN     = 4
+	UDP_CSUM    = 6
+	UDP_HDR_LEN = 8
 	// TCP offsets
 	TCP_SPORT = 0
 	TCP_DPORT = 2
@@ -140,19 +131,6 @@ const (
 	ICMP_CSUM = 2
 	ICMP_MTU  = 6
 	ICMP_DATA = 8
-	// encap offsets
-	ENCAP_TTL   = 0
-	ENCAP_PROTO = 1
-	ENCAP_HOPS  = 2
-	ENCAP_RSVD  = 3
-	// opt offsets
-	OPT_OPT     = 0
-	OPT_LEN     = 1
-	OPT_RSVD    = 2
-	OPT_SREF64  = 4
-	OPT_SREF128 = 4
-	OPT_DREF64  = 12
-	OPT_DREF128 = 20
 )
 
 const (
@@ -554,7 +532,7 @@ func (pb *PktBuf) pp_tran(pfx string) {
 
 		// UDP  1045  1045  len(96) csum 0
 
-		if len(pkt) < 8 {
+		if len(pkt) < UDP_HDR_LEN {
 			return
 		}
 		log.trace("%vUDP  %v  %v  len(%v) csum: %04x",
@@ -723,7 +701,7 @@ func (pb *PktBuf) verify_csum() bool {
 	case TCP: // TODO
 	case UDP:
 
-		if len(pkt) < 8 {
+		if len(pkt) < UDP_HDR_LEN {
 			return false
 		}
 		udp_csum := csum_add(0, []byte{0, proto})

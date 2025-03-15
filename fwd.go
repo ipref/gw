@@ -170,7 +170,7 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int) bool {
 
 	case UDP: // subtract ip src/dst addresses from csum
 
-		if pb.tail - l4 < 8 {
+		if pb.tail - l4 < UDP_HDR_LEN {
 			log.err("encap:   invalid udp packet, dropping")
 			return false
 		}
@@ -359,7 +359,7 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool, icmp_depth int
 
 	case UDP: // add ip src/dst addresses to csum
 
-		if pb.tail - l4 < 8 {
+		if pb.tail - l4 < UDP_HDR_LEN {
 			log.err("deencap: invalid udp packet, dropping")
 			return false
 		}
