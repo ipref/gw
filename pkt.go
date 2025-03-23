@@ -143,6 +143,7 @@ type IcmpReq struct { // params for icmp requests
 	typ  byte // type is a reserved keyword so we use Polish spelling
 	code byte
 	mtu  uint16
+	ours bool // packet originated from local network
 }
 type PktBuf struct {
 	pkt   []byte
@@ -173,7 +174,7 @@ func (pb *PktBuf) clear() {
 	pb.dport = 0
 	pb.peer = ""
 	pb.schan = nil
-	pb.icmp = IcmpReq{0, 0, 0}
+	pb.icmp = IcmpReq{}
 }
 
 func (pb *PktBuf) copy_from(pbo *PktBuf) {
@@ -720,6 +721,26 @@ func (pb *PktBuf) ipref_dref() rff.Ref {
 	return decode_ref(pb.pkt[i : i + reflen])
 }
 
+func (pb *PktBuf) ipref_swap_srcdst() {
+
+	frag_if := pb.ipref_if()
+	reflen := pb.ipref_reflen()
+	i := pb.data + 4
+	if frag_if {
+		i += 8
+	}
+	var temp [16]byte
+	// swap IPs
+	copy(temp[:4], pb.pkt[i:])
+	copy(pb.pkt[i : i + 4], pb.pkt[i + 4:])
+	copy(pb.pkt[i + 4:], temp[:4])
+	// swap refs
+	i += 8
+	copy(temp[:reflen], pb.pkt[i:])
+	copy(pb.pkt[i : i + reflen], pb.pkt[i + reflen:])
+	copy(pb.pkt[i + reflen:], temp[:reflen])
+}
+
 func min_reflen(ref rff.Ref) int {
 
 	if ref.H == 0 {
@@ -772,6 +793,14 @@ func decode_ref(bs []byte) (ref rff.Ref) {
 		log.fatal("invalid %v", len(bs))
 	}
 	return ref
+}
+
+func (pb *PktBuf) ip_hdr_len() int {
+
+	if pb.len() < IP_HDR_MIN_LEN {
+		return pb.len()
+	}
+	return int(pb.pkt[pb.data] & 0xf) * 4
 }
 
 func (pb *PktBuf) verify_csum() bool {

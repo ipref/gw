@@ -255,8 +255,8 @@ func gw_sender(rgws *RemoteGwTable) {
 			}
 
 		again:
-			if pb.src != cli.gw_ip {
-				log.err("gw out:  src(%v) is not gateway, packet dropped", pb.src)
+			if pb.src != cli.gw_ip || pb.sport != IPREF_PORT {
+				log.err("gw out:  src(%v:%v) is not gateway, packet dropped", pb.src, pb.sport)
 				retbuf <- pb
 				continue
 			}
@@ -267,20 +267,24 @@ func gw_sender(rgws *RemoteGwTable) {
 				continue
 			}
 			mtu := rcon.get_mtu()
-			mtu -= IP_HDR_MIN_LEN + UDP_HDR_LEN
-			if mtu <= 0 {
+			l5_mtu := mtu - IP_HDR_MIN_LEN - UDP_HDR_LEN
+			if l5_mtu <= 0 {
 				log.err("gw out:  bad mtu, dropping packet")
 				retbuf <- pb
 				continue
 			}
-			sent, trimmed, orig_mf, status := ipref_frag_in_place(pb, mtu)
+			sent, trimmed, orig_mf, status := ipref_frag_in_place(pb, l5_mtu)
 			switch status {
 			case IPREF_FRAG_IN_PLACE_NOT_NEEDED:
 			case IPREF_FRAG_IN_PLACE_SUCCESS:
 				log.trace("gw out:  fragmenting (%v + %v)", sent, trimmed)
 			case IPREF_FRAG_IN_PLACE_DF:
-				log.trace("gw out:  needs fragmentation but DF set, dropping") // TODO ICMP
-				retbuf <- pb
+				log.trace("gw out:  needs fragmentation but DF set, sending icmp")
+				pb.icmp.typ = ICMP_DEST_UNREACH
+				pb.icmp.code = ICMP_FRAG_NEEDED
+				pb.icmp.mtu = uint16(mtu)
+				pb.icmp.ours = true
+				icmpreq <- pb
 				continue
 			case IPREF_FRAG_IN_PLACE_SPACE:
 				log.err("gw out:  not enough space in buffer to fragment, dropping")

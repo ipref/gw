@@ -26,8 +26,8 @@ func fwd_to_gw() {
 
 		case PKT_IP:
 
-			if ipref_encap(pb, false, 1) {
-				verdict = ACCEPT
+			verdict = ipref_encap(pb, false, ICMP_ENCAP_MAX_DEPTH, true)
+			if verdict == ACCEPT {
 				send_gw <- pb
 			}
 
@@ -77,8 +77,8 @@ func fwd_to_tun() {
 
 		case PKT_IPREF:
 
-			if ipref_deencap(pb, true, false, 1) {
-				verdict = ACCEPT
+			verdict = ipref_deencap(pb, true, false, ICMP_ENCAP_MAX_DEPTH, true)
+			if verdict == ACCEPT {
 				send_tun <- pb
 			}
 

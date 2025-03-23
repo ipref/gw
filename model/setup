@@ -82,6 +82,8 @@ cat > /etc/netns/gw7/hosts << EOF
 192.168.12.98   gw8
 192.168.97.11   host711    #= pub 192.168.11.97 + 10711
 10.248.22.222   host822    #= ext 192.168.12.98 + 20822
+10.248.22.223   host823                                 # unreachable at local gw
+10.248.22.224   host824    #= ext 192.168.12.98 + 20824 # unreachable at remote gw
 EOF
 cat > /etc/netns/gw8/hosts << EOF
 192.168.12.1    router1
@@ -96,6 +98,8 @@ cat > /etc/netns/host711/hosts << EOF
 192.168.97.1    gw7
 127.0.0.1       host711
 10.248.22.222   host822
+10.248.22.223   host823
+10.248.22.224   host824
 EOF
 cat > /etc/netns/host822/hosts << EOF
 127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
