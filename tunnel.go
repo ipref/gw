@@ -83,7 +83,9 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int) bool {
 		return false
 	}
 	ip_pkt_len := int(be.Uint16(pkt[pb.data+IP_LEN:pb.data+IP_LEN+2]))
-	if ip_pkt_len != pb.tail - pb.data {
+	// We will still encapsulate packets which have been truncated, because that
+	// can happen with packets inside ICMP.
+	if ip_pkt_len < pb.tail - pb.data {
 		log.err("encap:   invalid packet (bad length field), dropping")
 		return false
 	}
