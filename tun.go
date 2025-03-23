@@ -48,6 +48,12 @@ func tun_sender(fd *os.File) {
 			pb.pp_raw("tun out: ")
 		}
 
+		if pb.typ != PKT_IPv4 {
+			log.err("tun out: not an IPv4 packet (%v), dropping", pb.typ)
+			retbuf <- pb
+			continue
+		}
+
 		if pb.data < TUN_HDR_LEN {
 			log.err("tun out: not enough space for tun header data/tail(%v/%v), dropping", pb.data, pb.tail)
 			retbuf <- pb
@@ -82,7 +88,7 @@ func tun_receiver(fd *os.File) {
 	for {
 
 		pb := <-getbuf
-		pb.data = IPREF_HDR_MAX_LEN - TUN_HDR_LEN - IP_HDR_MIN_LEN
+		pb.data = IPREF_HDR_MAX_LEN - TUN_HDR_LEN - IPv4_HDR_MIN_LEN
 		pkt := pb.pkt[pb.data:]
 
 		maxmsg := 3
@@ -95,7 +101,7 @@ func tun_receiver(fd *os.File) {
 			time.Sleep(769 * time.Millisecond)
 		}
 
-		if rlen < TUN_HDR_LEN+IP_HDR_MIN_LEN {
+		if rlen < TUN_HDR_LEN+IPv4_HDR_MIN_LEN {
 			log.err("tun in: packet too short, dropping")
 			retbuf <- pb
 			continue
@@ -122,7 +128,7 @@ func tun_receiver(fd *os.File) {
 
 		pb.tail = pb.data + rlen
 		pb.data += TUN_HDR_LEN
-		pb.typ = PKT_IP
+		pb.typ = PKT_IPv4
 		pkt = pb.pkt[pb.data:pb.tail]
 
 		if pkt[IP_VER]&0xf0 != 0x40 {
@@ -192,7 +198,7 @@ func start_tun() {
 		ifcname := strings.Trim(string(ifreq.name[:]), "\x00")
 		ea_ip := cli.ea_ip + 1 // hard code .1 as tun ip address
 		ea_masklen := cli.ea_masklen
-		mtu := cli.ifc.MTU - UDP_HDR_LEN - IPREF_HDR_MAX_LEN + IP_HDR_MIN_LEN
+		mtu := cli.ifc.MTU - UDP_HDR_LEN - IPREF_HDR_MAX_LEN + IPv4_HDR_MIN_LEN
 
 		cmd, out, ret = shell("ip l set %v mtu %v", ifcname, mtu)
 		if ret != 0 {

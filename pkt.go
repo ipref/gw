@@ -104,18 +104,18 @@ const (
 	IPREF_HDR_MIN_LEN = 4 + 4 + 4 + 4 + 4
 	IPREF_HDR_MAX_LEN = 4 + 8 + 4 + 4 + 16 + 16
 	PKTQLEN           = 2
-	// IP header offests
-	IP_VER         = 0
-	IP_DSCP        = 1
-	IP_LEN         = 2
-	IP_ID          = 4
-	IP_FRAG        = 6
-	IP_TTL         = 8
-	IP_PROTO       = 9
-	IP_CSUM        = 10
-	IP_SRC         = 12
-	IP_DST         = 16
-	IP_HDR_MIN_LEN = 20
+	// IPv4 header offests
+	IP_VER           = 0
+	IPv4_DSCP        = 1
+	IPv4_LEN         = 2
+	IPv4_ID          = 4
+	IPv4_FRAG        = 6
+	IPv4_TTL         = 8
+	IPv4_PROTO       = 9
+	IPv4_CSUM        = 10
+	IPv4_SRC         = 12
+	IPv4_DST         = 16
+	IPv4_HDR_MIN_LEN = 20
 	// UDP offsets
 	UDP_SPORT   = 0
 	UDP_DPORT   = 2
@@ -136,7 +136,7 @@ const (
 
 const (
 	PKT_IPREF = iota + 1
-	PKT_IP
+	PKT_IPv4
 	PKT_V1
 )
 type IcmpReq struct { // params for icmp requests
@@ -212,7 +212,7 @@ func ip_proto_name(proto byte) string {
 
 func (pb *PktBuf) pp_pkt() (ss string) {
 
-	// IP(udp)  192.168.84.97  192.168.84.98  len(60)  data/tail(0/60)
+	// IPv4(udp)  192.168.84.97  192.168.84.98  len(60)  data/tail(0/60)
 	// IPREF(udp)  192.168.84.97 + 8af2819566  192.168.84.98 + 31fba013c  len(60) data/tail(48/158)
 	// V1 REQ GET_EA(6) 77.71.180.101 + 2bc-1859   vman.ipref.org
 	// V1 ACK GET_EA(6) 77.71.180.101 + 2bc-1859 = 10.254.192.127
@@ -261,25 +261,25 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 
 		return
 
-	case PKT_IP:
+	case PKT_IPv4:
 
 		if len(pkt) < 20 || pkt[IP_VER]&0xf0 != 0x40 {
 			break
 		}
 		flags := ""
-		frag_field := be.Uint16(pkt[IP_FRAG:IP_FRAG+2])
+		frag_field := be.Uint16(pkt[IPv4_FRAG:IPv4_FRAG+2])
 		if frag_field & 0x3fff != 0 {
 			flags += " IF"
 		}
 		if (frag_field >> 14) & 1 != 0 {
 			flags += " DF"
 		}
-		ss = fmt.Sprintf("IP(%v)%v  %v  %v  len(%v)  data/tail(%v/%v)",
-			ip_proto_name(pkt[IP_PROTO]),
+		ss = fmt.Sprintf("IPv4(%v)%v  %v  %v  len(%v)  data/tail(%v/%v)",
+			ip_proto_name(pkt[IPv4_PROTO]),
 			flags,
-			net.IP(pkt[IP_SRC:IP_SRC+4]),
-			net.IP(pkt[IP_DST:IP_DST+4]),
-			be.Uint16(pkt[IP_LEN:IP_LEN+2]),
+			net.IP(pkt[IPv4_SRC:IPv4_SRC+4]),
+			net.IP(pkt[IPv4_DST:IPv4_DST+4]),
+			be.Uint16(pkt[IPv4_LEN:IPv4_LEN+2]),
 			pb.data, pb.tail)
 
 		return
@@ -455,7 +455,7 @@ func (pb *PktBuf) pp_raw(pfx string) {
 
 func (pb *PktBuf) pp_net(pfx string) {
 
-	// IP(udp) 4500  192.168.84.93  10.254.22.202  len(64) id(1) ttl(64) csum:0000
+	// IPv4(udp) 4500  192.168.84.93  10.254.22.202  len(64) id(1) ttl(64) csum:0000
 	// IPREF(udp) 4500  192.168.84.93 + 8af2819566  10.254.22.202 + 31fba013c  len(64) ttl(64)
 
 	pkt := pb.pkt[pb.data:pb.tail]
@@ -493,30 +493,30 @@ func (pb *PktBuf) pp_net(pfx string) {
 			ttl)
 		return
 
-	case PKT_IP:
+	case PKT_IPv4:
 
 		if len(pkt) < 20 || pkt[IP_VER]&0xf0 != 0x40 {
 			break
 		}
 
 		flags := ""
-		frag_field := be.Uint16(pkt[IP_FRAG:IP_FRAG+2])
+		frag_field := be.Uint16(pkt[IPv4_FRAG:IPv4_FRAG+2])
 		if frag_field & 0x3fff != 0 {
 			flags += " IF"
 		}
 		if (frag_field >> 14) & 1 != 0 {
 			flags += " DF"
 		}
-		log.trace("%vIP(%v)%v  %v  %v  len(%v) id(%v) ttl(%v) csum: %04x",
+		log.trace("%vIPv4(%v)%v  %v  %v  len(%v) id(%v) ttl(%v) csum: %04x",
 			pfx,
-			ip_proto_name(pkt[IP_PROTO]),
+			ip_proto_name(pkt[IPv4_PROTO]),
 			flags,
-			IP32(be.Uint32(pkt[IP_SRC:IP_SRC+4])),
-			IP32(be.Uint32(pkt[IP_DST:IP_DST+4])),
-			be.Uint16(pkt[IP_LEN:IP_LEN+2]),
-			be.Uint16(pkt[IP_ID:IP_ID+2]),
-			pkt[IP_TTL],
-			be.Uint16(pkt[IP_CSUM:IP_CSUM+2]))
+			IP32(be.Uint32(pkt[IPv4_SRC:IPv4_SRC+4])),
+			IP32(be.Uint32(pkt[IPv4_DST:IPv4_DST+4])),
+			be.Uint16(pkt[IPv4_LEN:IPv4_LEN+2]),
+			be.Uint16(pkt[IPv4_ID:IPv4_ID+2]),
+			pkt[IPv4_TTL],
+			be.Uint16(pkt[IPv4_CSUM:IPv4_CSUM+2]))
 		return
 	}
 
@@ -538,12 +538,12 @@ func (pb *PktBuf) pp_tran(pfx string) {
 		proto = pb.ipref_proto()
 		pkt = pkt[pb.ipref_hdr_len():]
 
-	case PKT_IP:
+	case PKT_IPv4:
 
 		if len(pkt) < 20 || pkt[IP_VER]&0xf0 != 0x40 || pkt[IP_VER]&0x0f != 5 {
 			return
 		}
-		proto = pkt[IP_PROTO]
+		proto = pkt[IPv4_PROTO]
 		pkt = pkt[20:]
 
 	default:
@@ -797,7 +797,7 @@ func decode_ref(bs []byte) (ref rff.Ref) {
 
 func (pb *PktBuf) ip_hdr_len() int {
 
-	if pb.len() < IP_HDR_MIN_LEN {
+	if pb.len() < IPv4_HDR_MIN_LEN {
 		return pb.len()
 	}
 	return int(pb.pkt[pb.data] & 0xf) * 4
@@ -822,14 +822,14 @@ func (pb *PktBuf) verify_csum() bool {
 		proto = pb.ipref_proto()
 		pkt = pkt[12 + pb.ipref_reflen() * 2:]
 
-	case PKT_IP:
+	case PKT_IPv4:
 
 		if len(pkt) < 20 || pkt[IP_VER]&0xf0 != 0x40 || pkt[IP_VER]&0x0f != 5 {
 			return false
 		}
-		proto = pkt[IP_PROTO]
-		ip_csum := csum_add(0, pkt[:IP_HDR_MIN_LEN])
-		if be.Uint16(pkt[IP_CSUM:IP_CSUM+2]) != ip_csum^0xffff {
+		proto = pkt[IPv4_PROTO]
+		ip_csum := csum_add(0, pkt[:IPv4_HDR_MIN_LEN])
+		if be.Uint16(pkt[IPv4_CSUM:IPv4_CSUM+2]) != ip_csum^0xffff {
 			return false
 		}
 		pkt = pkt[20:]

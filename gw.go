@@ -267,7 +267,7 @@ func gw_sender(rgws *RemoteGwTable) {
 				continue
 			}
 			mtu := rcon.get_mtu()
-			l5_mtu := mtu - IP_HDR_MIN_LEN - UDP_HDR_LEN
+			l5_mtu := mtu - IPv4_HDR_MIN_LEN - UDP_HDR_LEN
 			if l5_mtu <= 0 {
 				log.err("gw out:  bad mtu, dropping packet")
 				retbuf <- pb
@@ -280,8 +280,8 @@ func gw_sender(rgws *RemoteGwTable) {
 				log.trace("gw out:  fragmenting (%v + %v)", sent, trimmed)
 			case IPREF_FRAG_IN_PLACE_DF:
 				log.trace("gw out:  needs fragmentation but DF set, sending icmp")
-				pb.icmp.typ = ICMP_DEST_UNREACH
-				pb.icmp.code = ICMP_FRAG_NEEDED
+				pb.icmp.typ = ICMPv4_DEST_UNREACH
+				pb.icmp.code = ICMPv4_FRAG_NEEDED
 				pb.icmp.mtu = uint16(mtu)
 				pb.icmp.ours = true
 				icmpreq <- pb
@@ -335,7 +335,7 @@ func gw_receiver(con *net.UDPConn, on_recv func(), on_emsgsize func(), on_close 
 
 		pb := <-getbuf
 		pb.typ = PKT_IPREF
-		pb.data = TUN_HDR_LEN + IPREF_HDR_MAX_LEN - IP_HDR_MIN_LEN
+		pb.data = TUN_HDR_LEN + IPREF_HDR_MAX_LEN - IPv4_HDR_MIN_LEN
 
 		rlen, addr, err := con.ReadFromUDP(pb.pkt[pb.data:])
 		if cli.debug["gw"] {

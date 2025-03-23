@@ -149,7 +149,7 @@ func parse_cli() {
 		}
 	}
 
-	cli.pktbuflen = cli.ifc.MTU - IP_HDR_MIN_LEN + IPREF_HDR_MAX_LEN + 8
+	cli.pktbuflen = cli.ifc.MTU - IPv4_HDR_MIN_LEN + IPREF_HDR_MAX_LEN + 8
 	cli.pktbuflen += 3
 	cli.pktbuflen &^= 3
 

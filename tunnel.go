@@ -22,12 +22,12 @@ const (
 	ENCAP_MAP_UNKNOWN_DST
 )
 
-func icmp_action(icmp_type byte) int {
+func icmpv4_action(icmp_type byte) int {
 	// TODO Add more
 	switch icmp_type {
-	case ICMP_DEST_UNREACH, ICMP_TIME_EXCEEDED, ICMP_REDIRECT, ICMP_SOURCE_QUENCH:
+	case ICMPv4_DEST_UNREACH, ICMPv4_TIME_EXCEEDED, ICMPv4_REDIRECT, ICMPv4_SOURCE_QUENCH:
 		return ICMP_ENCAP
-	case ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST:
+	case ICMPv4_ECHO_REPLY, ICMPv4_ECHO_REQUEST:
 		return ICMP_NO_ENCAP
 	default:
 		return ICMP_DROP
@@ -72,12 +72,12 @@ func (mgw *MapGw) get_srcdst_ipref_rev(src, dst IP32, rev bool) (
 // if the destination is unreachable.
 func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 
-	if pb.typ != PKT_IP {
-		log.fatal("encap:   not an ip packet")
+	if pb.typ != PKT_IPv4 {
+		log.fatal("encap:   not an IPv4 packet")
 	}
 	pkt := pb.pkt
 
-	if pb.tail - pb.data < IP_HDR_MIN_LEN {
+	if pb.tail - pb.data < IPv4_HDR_MIN_LEN {
 		log.err("encap:   invalid packet (too small), dropping")
 		return DROP
 	}
@@ -89,26 +89,26 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 		log.err("encap:   packet has options, dropping")
 		return DROP
 	}
-	ip_pkt_len := int(be.Uint16(pkt[pb.data+IP_LEN:pb.data+IP_LEN+2]))
+	ip_pkt_len := int(be.Uint16(pkt[pb.data+IPv4_LEN:pb.data+IPv4_LEN+2]))
 	// We will still encapsulate packets which have been truncated, because that
 	// can happen with packets inside ICMP.
 	if ip_pkt_len < pb.tail - pb.data {
 		log.err("encap:   invalid packet (bad length field), dropping")
 		return DROP
 	}
-	ident := be.Uint16(pkt[pb.data+IP_ID:pb.data+IP_ID+2])
-	frag_field := be.Uint16(pkt[pb.data+IP_FRAG:pb.data+IP_FRAG+2])
+	ident := be.Uint16(pkt[pb.data+IPv4_ID:pb.data+IPv4_ID+2])
+	frag_field := be.Uint16(pkt[pb.data+IPv4_FRAG:pb.data+IPv4_FRAG+2])
 	frag_df := frag_field & 0x4000 != 0
 	frag_mf := frag_field & 0x2000 != 0
 	frag_off := int((frag_field & 0x1fff) << 3)
 	frag_if := frag_off != 0 || frag_mf
-	ttl := pkt[pb.data+IP_TTL]
-	proto := pkt[pb.data+IP_PROTO]
+	ttl := pkt[pb.data+IPv4_TTL]
+	proto := pkt[pb.data+IPv4_PROTO]
 	var srcdst [8]byte
-	copy(srcdst[:], pkt[pb.data+IP_SRC:])
-	src := IP32(be.Uint32(pkt[pb.data+IP_SRC : pb.data+IP_SRC+4]))
-	dst := IP32(be.Uint32(pkt[pb.data+IP_DST : pb.data+IP_DST+4]))
-	l4 := pb.data + IP_HDR_MIN_LEN
+	copy(srcdst[:], pkt[pb.data+IPv4_SRC:])
+	src := IP32(be.Uint32(pkt[pb.data+IPv4_SRC : pb.data+IPv4_SRC+4]))
+	dst := IP32(be.Uint32(pkt[pb.data+IPv4_DST : pb.data+IPv4_DST+4]))
+	l4 := pb.data + IPv4_HDR_MIN_LEN
 	l4_pkt_len := pb.tail - l4
 	frag_end := frag_off + l4_pkt_len // the position of the end of the packet in the l4 datagram
 	if l4_pkt_len & 0x7 != 0 && frag_mf {
@@ -120,8 +120,8 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 	switch {
 	case map_status == ENCAP_MAP_SUCCESS:
 	case map_status == ENCAP_MAP_UNKNOWN_DST && steal:
-		pb.icmp.typ = ICMP_DEST_UNREACH
-		pb.icmp.code = ICMP_NET_UNREACH
+		pb.icmp.typ = ICMPv4_DEST_UNREACH
+		pb.icmp.code = ICMPv4_NET_UNREACH
 		pb.icmp.mtu = 0
 		pb.icmp.ours = true
 		icmpreq <- pb
@@ -245,7 +245,7 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 			return DROP
 		}
 
-		switch icmp_action(pkt[l4+ICMP_TYPE]) {
+		switch icmpv4_action(pkt[l4+ICMP_TYPE]) {
 
 		case ICMP_DROP:
 
@@ -260,7 +260,7 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 			}
 			inner_pb := PktBuf{
 				pkt: pkt[l4+ICMP_DATA:],
-				typ: PKT_IP,
+				typ: PKT_IPv4,
 				data: 0,
 				tail: min(l4_pkt_len - ICMP_DATA, ICMP_ENCAP_MAX_LEN)}
 			if ipref_encap(&inner_pb, true, icmp_depth - 1, false) != ACCEPT {
@@ -369,8 +369,8 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool,
 	switch {
 	case map_status == ENCAP_MAP_SUCCESS:
 	case map_status == ENCAP_MAP_UNKNOWN_DST && steal:
-		pb.icmp.typ = ICMP_DEST_UNREACH
-		pb.icmp.code = ICMP_NET_UNREACH
+		pb.icmp.typ = ICMPv4_DEST_UNREACH
+		pb.icmp.code = ICMPv4_NET_UNREACH
 		pb.icmp.mtu = 0
 		pb.icmp.ours = false
 		icmpreq <- pb
@@ -403,21 +403,21 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool,
 
 	// replace IPREF header with IP header
 
-	if l4 < IP_HDR_MIN_LEN { // this should be impossible
+	if l4 < IPv4_HDR_MIN_LEN { // this should be impossible
 		log.err("deencap: not enough space for ip header, dropping")
 		return DROP
 	}
-	pb.data = l4 - IP_HDR_MIN_LEN
-	pb.typ = PKT_IP
+	pb.data = l4 - IPv4_HDR_MIN_LEN
+	pb.typ = PKT_IPv4
 
 	pkt[pb.data+IP_VER] = 0x45
-	pkt[pb.data+IP_DSCP] = 0
+	pkt[pb.data+IPv4_DSCP] = 0
 	if (pb.tail - pb.data) >> 16 != 0 {
 		log.err("deencap: packet too large")
 		return DROP
 	}
-	be.PutUint16(pkt[pb.data+IP_LEN:pb.data+IP_LEN+2], uint16(pb.tail - pb.data))
-	be.PutUint16(pkt[pb.data+IP_ID:pb.data+IP_ID+2], uint16(ident))
+	be.PutUint16(pkt[pb.data+IPv4_LEN:pb.data+IPv4_LEN+2], uint16(pb.tail - pb.data))
+	be.PutUint16(pkt[pb.data+IPv4_ID:pb.data+IPv4_ID+2], uint16(ident))
 	{
 		frag_field := uint16(frag_off) >> 3
 		if frag_df {
@@ -426,17 +426,17 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool,
 		if frag_mf {
 			frag_field |= 1 << 13
 		}
-		be.PutUint16(pkt[pb.data+IP_FRAG:pb.data+IP_FRAG+2], frag_field)
+		be.PutUint16(pkt[pb.data+IPv4_FRAG:pb.data+IPv4_FRAG+2], frag_field)
 	}
-	pkt[pb.data+IP_TTL] = ttl
-	pkt[pb.data+IP_PROTO] = proto
-	be.PutUint16(pkt[pb.data+IP_CSUM:pb.data+IP_CSUM+2], 0)
-	be.PutUint32(pkt[pb.data+IP_SRC:pb.data+IP_SRC+4], uint32(src_ea))
-	be.PutUint32(pkt[pb.data+IP_DST:pb.data+IP_DST+4], uint32(dst_ip))
+	pkt[pb.data+IPv4_TTL] = ttl
+	pkt[pb.data+IPv4_PROTO] = proto
+	be.PutUint16(pkt[pb.data+IPv4_CSUM:pb.data+IPv4_CSUM+2], 0)
+	be.PutUint32(pkt[pb.data+IPv4_SRC:pb.data+IPv4_SRC+4], uint32(src_ea))
+	be.PutUint32(pkt[pb.data+IPv4_DST:pb.data+IPv4_DST+4], uint32(dst_ip))
 
 	// compute IP checksum
-	ip_csum := csum_add(0, pkt[pb.data:pb.data+IP_HDR_MIN_LEN])
-	be.PutUint16(pkt[pb.data+IP_CSUM:pb.data+IP_CSUM+2], ip_csum^0xffff)
+	ip_csum := csum_add(0, pkt[pb.data:pb.data+IPv4_HDR_MIN_LEN])
+	be.PutUint16(pkt[pb.data+IPv4_CSUM:pb.data+IPv4_CSUM+2], ip_csum^0xffff)
 
 	// adjust layer 4 headers
 
@@ -455,7 +455,7 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool,
 		tcp_csum := be.Uint16(pkt[l4+TCP_CSUM-frag_off : l4+TCP_CSUM-frag_off+2])
 
 		if tcp_csum != 0 {
-			tcp_csum = csum_add(tcp_csum^0xffff, pkt[pb.data+IP_SRC:pb.data+IP_DST+4])
+			tcp_csum = csum_add(tcp_csum^0xffff, pkt[pb.data+IPv4_SRC:pb.data+IPv4_DST+4])
 			be.PutUint16(pkt[l4+TCP_CSUM-frag_off:l4+TCP_CSUM-frag_off+2], tcp_csum^0xffff)
 		}
 
@@ -472,7 +472,7 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool,
 		udp_csum := be.Uint16(pkt[l4+UDP_CSUM : l4+UDP_CSUM+2])
 
 		if udp_csum != 0 {
-			udp_csum = csum_add(udp_csum^0xffff, pkt[pb.data+IP_SRC:pb.data+IP_DST+4])
+			udp_csum = csum_add(udp_csum^0xffff, pkt[pb.data+IPv4_SRC:pb.data+IPv4_DST+4])
 			be.PutUint16(pkt[l4+UDP_CSUM:l4+UDP_CSUM+2], udp_csum^0xffff)
 		}
 
@@ -491,7 +491,7 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool,
 			return DROP
 		}
 
-		switch icmp_action(pkt[l4+ICMP_TYPE]) {
+		switch icmpv4_action(pkt[l4+ICMP_TYPE]) {
 
 		case ICMP_DROP:
 

@@ -24,7 +24,7 @@ func fwd_to_gw() {
 
 		switch pb.typ {
 
-		case PKT_IP:
+		case PKT_IPv4:
 
 			verdict = ipref_encap(pb, false, ICMP_ENCAP_MAX_DEPTH, true)
 			if verdict == ACCEPT {
