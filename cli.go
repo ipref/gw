@@ -147,9 +147,7 @@ func parse_cli() {
 		}
 	}
 
-	// deduce pktbuflen: MTU + Ethernet II header
-
-	cli.pktbuflen = cli.ifc.MTU + 6 + 6 + 2
+	cli.pktbuflen = cli.ifc.MTU - IP_HDR_MIN_LEN + IPREF_HDR_MAX_LEN
 	cli.pktbuflen += 3
 	cli.pktbuflen &^= 3
 
