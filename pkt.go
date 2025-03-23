@@ -101,7 +101,8 @@ const (
 	ECHO              = 7
 	DISCARD           = 9
 	IPREF_PORT        = 1045
-	IPREF_HDR_MAX_LEN = 4 + 4 + 4 + 16 + 16
+	IPREF_HDR_MIN_LEN = 4 + 4 + 4 + 4 + 4
+	IPREF_HDR_MAX_LEN = 4 + 8 + 4 + 4 + 16 + 16
 	PKTQLEN           = 2
 	// IP header offests
 	IP_VER         = 0
@@ -231,12 +232,15 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 
 	case PKT_IPREF:
 
-		if len(pkt) < 20 || !pb.ipref_ver_ok() || !pb.ipref_reserved_ok() {
+		if !pb.ipref_ok() {
 			break
 		}
-		reflen := pb.ipref_reflen()
-		if reflen == 0 || len(pkt) - 12 < pb.ipref_reflen() * 2 {
-			break
+		flags := ""
+		if pb.ipref_if() {
+			flags += " IF"
+		}
+		if pb.ipref_df() {
+			flags += " DF"
 		}
 		proto := pb.ipref_proto()
 		sref_ip := pb.ipref_sref_ip()
@@ -244,8 +248,9 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 		sref := pb.ipref_sref()
 		dref := pb.ipref_dref()
 
-		ss = fmt.Sprintf("IPREF(%v)  %v + %v  %v + %v  len(%v)  data/tail(%v/%v)",
+		ss = fmt.Sprintf("IPREF(%v)%v  %v + %v  %v + %v  len(%v)  data/tail(%v/%v)",
 			ip_proto_name(proto),
+			flags,
 			net.IP(sref_ip),
 			&sref,
 			net.IP(dref_ip),
@@ -260,8 +265,17 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 		if len(pkt) < 20 || pkt[IP_VER]&0xf0 != 0x40 {
 			break
 		}
-		ss = fmt.Sprintf("IP(%v)  %v  %v  len(%v)  data/tail(%v/%v)",
+		flags := ""
+		frag_field := be.Uint16(pkt[IP_FRAG:IP_FRAG+2])
+		if frag_field & 0x3fff != 0 {
+			flags += " IF"
+		}
+		if (frag_field >> 14) & 1 != 0 {
+			flags += " DF"
+		}
+		ss = fmt.Sprintf("IP(%v)%v  %v  %v  len(%v)  data/tail(%v/%v)",
 			ip_proto_name(pkt[IP_PROTO]),
+			flags,
 			net.IP(pkt[IP_SRC:IP_SRC+4]),
 			net.IP(pkt[IP_DST:IP_DST+4]),
 			be.Uint16(pkt[IP_LEN:IP_LEN+2]),
@@ -449,12 +463,15 @@ func (pb *PktBuf) pp_net(pfx string) {
 
 	case PKT_IPREF:
 
-		if len(pkt) < 20 || !pb.ipref_ver_ok() || !pb.ipref_reserved_ok() {
+		if !pb.ipref_ok() {
 			break
 		}
-		reflen := pb.ipref_reflen()
-		if reflen == 0 || len(pkt) - 12 < pb.ipref_reflen() * 2 {
-			break
+		flags := ""
+		if pb.ipref_if() {
+			flags += " IF"
+		}
+		if pb.ipref_df() {
+			flags += " DF"
 		}
 		ttl := pb.ipref_ttl()
 		proto := pb.ipref_proto()
@@ -463,9 +480,10 @@ func (pb *PktBuf) pp_net(pfx string) {
 		sref := pb.ipref_sref()
 		dref := pb.ipref_dref()
 
-		log.trace("%vIPREF(%v)  %v + %v  %v + %v  len(%v) ttl(%v)",
+		log.trace("%vIPREF(%v)%v  %v + %v  %v + %v  len(%v) ttl(%v)",
 			pfx,
 			ip_proto_name(proto),
+			flags,
 			IP32(be.Uint32(sref_ip)),
 			&sref,
 			IP32(be.Uint32(dref_ip)),
@@ -480,9 +498,18 @@ func (pb *PktBuf) pp_net(pfx string) {
 			break
 		}
 
-		log.trace("%vIP(%v)  %v  %v  len(%v) id(%v) ttl(%v) csum: %04x",
+		flags := ""
+		frag_field := be.Uint16(pkt[IP_FRAG:IP_FRAG+2])
+		if frag_field & 0x3fff != 0 {
+			flags += " IF"
+		}
+		if (frag_field >> 14) & 1 != 0 {
+			flags += " DF"
+		}
+		log.trace("%vIP(%v)%v  %v  %v  len(%v) id(%v) ttl(%v) csum: %04x",
 			pfx,
 			ip_proto_name(pkt[IP_PROTO]),
+			flags,
 			IP32(be.Uint32(pkt[IP_SRC:IP_SRC+4])),
 			IP32(be.Uint32(pkt[IP_DST:IP_DST+4])),
 			be.Uint16(pkt[IP_LEN:IP_LEN+2]),
@@ -504,15 +531,11 @@ func (pb *PktBuf) pp_tran(pfx string) {
 
 	case PKT_IPREF:
 
-		if len(pkt) < 20 || !pb.ipref_ver_ok() || !pb.ipref_reserved_ok() {
-			return
-		}
-		reflen := pb.ipref_reflen()
-		if reflen == 0 || len(pkt) - 12 < pb.ipref_reflen() * 2 {
+		if !pb.ipref_ok() {
 			return
 		}
 		proto = pb.ipref_proto()
-		pkt = pkt[12 + pb.ipref_reflen() * 2:]
+		pkt = pkt[pb.ipref_hdr_len():]
 
 	case PKT_IP:
 
@@ -546,10 +569,14 @@ func (pb *PktBuf) pp_tran(pfx string) {
 	}
 }
 
+// Don't call until you've checked that the packet size is at least 1 or
+// ipref_ok().
 func (pb *PktBuf) ipref_ver_ok() bool {
 	return pb.pkt[pb.data] >> 4 == 0x1
 }
 
+// Don't call until you've checked that the packet size is at least 1 or
+// ipref_ok().
 func (pb *PktBuf) ipref_reflen() int {
 
 	switch (pb.pkt[pb.data] >> 2) & 0x3 {
@@ -578,34 +605,103 @@ func encode_reflen(reflen int) byte {
 	}
 }
 
-func (pb *PktBuf) ipref_reserved_ok() bool {
-	return pb.pkt[pb.data] & 0x3 == 0 && pb.pkt[pb.data + 1] == 0
+// Don't call until you've checked that the packet size is at least 1 or
+// ipref_ok().
+func (pb *PktBuf) ipref_if() bool {
+	return (pb.pkt[pb.data] >> 1) & 1 != 0
 }
 
+// Don't call until you've checked that the packet size is at least 1 or
+// ipref_ok().
+func (pb *PktBuf) ipref_df() bool {
+	return pb.pkt[pb.data] & 1 != 0
+}
+
+// Don't call until you've checked that the packet size is at least 2.
+func (pb *PktBuf) ipref_reserved_ok() bool {
+	return pb.pkt[pb.data + 1] == 0
+}
+
+// Don't call until you've checked that the packet size is at least 2 or
+// ipref_ok().
 func (pb *PktBuf) ipref_ttl() byte {
 	return pb.pkt[pb.data + 2]
 }
 
+// Don't call until you've checked that the packet size is at least 3 or
+// ipref_ok().
 func (pb *PktBuf) ipref_proto() byte {
 	return pb.pkt[pb.data + 3]
 }
 
+func (pb *PktBuf) ipref_hdr_len() int {
+
+	if pb.tail - pb.data == 0 {
+		return 0
+	}
+	n := 4
+	if pb.ipref_if() {
+		n += 8
+	}
+	n += 4 + 4
+	n += pb.ipref_reflen() * 2
+	return n
+}
+
+func (pb *PktBuf) ipref_ok() bool {
+
+	if pb.tail - pb.data < IPREF_HDR_MIN_LEN {
+		return false
+	}
+	if !pb.ipref_ver_ok() || pb.ipref_reflen() == 0 || !pb.ipref_reserved_ok() {
+		return false
+	}
+	if pb.tail - pb.data < pb.ipref_hdr_len() {
+		return false
+	}
+	return true
+}
+
+// Don't call until you've checked ipref_ok().
 func (pb *PktBuf) ipref_sref_ip() []byte {
-	return pb.pkt[pb.data + 4 : pb.data + 8]
+
+	i := pb.data + 4
+	if pb.ipref_if() {
+		i += 8
+	}
+	return pb.pkt[i : i + 4]
 }
 
+// Don't call until you've checked ipref_ok().
 func (pb *PktBuf) ipref_dref_ip() []byte {
-	return pb.pkt[pb.data + 8 : pb.data + 12]
+
+	i := pb.data + 8
+	if pb.ipref_if() {
+		i += 8
+	}
+	return pb.pkt[i : i + 4]
 }
 
+// Don't call until you've checked ipref_ok().
 func (pb *PktBuf) ipref_sref() rff.Ref {
+
 	reflen := pb.ipref_reflen()
-	return decode_ref(pb.pkt[pb.data + 12 : pb.data + 12 + reflen])
+	i := pb.data + 12
+	if pb.ipref_if() {
+		i += 8
+	}
+	return decode_ref(pb.pkt[i : i + reflen])
 }
 
+// Don't call until you've checked ipref_ok().
 func (pb *PktBuf) ipref_dref() rff.Ref {
+
 	reflen := pb.ipref_reflen()
-	return decode_ref(pb.pkt[pb.data + 12 + reflen : pb.data + 12 + reflen*2])
+	i := pb.data + 12 + reflen
+	if pb.ipref_if() {
+		i += 8
+	}
+	return decode_ref(pb.pkt[i : i + reflen])
 }
 
 func min_reflen(ref rff.Ref) int {

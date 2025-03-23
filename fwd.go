@@ -91,11 +91,13 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int) bool {
 		log.err("encap:   packet has options, dropping")
 		return false
 	}
-	if (be.Uint16(pkt[pb.data+IP_FRAG:pb.data+IP_FRAG+2]) & 0x3fff) != 0 {
+	frag_field := be.Uint16(pkt[pb.data+IP_FRAG:pb.data+IP_FRAG+2])
+	if frag_field & 0x3fff != 0 {
 		log.err("encap:   packet is a fragment, dropping")
 		return false
 	}
 
+	flag_df := (frag_field >> 14) & 1 != 0
 	ttl := pkt[pb.data+IP_TTL]
 	proto := pkt[pb.data+IP_PROTO]
 	var srcdst [8]byte
@@ -137,6 +139,9 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int) bool {
 	pb.typ = PKT_IPREF
 
 	pkt[pb.data] = (0x1 << 4) | encode_reflen(reflen) << 2
+	if flag_df {
+		pkt[pb.data] |= 1
+	}
 	pkt[pb.data+1] = 0
 	pkt[pb.data+2] = ttl
 	pkt[pb.data+3] = proto
@@ -265,15 +270,16 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool, icmp_depth int
 	}
 	pkt := pb.pkt
 
-	if pb.tail - pb.data < 20 || !pb.ipref_ver_ok() || !pb.ipref_reserved_ok() {
+	if !pb.ipref_ok() {
 		log.err("deencap: invalid ipref packet, dropping")
 		return false
 	}
-	reflen := pb.ipref_reflen()
-	if reflen == 0 || pb.tail - pb.data - 12 < pb.ipref_reflen() * 2 {
-		log.err("deencap: invalid ipref packet, dropping")
+	flag_if := pb.ipref_if()
+	if flag_if { // TODO NYI
+		log.err("deencap: is fragment, dropping")
 		return false
 	}
+	flag_df := pb.ipref_df()
 	ttl := pb.ipref_ttl()
 	proto := pb.ipref_proto()
 	sref_ip := IP32(be.Uint32(pb.ipref_sref_ip()))
@@ -328,7 +334,11 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool, icmp_depth int
 	}
 	be.PutUint16(pkt[pb.data+IP_LEN:pb.data+IP_LEN+2], uint16(pb.tail - pb.data))
 	be.PutUint16(pkt[pb.data+IP_ID:pb.data+IP_ID+2], 0)
-	be.PutUint16(pkt[pb.data+IP_FRAG:pb.data+IP_FRAG+2], 0)
+	frag_field := uint16(0)
+	if flag_df {
+		frag_field |= 1 << 14
+	}
+	be.PutUint16(pkt[pb.data+IP_FRAG:pb.data+IP_FRAG+2], frag_field)
 	pkt[pb.data+IP_TTL] = ttl
 	pkt[pb.data+IP_PROTO] = proto
 	be.PutUint16(pkt[pb.data+IP_CSUM:pb.data+IP_CSUM+2], 0)
