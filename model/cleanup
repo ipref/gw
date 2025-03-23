@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+ip netns delete router1
 ip netns delete gw7
 ip netns delete gw8
 ip netns delete host711

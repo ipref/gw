@@ -9,33 +9,47 @@ shopt -s expand_aliases
 # test.
 
 # Create network namespaces
+ip netns add router1
 ip netns add gw7
 ip netns add gw8
 ip netns add host711
 ip netns add host822
 
+router1 ip link set dev lo up
 gw7 ip link set dev lo up
 gw8 ip link set dev lo up
 host711 ip link set dev lo up
 host822 ip link set dev lo up
 
-# Configure gateways
+# Configure router1 and gateways
+router1 sysctl -w net.ipv4.ip_forward=1
 gw7 sysctl -w net.ipv4.ip_forward=1
 gw8 sysctl -w net.ipv4.ip_forward=1
 
-# Create veth pair to connect gw7/gw8
-gw7 ip link add dev vgw7gw8 type veth peer name vgw8gw7
-gw7 ip link set vgw8gw7 netns gw8
+# Create two veth pairs to connect gwX/router1
+gw7 ip link add dev vgw7router1 mtu 1500 type veth peer name vrouter1gw7 mtu 1500
+gw8 ip link add dev vgw8router1 mtu 1200 type veth peer name vrouter1gw8 mtu 1200
+gw7 ip link set vrouter1gw7 netns router1
+gw8 ip link set vrouter1gw8 netns router1
 
-gw7 ip addr add 192.168.10.97/24 dev vgw7gw8
-gw8 ip addr add 192.168.10.98/24 dev vgw8gw7
+router1 ip addr add 192.168.11.1/24 dev vrouter1gw7
+router1 ip addr add 192.168.12.1/24 dev vrouter1gw8
 
-gw7 ip link set vgw7gw8 up
-gw8 ip link set vgw8gw7 up
+gw7 ip addr add 192.168.11.97/24 dev vgw7router1
+gw8 ip addr add 192.168.12.98/24 dev vgw8router1
+
+router1 ip link set vrouter1gw7 up
+router1 ip link set vrouter1gw8 up
+gw7 ip link set vgw7router1 up
+gw8 ip link set vgw8router1 up
+
+# Configure default routes for gwX
+gw7 ip route add default via 192.168.11.1 dev vgw7router1
+gw8 ip route add default via 192.168.12.1 dev vgw8router1
 
 # Create two veth pairs to connect gwX/hostXXX
-gw7 ip link add dev vgw7host711 type veth peer name vhost711gw7
-gw8 ip link add dev vgw8host822 type veth peer name vhost822gw8
+gw7 ip link add dev vgw7host711 mtu 1500 type veth peer name vhost711gw7 mtu 1500
+gw8 ip link add dev vgw8host822 mtu 1500 type veth peer name vhost822gw8 mtu 1500
 gw7 ip link set vhost711gw7 netns host711
 gw8 ip link set vhost822gw8 netns host822
 
@@ -50,24 +64,31 @@ gw8 ip link set vgw8host822 up
 host711 ip link set vhost711gw7 up
 host822 ip link set vhost822gw8 up
 
-# Configure default routes
+# Configure default routes for hostXXX
 host711 ip route add default via 192.168.97.1 dev vhost711gw7
 host822 ip route add default via 192.168.98.2 dev vhost822gw8
 
 # Create hosts files
-mkdir -p /etc/netns/{gw7,gw8,host711,host822}
+mkdir -p /etc/netns/{router1,gw7,gw8,host711,host822}
 
+cat > /etc/netns/router1/hosts << EOF
+127.0.0.1       router1
+192.168.11.97   gw7
+192.168.12.98   gw8
+EOF
 cat > /etc/netns/gw7/hosts << EOF
+192.168.11.1    router1
 127.0.0.1       gw7
-192.168.10.98   gw8
-192.168.97.11   host711    #= pub 192.168.10.97 + 10711
-10.248.22.222   host822    #= ext 192.168.10.98 + 20822
+192.168.12.98   gw8
+192.168.97.11   host711    #= pub 192.168.11.97 + 10711
+10.248.22.222   host822    #= ext 192.168.12.98 + 20822
 EOF
 cat > /etc/netns/gw8/hosts << EOF
-192.168.10.97   gw7
+192.168.12.1    router1
+192.168.11.97   gw7
 127.0.0.1       gw8
-10.255.11.111   host711    #= ext 192.168.10.97 + 10711
-192.168.98.22   host822    #= pub 192.168.10.98 + 20822
+10.255.11.111   host711    #= ext 192.168.11.97 + 10711
+192.168.98.22   host822    #= pub 192.168.12.98 + 20822
 EOF
 cat > /etc/netns/host711/hosts << EOF
 127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4

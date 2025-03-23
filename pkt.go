@@ -635,6 +635,20 @@ func (pb *PktBuf) ipref_proto() byte {
 	return pb.pkt[pb.data + 3]
 }
 
+// Don't call until you've checked that the pack size is at least 12 or
+// ipref_ok().
+func (pb *PktBuf) ipref_frag() (frag_if bool, frag_off int, frag_mf bool, ident uint32) {
+
+	frag_if = pb.ipref_if()
+	if frag_if {
+		frag_field := be.Uint16(pb.pkt[pb.data+6:pb.data+8])
+		frag_off = int(frag_field &^ 7)
+		frag_mf = frag_field & 1 != 0
+		ident = be.Uint32(pb.pkt[pb.data+8:pb.data+12])
+	}
+	return
+}
+
 func (pb *PktBuf) ipref_hdr_len() int {
 
 	if pb.tail - pb.data == 0 {

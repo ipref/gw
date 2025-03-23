@@ -2,7 +2,10 @@
 
 package main
 
-import rff "github.com/ipref/ref"
+import (
+	"crypto/rand"
+	rff "github.com/ipref/ref"
+)
 
 /* IPREF Tunnel Protocol */
 
@@ -485,4 +488,124 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool, icmp_depth int
 	}
 
 	return true
+}
+
+type IPREFFragInPlaceStatus int
+
+const (
+	IPREF_FRAG_IN_PLACE_NOT_NEEDED = IPREFFragInPlaceStatus(iota)
+	IPREF_FRAG_IN_PLACE_SUCCESS    = IPREFFragInPlaceStatus(iota) // fragmented
+	IPREF_FRAG_IN_PLACE_DF         = IPREFFragInPlaceStatus(iota) // DF bit set
+	IPREF_FRAG_IN_PLACE_SPACE      = IPREFFragInPlaceStatus(iota) // not enough space
+)
+
+// mtu is the layer 5 mtu (the space we have for the IPREF packet, excluding
+// IP/UDP header)
+func ipref_frag_in_place(pb *PktBuf, mtu int) (
+	sent int, trimmed int, orig_mf bool, status IPREFFragInPlaceStatus) {
+
+	if pb.len() <= mtu {
+		status = IPREF_FRAG_IN_PLACE_NOT_NEEDED
+		return
+	}
+
+	if pb.ipref_df() {
+		status = IPREF_FRAG_IN_PLACE_DF
+		return
+	}
+
+	// Calculate sizes
+	ipref_hdr_len := pb.ipref_hdr_len()
+	l5_size := pb.len() - ipref_hdr_len
+	sent = ((l5_size + 1) / 2 + 7) / 8 * 8
+	if !pb.ipref_if() {
+		ipref_hdr_len += 8 // we're going to need that space to add Fragment Info
+	}
+	if sent + ipref_hdr_len > mtu {
+		sent = (mtu - ipref_hdr_len) / 8 * 8
+	}
+	trimmed = l5_size - sent
+	if sent <= 0 || trimmed <= 0 {
+		status = IPREF_FRAG_IN_PLACE_SPACE
+		return
+	}
+	pb.tail -= trimmed
+
+	frag_if, frag_off, frag_mf, ident := pb.ipref_frag()
+	if !frag_if {
+		orig_mf = false
+		// Add Fragment Info.
+		if pb.data < 8 {
+			status = IPREF_FRAG_IN_PLACE_SPACE
+			return
+		}
+		pb.pkt[pb.data] |= 2 // set IF
+		pb.data -= 8
+		copy(pb.pkt[pb.data:pb.data+4], pb.pkt[pb.data+8:])
+		frag_if = true
+		frag_off = 0
+		frag_mf = true
+		var identb [4]byte
+		rand.Read(identb[:])
+		ident = be.Uint32(identb[:])
+	} else {
+		orig_mf = frag_mf
+		frag_mf = true
+	}
+
+	// Write Fragment Info.
+	pb.pkt[pb.data+4] = 0
+	pb.pkt[pb.data+5] = 0
+	frag_field := uint16(frag_off)
+	if frag_mf {
+		frag_field |= 1
+	}
+	be.PutUint16(pb.pkt[pb.data+6:pb.data+8], frag_field)
+	be.PutUint32(pb.pkt[pb.data+8:pb.data+12], uint32(ident))
+
+	status = IPREF_FRAG_IN_PLACE_SUCCESS
+	return
+}
+
+func ipref_undo_frag_in_place(pb *PktBuf, trimmed int, orig_mf bool) {
+
+	if trimmed == 0 {
+		return
+	}
+	pb.tail += trimmed
+	_, frag_off, _, _ := pb.ipref_frag()
+	if !orig_mf {
+		pb.pkt[pb.data+7] &^= 1 // unset MF
+		if frag_off == 0 {
+			// Remove Fragment Info.
+			copy(pb.pkt[pb.data+8:], pb.pkt[pb.data:pb.data+4])
+			pb.data += 8
+			pb.pkt[pb.data] &^= 2 // unset IF
+		}
+	}
+}
+
+func ipref_next_frag_in_place(pb *PktBuf, trimmed int, orig_mf bool) int {
+
+	ipref_hdr_len := pb.ipref_hdr_len()
+	sent := pb.len() - ipref_hdr_len
+	if sent == 0 || sent & 7 != 0 {
+		panic("sanity check failed")
+	}
+
+	// Move the header to just before the data that was trimmed/not yet sent.
+	copy(pb.pkt[pb.tail-ipref_hdr_len:], pb.pkt[pb.data:pb.data+ipref_hdr_len])
+	pb.data = pb.tail - ipref_hdr_len
+	pb.tail += trimmed
+
+	// Adjust Fragment Info.
+	_, frag_off, _, _ := pb.ipref_frag()
+	frag_off += sent
+	frag_field := uint16(frag_off)
+	if orig_mf {
+		frag_field |= 1
+	}
+	be.PutUint16(pb.pkt[pb.data+6:pb.data+8], frag_field)
+
+	return frag_off
 }

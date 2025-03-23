@@ -27,6 +27,7 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	hosts_path string
 	sockname   string
 	maxbuf     int
+	maxrgws    int
 	// derived
 	debug      map[string]bool
 	ea_ip      IP32
@@ -51,6 +52,7 @@ func parse_cli() {
 	flag.StringVar(&cli.ea, "encode-net", "10.240.0.0/12", "private network for encoding external ipref addresses")
 	flag.StringVar(&cli.hosts_path, "hosts", "/etc/hosts", "host name lookup file")
 	flag.IntVar(&cli.maxbuf, "max-buffers", 64, "max number of packet buffers")
+	flag.IntVar(&cli.maxrgws, "max-remote-gateways", 1024, "maximum number of remote gateways to track at a time")
 	flag.Usage = func() {
 		toks := strings.Split(os.Args[0], "/")
 		prog := toks[len(toks)-1]
