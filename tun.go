@@ -100,6 +100,12 @@ func tun_receiver(fd *os.File) {
 			retbuf <- pb
 			continue
 		}
+		if rlen == len(pkt) {
+			log.err("tun in: read from tun interface truncated: rlen(%v) data/len(%v/%v)",
+				rlen, pb.data, len(pkt))
+			retbuf <- pb
+			continue
+		}
 
 		proto := be.Uint16(pkt[TUN_PROTO : TUN_PROTO+2])
 		if proto != ETHER_IPv4 {

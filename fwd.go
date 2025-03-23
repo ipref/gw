@@ -91,13 +91,17 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int) bool {
 		log.err("encap:   packet has options, dropping")
 		return false
 	}
-	frag_field := be.Uint16(pkt[pb.data+IP_FRAG:pb.data+IP_FRAG+2])
-	if frag_field & 0x3fff != 0 {
-		log.err("encap:   packet is a fragment, dropping")
+	ip_pkt_len := int(be.Uint16(pkt[pb.data+IP_LEN:pb.data+IP_LEN+2]))
+	if ip_pkt_len != pb.tail - pb.data {
+		log.err("encap:   invalid packet (bad length field), dropping")
 		return false
 	}
-
-	flag_df := (frag_field >> 14) & 1 != 0
+	ident := be.Uint16(pkt[pb.data+IP_ID:pb.data+IP_ID+2])
+	frag_field := be.Uint16(pkt[pb.data+IP_FRAG:pb.data+IP_FRAG+2])
+	frag_df := frag_field & 0x4000 != 0
+	frag_mf := frag_field & 0x2000 != 0
+	frag_off := int((frag_field & 0x1fff) << 3)
+	frag_if := frag_off != 0 || frag_mf
 	ttl := pkt[pb.data+IP_TTL]
 	proto := pkt[pb.data+IP_PROTO]
 	var srcdst [8]byte
@@ -105,6 +109,12 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int) bool {
 	src := IP32(be.Uint32(pkt[pb.data+IP_SRC : pb.data+IP_SRC+4]))
 	dst := IP32(be.Uint32(pkt[pb.data+IP_DST : pb.data+IP_DST+4]))
 	l4 := pb.data + IP_HDR_MIN_LEN
+	l4_pkt_len := pb.tail - l4
+	frag_end := frag_off + l4_pkt_len // the position of the end of the packet in the l4 datagram
+	if l4_pkt_len & 0x7 != 0 && frag_mf {
+		log.err("encap:   invalid packet (fragmentation), dropping")
+		return false
+	}
 
 	iprefsrc, iprefdst, ok := map_gw.get_srcdst_ipref_rev(src, dst, rev_srcdst)
 	if !ok {
@@ -125,28 +135,46 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int) bool {
 	// replace IP header with IPREF header
 
 	reflen := max(min_reflen(iprefsrc.ref), min_reflen(iprefdst.ref))
-	if l4 < 12 + reflen*2 {
-		if len(pkt) < 12 + reflen*2 + (pb.tail - l4) {
+	ipref_hdr_len := 12 + reflen * 2
+	if frag_if {
+		ipref_hdr_len += 8
+	}
+	if l4 < ipref_hdr_len {
+		if len(pkt) < ipref_hdr_len + l4_pkt_len {
 			log.err("encap:   not enough space for ipref header, dropping")
 			return false
 		} else {
 			// This should only happen for packets inside ICMP, which should be pretty small.
-			copy(pkt[12 + reflen*2:], pkt[l4:pb.tail])
-			l4 = 12 + reflen*2
+			copy(pkt[ipref_hdr_len:], pkt[l4:pb.tail])
+			l4 = ipref_hdr_len
 		}
 	}
-	pb.data = l4 - 12 - reflen*2
+	pb.data = l4 - ipref_hdr_len
 	pb.typ = PKT_IPREF
 
 	pkt[pb.data] = (0x1 << 4) | encode_reflen(reflen) << 2
-	if flag_df {
-		pkt[pb.data] |= 1
+	if frag_if {
+		pkt[pb.data] |= 1 << 1
+	}
+	if frag_df {
+		pkt[pb.data] |= 1 << 0
 	}
 	pkt[pb.data+1] = 0
 	pkt[pb.data+2] = ttl
 	pkt[pb.data+3] = proto
-
 	i := pb.data + 4
+	if frag_if {
+		pkt[i] = 0
+		pkt[i+1] = 0
+		frag_field = uint16(frag_off)
+		if frag_mf {
+			frag_field |= 1
+		}
+		be.PutUint16(pkt[i+2:i+4], frag_field)
+		be.PutUint32(pkt[i+4:i+8], uint32(ident))
+		i += 8
+	}
+
 	be.PutUint32(pkt[i:i+4], uint32(iprefsrc.ip))
 	i += 4
 	be.PutUint32(pkt[i:i+4], uint32(iprefdst.ip))
@@ -161,21 +189,27 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int) bool {
 
 	case TCP: // subtract ip src/dst addresses from csum
 
-		if pb.tail - l4 < 18 {
+		if frag_off >= TCP_CSUM+2 || frag_end < TCP_CSUM {
+			break
+		}
+		if frag_end < TCP_CSUM+2 {
 			log.err("encap:   invalid tcp packet, dropping")
 			return false
 		}
 
-		tcp_csum := be.Uint16(pkt[l4+TCP_CSUM : l4+TCP_CSUM+2])
+		tcp_csum := be.Uint16(pkt[l4+TCP_CSUM-frag_off : l4+TCP_CSUM-frag_off+2])
 
 		if tcp_csum != 0 {
 			tcp_csum = csum_subtract(tcp_csum^0xffff, srcdst[:])
-			be.PutUint16(pkt[l4+TCP_CSUM:l4+TCP_CSUM+2], tcp_csum^0xffff)
+			be.PutUint16(pkt[l4+TCP_CSUM-frag_off:l4+TCP_CSUM-frag_off+2], tcp_csum^0xffff)
 		}
 
 	case UDP: // subtract ip src/dst addresses from csum
 
-		if pb.tail - l4 < UDP_HDR_LEN {
+		if frag_off != 0 {
+			break
+		}
+		if frag_end < UDP_HDR_LEN {
 			log.err("encap:   invalid udp packet, dropping")
 			return false
 		}
@@ -193,9 +227,12 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int) bool {
 			log.err("encap:   icmp depth limit reached, dropping")
 			return false
 		}
-
-		if pb.tail - l4 < ICMP_DATA {
-			log.err("encap:   invalid icmp packet")
+		if frag_off != 0 {
+			// TODO This will let non-initial fragments of ICMP_ENCAP packets through.
+			break
+		}
+		if l4_pkt_len < ICMP_DATA {
+			log.err("encap:   invalid icmp packet, dropping")
 			return false
 		}
 
@@ -208,11 +245,15 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int) bool {
 
 		case ICMP_ENCAP:
 
+			if frag_if {
+				log.err("encap:   fragmented icmp packet that needs inner encap, dropping")
+				return false
+			}
 			inner_pb := PktBuf{
 				pkt: pkt[l4+ICMP_DATA:],
 				typ: PKT_IP,
 				data: 0,
-				tail: min(pb.tail - l4 - ICMP_DATA, 576)}
+				tail: min(l4_pkt_len - ICMP_DATA, 576)}
 			if !ipref_encap(&inner_pb, true, icmp_depth - 1) {
 				log.err("encap:   dropping icmp due to invalid inner packet")
 				return false
@@ -274,19 +315,34 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool, icmp_depth int
 		log.err("deencap: invalid ipref packet, dropping")
 		return false
 	}
-	flag_if := pb.ipref_if()
-	if flag_if { // TODO NYI
-		log.err("deencap: is fragment, dropping")
-		return false
+	frag_if := pb.ipref_if()
+	frag_df := pb.ipref_df()
+	var frag_off int
+	var frag_mf bool
+	var ident uint32
+	if frag_if {
+		frag_field := be.Uint16(pkt[pb.data+6:pb.data+8])
+		if pkt[pb.data+4] != 0 || pkt[pb.data+5] != 0 || frag_field & 0x6 != 0 {
+			log.err("deencap: invalid ipref packet, dropping")
+			return false
+		}
+		frag_off = int(frag_field &^ 1)
+		frag_mf = frag_field & 1 != 0
+		ident = be.Uint32(pkt[pb.data+8:pb.data+12])
 	}
-	flag_df := pb.ipref_df()
 	ttl := pb.ipref_ttl()
 	proto := pb.ipref_proto()
 	sref_ip := IP32(be.Uint32(pb.ipref_sref_ip()))
 	dref_ip := IP32(be.Uint32(pb.ipref_dref_ip()))
 	sref := pb.ipref_sref()
 	dref := pb.ipref_dref()
-	l4 := pb.data + 12 + pb.ipref_reflen() * 2
+	l4 := pb.data + pb.ipref_hdr_len()
+	l4_pkt_len := pb.tail - l4
+	frag_end := frag_off + l4_pkt_len // the position of the end of the packet in the l4 datagram
+	if l4_pkt_len & 0x7 != 0 && frag_mf {
+		log.err("deencap: invalid packet (fragmentation), dropping")
+		return false
+	}
 
 	// map addresses
 
@@ -333,12 +389,17 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool, icmp_depth int
 		return false
 	}
 	be.PutUint16(pkt[pb.data+IP_LEN:pb.data+IP_LEN+2], uint16(pb.tail - pb.data))
-	be.PutUint16(pkt[pb.data+IP_ID:pb.data+IP_ID+2], 0)
-	frag_field := uint16(0)
-	if flag_df {
-		frag_field |= 1 << 14
+	be.PutUint16(pkt[pb.data+IP_ID:pb.data+IP_ID+2], uint16(ident))
+	{
+		frag_field := uint16(frag_off) >> 3
+		if frag_df {
+			frag_field |= 1 << 14
+		}
+		if frag_mf {
+			frag_field |= 1 << 13
+		}
+		be.PutUint16(pkt[pb.data+IP_FRAG:pb.data+IP_FRAG+2], frag_field)
 	}
-	be.PutUint16(pkt[pb.data+IP_FRAG:pb.data+IP_FRAG+2], frag_field)
 	pkt[pb.data+IP_TTL] = ttl
 	pkt[pb.data+IP_PROTO] = proto
 	be.PutUint16(pkt[pb.data+IP_CSUM:pb.data+IP_CSUM+2], 0)
@@ -355,21 +416,27 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool, icmp_depth int
 
 	case TCP: // add ip src/dst addresses to csum
 
-		if pb.tail - l4 < 18 {
+		if frag_off >= TCP_CSUM+2 || frag_end < TCP_CSUM {
+			break
+		}
+		if frag_end < TCP_CSUM {
 			log.err("deencap: invalid tcp packet, dropping")
 			return false
 		}
 
-		tcp_csum := be.Uint16(pkt[l4+TCP_CSUM : l4+TCP_CSUM+2])
+		tcp_csum := be.Uint16(pkt[l4+TCP_CSUM-frag_off : l4+TCP_CSUM-frag_off+2])
 
 		if tcp_csum != 0 {
 			tcp_csum = csum_add(tcp_csum^0xffff, pkt[pb.data+IP_SRC:pb.data+IP_DST+4])
-			be.PutUint16(pkt[l4+TCP_CSUM:l4+TCP_CSUM+2], tcp_csum^0xffff)
+			be.PutUint16(pkt[l4+TCP_CSUM-frag_off:l4+TCP_CSUM-frag_off+2], tcp_csum^0xffff)
 		}
 
 	case UDP: // add ip src/dst addresses to csum
 
-		if pb.tail - l4 < UDP_HDR_LEN {
+		if frag_off != 0 {
+			break
+		}
+		if frag_end < UDP_HDR_LEN {
 			log.err("deencap: invalid udp packet, dropping")
 			return false
 		}
@@ -387,9 +454,12 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool, icmp_depth int
 			log.err("deencap: icmp depth limit reached, dropping")
 			return false
 		}
-
-		if pb.tail - l4 < ICMP_DATA {
-			log.err("deencap: invalid icmp packet")
+		if frag_off != 0 {
+			// TODO This will let non-initial fragments of ICMP_ENCAP packets through.
+			break
+		}
+		if l4_pkt_len < ICMP_DATA {
+			log.err("deencap: invalid icmp packet, dropping")
 			return false
 		}
 
@@ -402,11 +472,15 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool, icmp_depth int
 
 		case ICMP_ENCAP:
 
+			if frag_if {
+				log.err("deencap: fragmented icmp packet that needs inner deencap, dropping")
+				return false
+			}
 			inner_pb := PktBuf{
 				pkt: pkt[l4+ICMP_DATA:],
 				typ: PKT_IPREF,
 				data: 0,
-				tail: min(pb.tail - l4 - ICMP_DATA, 576)}
+				tail: min(l4_pkt_len - ICMP_DATA, 576)}
 			if !ipref_deencap(&inner_pb, false, true, icmp_depth - 1) {
 				log.err("deencap: dropping icmp due to invalid inner packet")
 				return false

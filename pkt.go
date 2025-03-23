@@ -617,7 +617,8 @@ func (pb *PktBuf) ipref_df() bool {
 	return pb.pkt[pb.data] & 1 != 0
 }
 
-// Don't call until you've checked that the packet size is at least 2.
+// Don't call until you've checked that the packet size is at least 2. This
+// doesn't check the reserved fields in the fragment info.
 func (pb *PktBuf) ipref_reserved_ok() bool {
 	return pb.pkt[pb.data + 1] == 0
 }
@@ -648,6 +649,7 @@ func (pb *PktBuf) ipref_hdr_len() int {
 	return n
 }
 
+// This doesn't check the reserved fields in the fragment info.
 func (pb *PktBuf) ipref_ok() bool {
 
 	if pb.tail - pb.data < IPREF_HDR_MIN_LEN {
