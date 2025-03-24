@@ -130,17 +130,6 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 		return DROP
 	}
 
-	// get soft state and set pb src/dst
-
-	soft, ok := map_gw.soft[iprefdst.ip]
-	if !ok {
-		soft.init(iprefdst.ip) // missing soft state, use defaults
-	}
-	pb.src = iprefsrc.ip
-	pb.dst = iprefdst.ip
-	pb.sport = soft.port
-	pb.dport = IPREF_PORT // TODO
-
 	// replace IP header with IPREF header
 
 	reflen := max(min_reflen(iprefsrc.ref), min_reflen(iprefdst.ref))
@@ -322,8 +311,7 @@ func (mtun *MapTun) get_srcdst_ip_rev(sref_ip IP32, sref rff.Ref,
 // Returns ACCEPT (on success), DROP (on error), or STOLEN (unless steal is
 // false). If steal is true, then an ICMP response may be returned to the sender
 // if the destination is unreachable.
-func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool,
-	icmp_depth int, steal bool) int {
+func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 
 	if pb.typ != PKT_IPREF {
 		log.fatal("deencap: not an ipref packet")
@@ -377,28 +365,6 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool,
 		return STOLEN
 	default:
 		return DROP
-	}
-
-	// update soft state and tell the other forwarder if changed
-
-	if update_soft {
-
-		soft, ok := map_tun.soft[pb.src]
-		if !ok {
-			soft.init(pb.src)
-			soft.port = 0 // force change
-		}
-
-		if soft.gw != pb.src {
-			log.err("deencap: soft record gw %v does not match src %v, resetting", soft.gw, pb.src)
-			soft.init(pb.src)
-			soft.port = 0 // force change
-		}
-
-		if soft.port != pb.sport {
-			soft.port = pb.sport
-			map_tun.set_soft(pb.src, soft)
-		}
 	}
 
 	// replace IPREF header with IP header
@@ -509,7 +475,7 @@ func ipref_deencap(pb *PktBuf, update_soft bool, rev_srcdst bool,
 				typ: PKT_IPREF,
 				data: 0,
 				tail: min(l4_pkt_len - ICMP_DATA, ICMP_ENCAP_MAX_LEN)}
-			if ipref_deencap(&inner_pb, false, true, icmp_depth - 1, false) != ACCEPT {
+			if ipref_deencap(&inner_pb, true, icmp_depth - 1, false) != ACCEPT {
 				log.err("deencap: dropping icmp due to invalid inner packet")
 				return DROP
 			}

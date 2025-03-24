@@ -46,25 +46,6 @@ is no locking. Updates to the maps are performed by the forwardes when prompted
 by DNS watchers or timers.
 */
 
-/* Soft state
-
-IPREF maintains soft state describing status of peer gateways. In this
-implementation of the gateway, where local network has only one gateway,
-soft state is implemented as a simple map:
-
-	their_gw -> state
-
-In this design, there are two copies of the map, each exclusively owned by
-their forwarders. The relation between the two maps is asymmetric. The map
-is created by the fwd_to_tun forwarder. This forwarder creates new entries,
-updates and removes entries as appropriate. It then informs the other forwarder
-of changes made. The other forwarder only reads entries from the map.
-
-The entries in the map exists for as long as gateway's related host entries
-exist. When all host entries, related to the gatway, are removed then the
-gateway's soft state is also removed.
-*/
-
 type M32 int32   // mark, a monotonic counter
 type O32 int32   // owner id, an index into array
 type IP32 uint32 // ip address
@@ -100,19 +81,6 @@ type IpRec struct {
 	mark M32
 }
 
-type SoftRec struct {
-	gw   IP32
-	port uint16
-	mtu  uint16
-}
-
-func (sft *SoftRec) init(gw IP32) {
-
-	sft.gw = gw
-	sft.port = IPREF_PORT
-	sft.mtu = uint16(cli.ifc.MTU)
-}
-
 func ref_cmp(a, b interface{}) int {
 
 	if a.(rff.Ref).H < b.(rff.Ref).H {
@@ -137,27 +105,6 @@ func addr_cmp(a, b interface{}) int {
 	} else {
 		return 0
 	}
-}
-
-// send soft record to fwd_to_gw forwarder
-func send_soft_rec(soft SoftRec) {
-
-	pb := <-getbuf
-
-	pkt := pb.pkt[pb.data:]
-
-	pb.write_v1_header(V1_SET_SOFT, 0)
-
-	off := V1_HDR_LEN
-
-	be.PutUint32(pkt[off+V1_SOFT_GW:off+V1_SOFT_GW+4], uint32(soft.gw))
-	be.PutUint16(pkt[off+V1_SOFT_MTU:off+V1_SOFT_MTU+2], soft.mtu)
-	be.PutUint16(pkt[off+V1_SOFT_PORT:off+V1_SOFT_PORT+2], soft.port)
-
-	pb.tail = pb.data + V1_HDR_LEN + V1_SOFT_LEN
-	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((V1_HDR_LEN+V1_SOFT_LEN)/4))
-
-	recv_tun <- pb
 }
 
 // get a packet with an address record
@@ -207,7 +154,6 @@ type MapGw struct {
 	our_ipref   map[IP32]IpRefRec // our_ip -> (our_gw,   our_ref)
 	oid         O32               // must be the same for both mgw and mtun
 	cur_mark    []M32             // current mark per oid
-	soft        map[IP32]SoftRec
 	pfx         string // prefix for printing messages
 }
 
@@ -218,7 +164,6 @@ func (mgw *MapGw) init(oid O32) {
 	mgw.our_ipref = make(map[IP32]IpRefRec)
 	mgw.oid = oid
 	mgw.cur_mark = make([]M32, 2)
-	mgw.soft = make(map[IP32]SoftRec)
 }
 
 func (mgw *MapGw) set_cur_mark(oid O32, mark M32) {
@@ -478,41 +423,6 @@ func (mgw *MapGw) set_new_mark(pb *PktBuf) int {
 	return DROP
 }
 
-func (mgw *MapGw) update_soft(pb *PktBuf) int {
-
-	pkt := pb.pkt[pb.data:pb.tail]
-
-	if len(pkt) != V1_HDR_LEN+V1_SOFT_LEN || pkt[V1_CMD] != V1_SET_SOFT {
-
-		log.err("mgw:  invalid SET_SOFT packet: PKT %08x data/tail(%v/%v), dropping",
-			be.Uint32(pb.pkt[pb.data:pb.data+4]), pb.data, pb.tail)
-
-		return DROP
-	}
-
-	off := V1_HDR_LEN
-
-	var soft SoftRec
-
-	soft.gw = IP32(be.Uint32(pkt[off+V1_SOFT_GW : off+V1_SOFT_GW+4]))
-	soft.port = be.Uint16(pkt[off+V1_SOFT_PORT : off+V1_SOFT_PORT+2])
-	soft.mtu = be.Uint16(pkt[off+V1_SOFT_MTU : off+V1_SOFT_MTU+2])
-
-	if soft.port != 0 {
-		if cli.debug["mapper"] {
-			log.debug("mgw:  update soft %v:%v mtu(%v)", soft.gw, soft.port, soft.mtu)
-		}
-		mgw.soft[soft.gw] = soft
-	} else {
-		if cli.debug["mapper"] {
-			log.debug("mgw:  remove soft %v", soft.gw)
-		}
-		delete(mgw.soft, soft.gw)
-	}
-
-	return DROP
-}
-
 func (mgw *MapGw) remove_expired_eas(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.data:pb.tail]
@@ -688,7 +598,6 @@ type MapTun struct {
 	our_ea   map[IP32]map[rff.Ref]IpRec // their_gw -> their_ref -> our_ea
 	oid      O32                        // must be the same for both mgw and mtun
 	cur_mark []M32                      // current mark per oid
-	soft     map[IP32]SoftRec
 	pfx      string
 }
 
@@ -699,7 +608,6 @@ func (mtun *MapTun) init(oid O32) {
 	mtun.our_ea = make(map[IP32]map[rff.Ref]IpRec)
 	mtun.oid = oid
 	mtun.cur_mark = make([]M32, 2)
-	mtun.soft = make(map[IP32]SoftRec)
 }
 
 func (mtun *MapTun) set_cur_mark(oid O32, mark M32) {
@@ -711,17 +619,6 @@ func (mtun *MapTun) set_cur_mark(oid O32, mark M32) {
 		mtun.cur_mark = append(mtun.cur_mark, make([]M32, int(oid)-len(mtun.cur_mark)+1)...)
 	}
 	mtun.cur_mark[oid] = mark
-}
-
-func (mtun *MapTun) set_soft(src IP32, soft SoftRec) {
-
-	if cli.debug["mapper"] {
-		log.debug("mtun: set soft %v:%v mtu(%v)", soft.gw, soft.port, soft.mtu)
-	}
-
-	mtun.soft[src] = soft
-
-	send_soft_rec(soft) // tel mgw about new or changed soft record
 }
 
 func (mtun *MapTun) get_dst_ip(gw IP32, ref rff.Ref) IP32 {

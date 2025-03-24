@@ -46,8 +46,6 @@ func fwd_to_gw() {
 					verdict = map_gw.get_ref(pb)
 				case V1_SET_MARK:
 					verdict = map_gw.set_new_mark(pb)
-				case V1_SET_SOFT:
-					verdict = map_gw.update_soft(pb)
 				case V1_DATA | V1_RECOVER_EA:
 					verdict = map_gw.remove_expired_eas(pb)
 				case V1_DATA | V1_RECOVER_REF:
@@ -77,7 +75,7 @@ func fwd_to_tun() {
 
 		case PKT_IPREF:
 
-			verdict = ipref_deencap(pb, true, false, ICMP_ENCAP_MAX_DEPTH, true)
+			verdict = ipref_deencap(pb, false, ICMP_ENCAP_MAX_DEPTH, true)
 			if verdict == ACCEPT {
 				send_tun <- pb
 			}

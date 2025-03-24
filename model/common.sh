@@ -8,6 +8,7 @@ function run-gw7 {
     gw7 go run . \
         -data /var/lib/ipref/gw7 \
         -gateway 192.168.11.97 \
+        -gateway-port 1046 \
         -mapper-socket /run/ipref/gw7/mapper.sock \
         -time-stamps -trace
 }

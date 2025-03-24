@@ -34,6 +34,8 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	ea_mask    IP32
 	ea_masklen int
 	gw_ip      IP32
+	gw_port    int
+	rgw_port   int
 	ifc        net.Interface
 	pktbuflen  int
 	log_level  uint
@@ -48,6 +50,8 @@ func parse_cli() {
 	flag.BoolVar(&cli.stamps, "time-stamps", false, "print logs with time stamps")
 	flag.StringVar(&cli.datadir, "data", ddir, "data directory")
 	flag.StringVar(&cli.gw, "gateway", "", "ip address of the public network interface")
+	flag.IntVar(&cli.gw_port, "gateway-port", 0, "port to listen on for the gateway")
+	flag.IntVar(&cli.rgw_port, "remote-gateway-port", 0, "default destination port when sending to remote gateways")
 	flag.StringVar(&cli.sockname, "mapper-socket", "/run/ipref/mapper.sock", "path to mapper unix socket")
 	flag.StringVar(&cli.ea, "encode-net", "10.240.0.0/12", "private network for encoding external ipref addresses")
 	flag.StringVar(&cli.hosts_path, "hosts", "/etc/hosts", "host name lookup file")
@@ -147,6 +151,13 @@ func parse_cli() {
 		if cli.ifc.Index == 0 {
 			log.fatal("cannot find interface with gw address %v", cli.gw_ip)
 		}
+	}
+
+	if cli.gw_port <= 0 || cli.gw_port > 0xffff {
+		cli.gw_port = IPREF_PORT
+	}
+	if cli.rgw_port <= 0 || cli.rgw_port > 0xffff {
+		cli.rgw_port = IPREF_PORT
 	}
 
 	cli.pktbuflen = cli.ifc.MTU - IPv4_HDR_MIN_LEN + IPREF_HDR_MAX_LEN + 8

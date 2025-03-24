@@ -17,14 +17,15 @@ var send_gw chan *PktBuf
 
 type RemoteGw struct {
 	addr IP32
-	port uint16
 }
 
 type RemoteGwConn struct {
-	lock sync.RWMutex
-	key RemoteGw
+	lock sync.Mutex
+	key RemoteGw // can't change
 	con *net.UDPConn
-	mtu int
+	sport uint16 // can't change
+	dport uint16 // can't change
+	mtu int // can change
 	removed bool
 	prev *RemoteGwConn // the previous most recently used connection (less recent)
 	next *RemoteGwConn // the next most recently used connection (more recent)
@@ -43,13 +44,16 @@ func new_rgw_table() (rgws RemoteGwTable) {
 	return
 }
 
-func (rgws *RemoteGwTable) gc() {
+// Will still lock the individual rcons regardless.
+func (rgws *RemoteGwTable) gc(lock bool) {
 
 	if cli.maxrgws < 1 {
 		return
 	}
-	rgws.lock.Lock()
-	defer rgws.lock.Unlock()
+	if lock {
+		rgws.lock.Lock()
+		defer rgws.lock.Unlock()
+	}
 	for rgws.nrcons > cli.maxrgws {
 		rcon := rgws.least_recent
 		rcon.lock.Lock()
@@ -69,15 +73,19 @@ func (rgws *RemoteGwTable) gc() {
 	}
 }
 
-func (rgws *RemoteGwTable) active_rcon(rcon *RemoteGwConn) {
+func (rgws *RemoteGwTable) active_rcon(rcon *RemoteGwConn, lock bool) {
 
-	rcon.lock.Lock()
-	defer rcon.lock.Unlock()
+	if lock {
+		rcon.lock.Lock()
+		defer rcon.lock.Unlock()
+	}
 	if rcon.removed || rcon.next == nil {
 		return
 	}
-	rgws.lock.Lock()
-	defer rgws.lock.Unlock()
+	if lock {
+		rgws.lock.Lock()
+		defer rgws.lock.Unlock()
+	}
 
 	// remove from list
 	if rcon.prev == nil {
@@ -94,17 +102,21 @@ func (rgws *RemoteGwTable) active_rcon(rcon *RemoteGwConn) {
 	rcon.prev.next = rcon
 }
 
-func (rgws *RemoteGwTable) remove_rcon(rcon *RemoteGwConn) {
+func (rgws *RemoteGwTable) remove_rcon(rcon *RemoteGwConn, lock bool) {
 
-	rcon.lock.Lock()
-	defer rcon.lock.Unlock()
+	if lock {
+		rcon.lock.Lock()
+		defer rcon.lock.Unlock()
+	}
 	if rcon.removed {
 		return
 	}
 	rcon.removed = true
 	rcon.con.Close() // ignore error
-	rgws.lock.Lock()
-	defer rgws.lock.Unlock()
+	if lock {
+		rgws.lock.Lock()
+		defer rgws.lock.Unlock()
+	}
 	rgws.nrcons--
 	if rcon.prev == nil {
 		rgws.least_recent = rcon.next
@@ -121,24 +133,40 @@ func (rgws *RemoteGwTable) remove_rcon(rcon *RemoteGwConn) {
 	delete(rgws.rcons, rcon.key)
 }
 
-func (rgws *RemoteGwTable) get_rcon(saddr IP32, sport uint16,
-	daddr IP32, dport uint16) (*RemoteGwConn, error) {
+// Use dport = 0 to get the connection regardless of port, or use the default
+// port when creating a new connection.
+func (rgws *RemoteGwTable) get_rcon(daddr IP32, dport uint16,
+	lock bool) (*RemoteGwConn, error) {
 
 	// look for existing rcon
-	key := RemoteGw{daddr, dport}
-	rgws.lock.Lock()
-	defer rgws.lock.Unlock()
+	key := RemoteGw{daddr}
+	if lock {
+		rgws.lock.Lock()
+		defer rgws.lock.Unlock()
+	}
 	rcon, exists := rgws.rcons[key]
 	if exists {
-		rcon.lock.RLock()
+		rcon.lock.Lock()
 		if rcon.removed {
 			panic("unexpected")
 		}
-		rcon.lock.RUnlock()
-		return rcon, nil
+		if dport == 0 || rcon.dport == dport {
+			rgws.active_rcon(rcon, false)
+			rcon.lock.Unlock()
+			return rcon, nil
+		} else {
+			log.trace("gw: updating remote gateway port %v -> %v", rcon.dport, dport)
+			rgws.remove_rcon(rcon, false)
+			rcon.lock.Unlock()
+		}
 	}
 
 	// open connection
+	saddr := cli.gw_ip
+	sport := uint16(cli.gw_port)
+	if dport == 0 {
+		dport = uint16(cli.rgw_port)
+	}
 	saddrb := []byte{0, 0, 0, 0}
 	be.PutUint32(saddrb, uint32(saddr))
 	daddrb := []byte{0, 0, 0, 0}
@@ -161,6 +189,8 @@ func (rgws *RemoteGwTable) get_rcon(saddr IP32, sport uint16,
 	if !ok {
 		return nil, errors.New("expected net.UDPConn")
 	}
+	rcon.sport = sport
+	rcon.dport = dport
 	rcon.mtu, err = udpconn_getmtu(rcon.con)
 	if err != nil {
 		rcon.mtu = cli.ifc.MTU
@@ -177,18 +207,26 @@ func (rgws *RemoteGwTable) get_rcon(saddr IP32, sport uint16,
 	rgws.rcons[key] = rcon
 	rgws.nrcons++
 
-	on_recv := func() {
-		rgws.active_rcon(rcon)
+	on_recv := func(IP32, uint16) {
+		rgws.active_rcon(rcon, true)
 	}
 	on_emsgsize := func() {
 		rcon.update_mtu()
 	}
 	on_close := func() {
-		rgws.remove_rcon(rcon)
+		rgws.remove_rcon(rcon, true)
 	}
 	go gw_receiver(rcon.con, on_recv, on_emsgsize, on_close)
-	go rgws.gc()
+	rgws.gc(false)
 	return rcon, nil
+}
+
+func (rgws *RemoteGwTable) set_dport(daddr IP32, dport uint16, lock bool) {
+
+	_, err := rgws.get_rcon(daddr, dport, lock)
+	if err != nil {
+		log.err("gw: error connecting to remote gateway: %v", err)
+	}
 }
 
 func (rcon *RemoteGwConn) update_mtu() {
@@ -206,8 +244,8 @@ func (rcon *RemoteGwConn) update_mtu() {
 
 func (rcon *RemoteGwConn) get_mtu() int {
 
-	rcon.lock.RLock()
-	defer rcon.lock.RUnlock()
+	rcon.lock.Lock()
+	defer rcon.lock.Unlock()
 	return rcon.mtu
 }
 
@@ -255,12 +293,19 @@ func gw_sender(rgws *RemoteGwTable) {
 			}
 
 		again:
-			if pb.src != cli.gw_ip || pb.sport != IPREF_PORT {
-				log.err("gw out:  src(%v:%v) is not gateway, packet dropped", pb.src, pb.sport)
+			if !pb.ipref_ok() {
+				log.err("gw out:  invalid ipref packet, dropping")
 				retbuf <- pb
 				continue
 			}
-			rcon, err := rgws.get_rcon(pb.src, pb.sport, pb.dst, pb.dport)
+			src_ip := IP32(be.Uint32(pb.ipref_sref_ip()))
+			dst_ip := IP32(be.Uint32(pb.ipref_dref_ip()))
+			if src_ip != cli.gw_ip {
+				log.err("gw out:  src(%v) is not gateway, packet dropped", src_ip)
+				retbuf <- pb
+				continue
+			}
+			rcon, err := rgws.get_rcon(dst_ip, 0, true)
 			if err != nil {
 				log.err("gw out:  error creating remote connection, packet dropped: %v", err)
 				retbuf <- pb
@@ -302,13 +347,13 @@ func gw_sender(rgws *RemoteGwTable) {
 					goto again
 				}
 				log.err("gw out:  write failed: %v", err)
-				go rgws.remove_rcon(rcon)
+				rgws.remove_rcon(rcon, true)
 				retbuf <- pb
 				continue
 			}
 			if wlen != pb.len() {
 				log.err("gw out:  write failed")
-				go rgws.remove_rcon(rcon)
+				rgws.remove_rcon(rcon, true)
 				retbuf <- pb
 				continue
 			}
@@ -325,7 +370,7 @@ func gw_sender(rgws *RemoteGwTable) {
 	}
 }
 
-func gw_receiver(con *net.UDPConn, on_recv func(), on_emsgsize func(), on_close func()) {
+func gw_receiver(con *net.UDPConn, on_recv func(IP32, uint16), on_emsgsize func(), on_close func()) {
 
 	if cli.devmode {
 		return
@@ -365,14 +410,29 @@ func gw_receiver(con *net.UDPConn, on_recv func(), on_emsgsize func(), on_close 
 			retbuf <- pb
 			continue
 		}
-		if on_recv != nil {
-			on_recv()
-		}
+		src_ip := IP32(be.Uint32(addr.IP))
+		src_port := uint16(addr.Port)
 		pb.tail = pb.data + rlen
-		pb.src = IP32(be.Uint32(addr.IP))
-		pb.sport = uint16(addr.Port)
-		pb.dst = cli.gw_ip
-		pb.dport = IPREF_PORT
+		if !pb.ipref_ok() {
+			log.err("gw in:   invalid ipref packet, dropping")
+			retbuf <- pb
+			continue
+		}
+		if IP32(be.Uint32(pb.ipref_sref_ip())) != src_ip {
+			log.err("gw in:   ipref header src(%v) does not match ip header src(%v), dropping",
+				IP32(be.Uint32(pb.ipref_sref_ip())), src_ip)
+			retbuf <- pb
+			continue
+		}
+		if IP32(be.Uint32(pb.ipref_dref_ip())) != cli.gw_ip {
+			log.err("gw in:   ipref header dst(%v) does not match gateway ip, dropping",
+				IP32(be.Uint32(pb.ipref_dref_ip())))
+			retbuf <- pb
+			continue
+		}
+		if on_recv != nil {
+			on_recv(src_ip, src_port)
+		}
 
 		if cli.debug["gw"] {
 			log.debug("gw in:   %v", pb.pp_pkt())
@@ -405,7 +465,7 @@ func start_gw() {
 			return rawconn_control(c, socket_configure)
 		}
 		packet_con, err := config.ListenPacket(context.Background(), "udp4",
-			(&net.UDPAddr{gw_ip, IPREF_PORT, ""}).String())
+			(&net.UDPAddr{gw_ip, cli.gw_port, ""}).String())
 		if err != nil {
 			log.fatal("gw: cannot listen on UDP: %v", err)
 		}
@@ -421,6 +481,9 @@ func start_gw() {
 
 	rgws := new_rgw_table()
 	go gw_sender(&rgws)
+	on_recv := func(saddr IP32, sport uint16) {
+		rgws.set_dport(saddr, sport, true)
+	}
 	on_emsgsize := func() {
 		// we should only get EMSGSIZE on the client sockets
 		log.fatal("gw in:   EMSGSIZE on server socket")
@@ -428,7 +491,7 @@ func start_gw() {
 	on_close := func() {
 		log.fatal("gw in:   server socket closed")
 	}
-	go gw_receiver(con, nil, on_emsgsize, on_close)
+	go gw_receiver(con, on_recv, on_emsgsize, on_close)
 }
 
 func udpconn_getmtu(con *net.UDPConn) (mtu int, err error) {

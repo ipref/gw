@@ -195,10 +195,6 @@ func icmp() {
 			if pb.icmp.ours {
 				recv_gw <- pb
 			} else {
-				pb.src = cli.gw_ip
-				pb.sport = IPREF_PORT
-				pb.dst = IP32(be.Uint32(pb.ipref_dref_ip()))
-				pb.dport = IPREF_PORT
 				send_gw <- pb
 			}
 			continue

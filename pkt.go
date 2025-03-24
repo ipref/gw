@@ -17,7 +17,6 @@ const ( // v1 constants
 	V1_HDR_LEN  = 8
 	V1_AREC_LEN = 4 + 4 + 4 + 8 + 8     // ea + ip + gw + ref.h + ref.l
 	V1_MARK_LEN = 4 + 4                 // oid + mark
-	V1_SOFT_LEN = 4 + 2 + 2             // gw + mtu + port
 	// v1 header offsets
 	V1_VER      = 0
 	V1_CMD      = 1
@@ -30,10 +29,6 @@ const ( // v1 constants
 	V1_AREC_GW   = 8
 	V1_AREC_REFH = 12
 	V1_AREC_REFL = 20
-	// v1 soft offsets
-	V1_SOFT_GW   = 0
-	V1_SOFT_MTU  = 4
-	V1_SOFT_PORT = 6
 	// v1 mark offsets
 	V1_OID  = 0
 	V1_MARK = 4
@@ -53,7 +48,6 @@ const ( // v1 item types
 
 	//V1_TYPE_NONE   = 0
 	//V1_TYPE_AREC   = 1
-	//V1_TYPE_SOFT   = 2
 	//V1_TYPE_IPV4   = 3
 	V1_TYPE_STRING = 4
 )
@@ -63,7 +57,6 @@ const ( // v1 commands
 	V1_NOOP           = 0
 	V1_SET_AREC       = 1
 	V1_SET_MARK       = 2
-	V1_SET_SOFT       = 3
 	V1_GET_REF        = 4
 	V1_INDUCE_ARP     = 5 // TODO remove (obsolete)
 	V1_GET_EA         = 6
@@ -150,10 +143,6 @@ type PktBuf struct {
 	typ   int // PKT_IPREF, PKT_V1, ...
 	data  int // the beginning of the packet data; all data before should be ignored
 	tail  int // the end of the packet data; all data after should be ignored
-	src   IP32
-	dst   IP32
-	sport uint16
-	dport uint16
 	peer  string         // peer or source name, human readable
 	schan chan<- *PktBuf // send to or source channel
 	icmp  IcmpReq
@@ -168,10 +157,6 @@ func (pb *PktBuf) clear() {
 	pb.typ = 0
 	pb.data = 0
 	pb.tail = 0
-	pb.src = IP32(0)
-	pb.dst = IP32(0)
-	pb.sport = 0
-	pb.dport = 0
 	pb.peer = ""
 	pb.schan = nil
 	pb.icmp = IcmpReq{}
@@ -186,10 +171,6 @@ func (pb *PktBuf) copy_from(pbo *PktBuf) {
 	pb.typ = pbo.typ
 	pb.data = pbo.data
 	pb.tail = pbo.tail
-	pb.src = pbo.src
-	pb.dst = pbo.dst
-	pb.sport = pbo.sport
-	pb.dport = pbo.dport
 	pb.peer = pbo.peer
 	pb.schan = pbo.schan
 	pb.icmp = pbo.icmp
@@ -309,8 +290,6 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 			ss += fmt.Sprintf(" SET_MARK(%v) oid %v(%v) mark(%v)",
 				cmd, owners.name(oid), oid, be.Uint32(pkt[off+V1_MARK:off+V1_MARK+4]))
 
-		case V1_SET_SOFT:
-			ss += fmt.Sprintf(" SET_SOFT(%v)", cmd)
 		case V1_INDUCE_ARP:
 			ss += fmt.Sprintf(" INDUCE_ARP(%v)", cmd)
 		case V1_DATA | V1_GET_EA:
