@@ -117,7 +117,7 @@ func allocate_refs(base, from, to IP32) {
 
 		be.PutUint32(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], 0)
 		be.PutUint32(pkt[off+V1_AREC_IP:off+V1_AREC_IP+4], uint32(base+ip))
-		be.PutUint32(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], uint32(cli.gw_ip))
+		be.PutUint32(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], be.Uint32(cli.gw_ip.AsSlice()))
 		be.PutUint64(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], 0)
 		be.PutUint64(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], 0)
 

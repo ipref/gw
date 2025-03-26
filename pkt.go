@@ -8,6 +8,7 @@ import (
 	"fmt"
 	rff "github.com/ipref/ref"
 	"net"
+	"net/netip"
 	"strings"
 )
 
@@ -88,14 +89,18 @@ const ( // packet handling verdicts
 
 const (
 	MIN_PKT_LEN       = V1_HDR_LEN
-	ICMP              = 1
+	ICMP              = 1 // Same protocol number used by IPv4 and IPREF
 	TCP               = 6
 	UDP               = 17
 	ECHO              = 7
 	DISCARD           = 9
+	IPv6_HOP_OPT      = 0 // IPv6 hop-by-hop options extension header
+	IPv6_FRAG_EXT     = 44 // IPv6 fragment extension header
+	ICMPv6            = 58
+	IPv6_NO_NEXT      = 59
 	IPREF_PORT        = 1045
-	IPREF_HDR_MIN_LEN = 4 + 4 + 4 + 4 + 4
-	IPREF_HDR_MAX_LEN = 4 + 8 + 4 + 4 + 16 + 16
+	IPREF_HDR_MIN_LEN = 4 +     4  + 4  + 4  + 4
+	IPREF_HDR_MAX_LEN = 4 + 8 + 16 + 16 + 16 + 16
 	PKTQLEN           = 2
 	// IPv4 header offests
 	IP_VER           = 0
@@ -109,6 +114,19 @@ const (
 	IPv4_SRC         = 12
 	IPv4_DST         = 16
 	IPv4_HDR_MIN_LEN = 20
+	// IPv6 header offsets
+	IPv6_PLD_LEN     = 4
+	IPv6_NEXT        = 6
+	IPv6_TTL         = 7
+	IPv6_SRC         = 8
+	IPv6_DST         = 24
+	IPv6_HDR_MIN_LEN = 40
+	// IPv6 fragment extension header offsets
+	IPv6_FRAG_NEXT    = 0
+	IPv6_FRAG_RES1    = 1
+	IPv6_FRAG_OFF     = 2
+	IPv6_FRAG_IDENT   = 4
+	IPv6_FRAG_HDR_LEN = 8
 	// UDP offsets
 	UDP_SPORT   = 0
 	UDP_DPORT   = 2
@@ -123,6 +141,7 @@ const (
 	ICMP_TYPE = 0
 	ICMP_CODE = 1
 	ICMP_CSUM = 2
+	ICMP_BODY = 4
 	ICMP_MTU  = 6
 	ICMP_DATA = 8
 )
@@ -130,6 +149,7 @@ const (
 const (
 	PKT_IPREF = iota + 1
 	PKT_IPv4
+	PKT_IPv6
 	PKT_V1
 )
 type IcmpReq struct { // params for icmp requests
@@ -145,6 +165,8 @@ type PktBuf struct {
 	tail  int // the end of the packet data; all data after should be ignored
 	peer  string         // peer or source name, human readable
 	schan chan<- *PktBuf // send to or source channel
+	// the ICMP type/code should be for the ICMP version that matches the packet
+	// type (eg. PKT_IPv6 -> ICMPv6)
 	icmp  IcmpReq
 }
 
@@ -182,11 +204,19 @@ func ip_proto_name(proto byte) string {
 
 	switch proto {
 	case TCP:
-		return "tcp"
+		return "TCP"
 	case UDP:
-		return "udp"
+		return "UDP"
 	case ICMP:
-		return "icmp"
+		return "ICMP"
+	case IPv6_HOP_OPT:
+		return "IPv6-Hop-Opt"
+	case IPv6_FRAG_EXT:
+		return "IPv6-Frag"
+	case ICMPv6:
+		return "ICMPv6"
+	case IPv6_NO_NEXT:
+		return "IPv6-No-Next"
 	}
 	return fmt.Sprintf("%v", proto)
 }
@@ -225,18 +255,14 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 			flags += " DF"
 		}
 		proto := pb.ipref_proto()
-		sref_ip := pb.ipref_sref_ip()
-		dref_ip := pb.ipref_dref_ip()
-		sref := pb.ipref_sref()
-		dref := pb.ipref_dref()
+		src := pb.ipref_src()
+		dst := pb.ipref_dst()
 
-		ss = fmt.Sprintf("IPREF(%v)%v  %v + %v  %v + %v  len(%v)  data/tail(%v/%v)",
+		ss = fmt.Sprintf("IPREF(%v)%v  %v  %v  len(%v)  data/tail(%v/%v)",
 			ip_proto_name(proto),
 			flags,
-			net.IP(sref_ip),
-			&sref,
-			net.IP(dref_ip),
-			&dref,
+			src,
+			dst,
 			len(pkt),
 			pb.data, pb.tail)
 
@@ -261,6 +287,22 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 			net.IP(pkt[IPv4_SRC:IPv4_SRC+4]),
 			net.IP(pkt[IPv4_DST:IPv4_DST+4]),
 			be.Uint16(pkt[IPv4_LEN:IPv4_LEN+2]),
+			pb.data, pb.tail)
+
+		return
+
+	case PKT_IPv6:
+
+		if len(pkt) < IPv6_HDR_MIN_LEN || pkt[IP_VER]&0xf0 != 0x60 {
+			break
+		}
+		src_ip, _ := netip.AddrFromSlice(pkt[IPv6_SRC:IPv6_SRC+16])
+		dst_ip, _ := netip.AddrFromSlice(pkt[IPv6_DST:IPv6_DST+16])
+		ss = fmt.Sprintf("IPv6(%v)  %v  %v  len(%v)  data/tail(%v/%v)",
+			ip_proto_name(pkt[IPv6_NEXT]),
+			src_ip,
+			dst_ip,
+			be.Uint16(pkt[IPv6_PLD_LEN:IPv6_PLD_LEN+2]),
 			pb.data, pb.tail)
 
 		return
@@ -455,19 +497,15 @@ func (pb *PktBuf) pp_net(pfx string) {
 		}
 		ttl := pb.ipref_ttl()
 		proto := pb.ipref_proto()
-		sref_ip := pb.ipref_sref_ip()
-		dref_ip := pb.ipref_dref_ip()
-		sref := pb.ipref_sref()
-		dref := pb.ipref_dref()
+		src := pb.ipref_src()
+		dst := pb.ipref_dst()
 
-		log.trace("%vIPREF(%v)%v  %v + %v  %v + %v  len(%v) ttl(%v)",
+		log.trace("%vIPREF(%v)%v  %v  %v  len(%v) ttl(%v)",
 			pfx,
 			ip_proto_name(proto),
 			flags,
-			IP32(be.Uint32(sref_ip)),
-			&sref,
-			IP32(be.Uint32(dref_ip)),
-			&dref,
+			src,
+			dst,
 			len(pkt),
 			ttl)
 		return
@@ -497,6 +535,23 @@ func (pb *PktBuf) pp_net(pfx string) {
 			pkt[IPv4_TTL],
 			be.Uint16(pkt[IPv4_CSUM:IPv4_CSUM+2]))
 		return
+
+	case PKT_IPv6:
+
+		if len(pkt) < IPv6_HDR_MIN_LEN || pkt[IP_VER]&0xf0 != 0x60 {
+			break
+		}
+
+		src_ip, _ := netip.AddrFromSlice(pkt[IPv6_SRC:IPv6_SRC+16])
+		dst_ip, _ := netip.AddrFromSlice(pkt[IPv6_DST:IPv6_DST+16])
+		log.trace("%vIPv6(%v)  %v  %v  len(%v) ttl(%v)",
+			pfx,
+			ip_proto_name(pkt[IPv6_NEXT]),
+			src_ip,
+			dst_ip,
+			be.Uint16(pkt[IPv6_PLD_LEN:IPv6_PLD_LEN+2]),
+			pkt[IPv6_TTL])
+		return
 	}
 
 	log.trace(pfx + pb.pp_pkt())
@@ -524,6 +579,14 @@ func (pb *PktBuf) pp_tran(pfx string) {
 		}
 		proto = pkt[IPv4_PROTO]
 		pkt = pkt[20:]
+
+	case PKT_IPv6:
+
+		if len(pkt) < IPv6_HDR_MIN_LEN || pkt[IP_VER]&0xf0 != 0x60 {
+			return
+		}
+		proto = pkt[IPv6_NEXT]
+		pkt = pkt[IPv6_HDR_MIN_LEN:]
 
 	default:
 		return
@@ -597,26 +660,35 @@ func (pb *PktBuf) ipref_df() bool {
 	return pb.pkt[pb.data] & 1 != 0
 }
 
-// Don't call until you've checked that the packet size is at least 2. This
-// doesn't check the reserved fields in the fragment info.
-func (pb *PktBuf) ipref_reserved_ok() bool {
-	return pb.pkt[pb.data + 1] == 0
+// Don't call until you've checked that the packet size is at least 2.
+func (pb *PktBuf) ipref_ipver() byte {
+	return pb.pkt[pb.data + 1] >> 4
 }
 
-// Don't call until you've checked that the packet size is at least 2 or
+// Don't call until you've checked ipref_ok().
+func (pb *PktBuf) ipref_iplen() int {
+	switch pb.ipref_ipver() {
+	case 4:
+		return 4
+	case 6:
+		return 16
+	}
+	panic("invalid ip ver")
+}
+
+// Don't call until you've checked that the packet size is at least 3 or
 // ipref_ok().
 func (pb *PktBuf) ipref_ttl() byte {
 	return pb.pkt[pb.data + 2]
 }
 
-// Don't call until you've checked that the packet size is at least 3 or
+// Don't call until you've checked that the packet size is at least 4 or
 // ipref_ok().
 func (pb *PktBuf) ipref_proto() byte {
 	return pb.pkt[pb.data + 3]
 }
 
-// Don't call until you've checked that the pack size is at least 12 or
-// ipref_ok().
+// Don't call until you've checked ipref_ok().
 func (pb *PktBuf) ipref_frag() (frag_if bool, frag_off int, frag_mf bool, ident uint32) {
 
 	frag_if = pb.ipref_if()
@@ -629,6 +701,7 @@ func (pb *PktBuf) ipref_frag() (frag_if bool, frag_off int, frag_mf bool, ident 
 	return
 }
 
+// Don't call until you've checked ipref_ok().
 func (pb *PktBuf) ipref_hdr_len() int {
 
 	if pb.tail - pb.data == 0 {
@@ -638,22 +711,33 @@ func (pb *PktBuf) ipref_hdr_len() int {
 	if pb.ipref_if() {
 		n += 8
 	}
-	n += 4 + 4
+	n += pb.ipref_iplen() * 2
 	n += pb.ipref_reflen() * 2
 	return n
 }
 
-// This doesn't check the reserved fields in the fragment info.
 func (pb *PktBuf) ipref_ok() bool {
 
 	if pb.tail - pb.data < IPREF_HDR_MIN_LEN {
 		return false
 	}
-	if !pb.ipref_ver_ok() || pb.ipref_reflen() == 0 || !pb.ipref_reserved_ok() {
+	if !pb.ipref_ver_ok() || pb.ipref_reflen() == 0 || pb.pkt[pb.data + 1] & 0xf != 0 {
+		return false
+	}
+	ip_ver := pb.pkt[pb.data + 1] >> 4
+	if ip_ver != 4 && ip_ver != 6 {
 		return false
 	}
 	if pb.tail - pb.data < pb.ipref_hdr_len() {
 		return false
+	}
+	if pb.ipref_if() {
+		if pb.pkt[pb.data + 4] != 0 || pb.pkt[pb.data + 5] != 0 {
+			return false
+		}
+		if pb.pkt[pb.data + 7] & 6 != 0 {
+			return false
+		}
 	}
 	return true
 }
@@ -665,24 +749,26 @@ func (pb *PktBuf) ipref_sref_ip() []byte {
 	if pb.ipref_if() {
 		i += 8
 	}
-	return pb.pkt[i : i + 4]
+	return pb.pkt[i : i + pb.ipref_iplen()]
 }
 
 // Don't call until you've checked ipref_ok().
 func (pb *PktBuf) ipref_dref_ip() []byte {
 
-	i := pb.data + 8
+	i := pb.data + 4
 	if pb.ipref_if() {
 		i += 8
 	}
-	return pb.pkt[i : i + 4]
+	iplen := pb.ipref_iplen()
+	i += iplen
+	return pb.pkt[i : i + iplen]
 }
 
 // Don't call until you've checked ipref_ok().
 func (pb *PktBuf) ipref_sref() rff.Ref {
 
 	reflen := pb.ipref_reflen()
-	i := pb.data + 12
+	i := pb.data + 4 + pb.ipref_iplen() * 2
 	if pb.ipref_if() {
 		i += 8
 	}
@@ -693,16 +779,29 @@ func (pb *PktBuf) ipref_sref() rff.Ref {
 func (pb *PktBuf) ipref_dref() rff.Ref {
 
 	reflen := pb.ipref_reflen()
-	i := pb.data + 12 + reflen
+	i := pb.data + 4 + pb.ipref_iplen() * 2 + reflen
 	if pb.ipref_if() {
 		i += 8
 	}
 	return decode_ref(pb.pkt[i : i + reflen])
 }
 
+// Don't call until you've checked ipref_ok().
+func (pb *PktBuf) ipref_src() IpRef {
+	src_ip, _ := netip.AddrFromSlice(pb.ipref_sref_ip())
+	return IpRef{src_ip, pb.ipref_sref()}
+}
+
+// Don't call until you've checked ipref_ok().
+func (pb *PktBuf) ipref_dst() IpRef {
+	dst_ip, _ := netip.AddrFromSlice(pb.ipref_dref_ip())
+	return IpRef{dst_ip, pb.ipref_dref()}
+}
+
 func (pb *PktBuf) ipref_swap_srcdst() {
 
 	frag_if := pb.ipref_if()
+	iplen := pb.ipref_iplen()
 	reflen := pb.ipref_reflen()
 	i := pb.data + 4
 	if frag_if {
@@ -710,11 +809,11 @@ func (pb *PktBuf) ipref_swap_srcdst() {
 	}
 	var temp [16]byte
 	// swap IPs
-	copy(temp[:4], pb.pkt[i:])
-	copy(pb.pkt[i : i + 4], pb.pkt[i + 4:])
-	copy(pb.pkt[i + 4:], temp[:4])
+	copy(temp[:iplen], pb.pkt[i:])
+	copy(pb.pkt[i : i + iplen], pb.pkt[i + iplen:])
+	copy(pb.pkt[i + iplen:], temp[:iplen])
 	// swap refs
-	i += 8
+	i += iplen * 2
 	copy(temp[:reflen], pb.pkt[i:])
 	copy(pb.pkt[i : i + reflen], pb.pkt[i + reflen:])
 	copy(pb.pkt[i + reflen:], temp[:reflen])
@@ -776,10 +875,56 @@ func decode_ref(bs []byte) (ref rff.Ref) {
 
 func (pb *PktBuf) ip_hdr_len() int {
 
-	if pb.len() < IPv4_HDR_MIN_LEN {
-		return pb.len()
+	switch pb.typ {
+
+	case PKT_IPv4:
+
+		if pb.len() < IPv4_HDR_MIN_LEN {
+			return pb.len()
+		}
+		return min(int(pb.pkt[pb.data] & 0xf) * 4, pb.len())
+
+	case PKT_IPv6:
+
+		if pb.len() < IPv6_HDR_MIN_LEN {
+			return pb.len()
+		}
+		if pb.pkt[IPv6_NEXT] == IPv6_FRAG_EXT {
+			return min(IPv6_HDR_MIN_LEN + IPv6_FRAG_HDR_LEN, pb.len())
+		}
+		return IPv6_HDR_MIN_LEN
 	}
-	return int(pb.pkt[pb.data] & 0xf) * 4
+
+	panic("unexpected")
+}
+
+func (pb *PktBuf) ip_proto() byte {
+
+	switch pb.typ {
+
+	case PKT_IPv4:
+
+		if pb.len() < IPv4_PROTO + 1 {
+			return 0
+		}
+		return pb.pkt[pb.data + IPv4_PROTO]
+
+	case PKT_IPv6:
+
+		if pb.len() < IPv6_NEXT + 1 {
+			return 0
+		}
+		proto := pb.pkt[pb.data + IPv6_NEXT]
+		if proto == IPv6_FRAG_EXT {
+			if pb.len() < IPv4_HDR_MIN_LEN + IPv6_FRAG_NEXT + 1 {
+				return 0
+			}
+			return pb.pkt[pb.data + IPv4_HDR_MIN_LEN + IPv6_FRAG_NEXT]
+		}
+		return proto
+	}
+
+	panic("unexpected")
 }
 
 func (pb *PktBuf) verify_csum() bool {
@@ -791,15 +936,11 @@ func (pb *PktBuf) verify_csum() bool {
 
 	case PKT_IPREF:
 
-		if len(pkt) < 20 || !pb.ipref_ver_ok() || !pb.ipref_reserved_ok() {
-			return false
-		}
-		reflen := pb.ipref_reflen()
-		if reflen == 0 || len(pkt) - 12 < pb.ipref_reflen() * 2 {
+		if !pb.ipref_ok() {
 			return false
 		}
 		proto = pb.ipref_proto()
-		pkt = pkt[12 + pb.ipref_reflen() * 2:]
+		pkt = pkt[pb.ipref_hdr_len():]
 
 	case PKT_IPv4:
 

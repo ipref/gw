@@ -271,7 +271,7 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 			} else if rec.ea == 0 && rec.ip != 0 {
 
 				if rec.gw == 0 {
-					rec.gw = cli.gw_ip
+					rec.gw = IP32FromAddr(cli.gw_ip)
 				}
 
 				//if rec.ref.IsZero() {

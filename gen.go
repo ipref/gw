@@ -196,12 +196,12 @@ func (gen *GenEA) next_ea() IP32 {
 		creep[2] += SECOND_BYTE
 		ea = IP32(be.Uint32(creep))
 
-		ea &^= cli.ea_mask
+		ea &= gen.bcast
 		if ea == 0 || ea == gen.bcast {
 			continue // zero address or broadcast address, try another
 		}
 
-		ea |= cli.ea_ip
+		ea |= IP32FromAddr(cli.ea_net.Addr())
 
 		if gen.allocated[ea] {
 			continue // already allocated, try another
@@ -241,7 +241,7 @@ func (gen *GenEA) start() {
 
 func (gen *GenEA) init() {
 	gen.allocated = make(map[IP32]bool)
-	gen.bcast = 0xffffffff &^ cli.ea_mask
+	gen.bcast = 0xffff_ffff >> cli.ea_net.Bits()
 	gen.ea = make(chan IP32, GENQLEN)
 	gen.recv = make(chan *PktBuf, PKTQLEN)
 	gen.rcvy = make(chan IP32, PKTQLEN)

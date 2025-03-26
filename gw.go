@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/netip"
 	"os"
 	"sync"
 	"syscall"
@@ -15,8 +16,15 @@ import (
 var recv_gw chan *PktBuf
 var send_gw chan *PktBuf
 
+const (
+	GW_RECV_OFF = TUN_HDR_LEN +
+		(IPv6_HDR_MIN_LEN + IPv6_FRAG_HDR_LEN) +
+		(IPREF_HDR_MAX_LEN - IPREF_HDR_MIN_LEN) -
+		IPREF_HDR_MIN_LEN
+)
+
 type RemoteGw struct {
-	addr IP32
+	addr netip.Addr
 }
 
 type RemoteGwConn struct {
@@ -135,7 +143,7 @@ func (rgws *RemoteGwTable) remove_rcon(rcon *RemoteGwConn, lock bool) {
 
 // Use dport = 0 to get the connection regardless of port, or use the default
 // port when creating a new connection.
-func (rgws *RemoteGwTable) get_rcon(daddr IP32, dport uint16,
+func (rgws *RemoteGwTable) get_rcon(daddr netip.Addr, dport uint16,
 	lock bool) (*RemoteGwConn, error) {
 
 	// look for existing rcon
@@ -155,7 +163,7 @@ func (rgws *RemoteGwTable) get_rcon(daddr IP32, dport uint16,
 			rcon.lock.Unlock()
 			return rcon, nil
 		} else {
-			log.trace("gw: updating remote gateway port %v -> %v", rcon.dport, dport)
+			log.trace("gw:      updating remote gateway port %v -> %v", rcon.dport, dport)
 			rgws.remove_rcon(rcon, false)
 			rcon.lock.Unlock()
 		}
@@ -167,16 +175,12 @@ func (rgws *RemoteGwTable) get_rcon(daddr IP32, dport uint16,
 	if dport == 0 {
 		dport = uint16(cli.rgw_port)
 	}
-	saddrb := []byte{0, 0, 0, 0}
-	be.PutUint32(saddrb, uint32(saddr))
-	daddrb := []byte{0, 0, 0, 0}
-	be.PutUint32(daddrb, uint32(daddr))
 	var dialer net.Dialer
-	dialer.LocalAddr = &net.UDPAddr{saddrb, int(sport), ""}
+	dialer.LocalAddr = &net.UDPAddr{saddr.AsSlice(), int(sport), ""}
 	dialer.Control = func(network, address string, c syscall.RawConn) error {
 		return rawconn_control(c, socket_configure)
 	}
-	c, err := dialer.Dial("udp4", (&net.UDPAddr{daddrb, int(dport), ""}).String())
+	c, err := dialer.Dial(gw_proto(), (&net.UDPAddr{daddr.AsSlice(), int(dport), ""}).String())
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +211,7 @@ func (rgws *RemoteGwTable) get_rcon(daddr IP32, dport uint16,
 	rgws.rcons[key] = rcon
 	rgws.nrcons++
 
-	on_recv := func(IP32, uint16) {
+	on_recv := func(netip.Addr, uint16) {
 		rgws.active_rcon(rcon, true)
 	}
 	on_emsgsize := func() {
@@ -221,11 +225,11 @@ func (rgws *RemoteGwTable) get_rcon(daddr IP32, dport uint16,
 	return rcon, nil
 }
 
-func (rgws *RemoteGwTable) set_dport(daddr IP32, dport uint16, lock bool) {
+func (rgws *RemoteGwTable) set_dport(daddr netip.Addr, dport uint16, lock bool) {
 
 	_, err := rgws.get_rcon(daddr, dport, lock)
 	if err != nil {
-		log.err("gw: error connecting to remote gateway: %v", err)
+		log.err("gw:      error connecting to remote gateway: %v", err)
 	}
 }
 
@@ -233,11 +237,11 @@ func (rcon *RemoteGwConn) update_mtu() {
 
 	mtu, err := udpconn_getmtu(rcon.con)
 	if err != nil {
-		log.trace("gw: get mtu failed: %v", err)
+		log.trace("gw:      get mtu failed: %v", err)
 		return // silently ignore
 	}
 	rcon.lock.Lock()
-	log.trace("gw: update remote connection mtu %v -> %v", rcon.mtu, mtu)
+	log.trace("gw:      update remote connection mtu %v -> %v", rcon.mtu, mtu)
 	rcon.mtu = mtu
 	rcon.lock.Unlock()
 }
@@ -289,7 +293,7 @@ func gw_sender(rgws *RemoteGwTable) {
 			if cli.trace {
 				pb.pp_net("gw out:  ")
 				pb.pp_tran("gw out:  ")
-				pb.pp_raw("gw out:  ")
+				// pb.pp_raw("gw out:  ")
 			}
 
 		again:
@@ -298,8 +302,8 @@ func gw_sender(rgws *RemoteGwTable) {
 				retbuf <- pb
 				continue
 			}
-			src_ip := IP32(be.Uint32(pb.ipref_sref_ip()))
-			dst_ip := IP32(be.Uint32(pb.ipref_dref_ip()))
+			src_ip, _ := netip.AddrFromSlice(pb.ipref_sref_ip())
+			dst_ip, _ := netip.AddrFromSlice(pb.ipref_dref_ip())
 			if src_ip != cli.gw_ip {
 				log.err("gw out:  src(%v) is not gateway, packet dropped", src_ip)
 				retbuf <- pb
@@ -312,8 +316,13 @@ func gw_sender(rgws *RemoteGwTable) {
 				continue
 			}
 			mtu := rcon.get_mtu()
-			l5_mtu := mtu - IPv4_HDR_MIN_LEN - UDP_HDR_LEN
-			if l5_mtu <= 0 {
+			l5_mtu := mtu - UDP_HDR_LEN
+			if dst_ip.Is4() {
+				l5_mtu -= IPv4_HDR_MIN_LEN
+			} else {
+				l5_mtu -= IPv6_HDR_MIN_LEN
+			}
+			if l5_mtu <= 0 || l5_mtu >> 16 != 0 {
 				log.err("gw out:  bad mtu, dropping packet")
 				retbuf <- pb
 				continue
@@ -325,9 +334,9 @@ func gw_sender(rgws *RemoteGwTable) {
 				log.trace("gw out:  fragmenting (%v + %v)", sent, trimmed)
 			case IPREF_FRAG_IN_PLACE_DF:
 				log.trace("gw out:  needs fragmentation but DF set, sending icmp")
-				pb.icmp.typ = ICMPv4_DEST_UNREACH
-				pb.icmp.code = ICMPv4_FRAG_NEEDED
-				pb.icmp.mtu = uint16(mtu)
+				pb.icmp.typ = IPREF_ICMP_DEST_UNREACH
+				pb.icmp.code = IPREF_ICMP_FRAG_NEEDED
+				pb.icmp.mtu = uint16(l5_mtu)
 				pb.icmp.ours = true
 				icmpreq <- pb
 				continue
@@ -370,7 +379,8 @@ func gw_sender(rgws *RemoteGwTable) {
 	}
 }
 
-func gw_receiver(con *net.UDPConn, on_recv func(IP32, uint16), on_emsgsize func(), on_close func()) {
+func gw_receiver(con *net.UDPConn,
+	on_recv func(netip.Addr, uint16), on_emsgsize func(), on_close func()) {
 
 	if cli.devmode {
 		return
@@ -380,12 +390,9 @@ func gw_receiver(con *net.UDPConn, on_recv func(IP32, uint16), on_emsgsize func(
 
 		pb := <-getbuf
 		pb.typ = PKT_IPREF
-		pb.data = TUN_HDR_LEN + IPREF_HDR_MAX_LEN - IPv4_HDR_MIN_LEN
+		pb.data = GW_RECV_OFF
 
 		rlen, addr, err := con.ReadFromUDP(pb.pkt[pb.data:])
-		if cli.debug["gw"] {
-			log.debug("gw in:   src IP: %v  rcvlen(%v)", addr, rlen)
-		}
 		if err != nil {
 			if errno, ok := error_errno(err); ok && errno == syscall.EMSGSIZE {
 				log.trace("gw in:   read failed (EMSGSIZE)")
@@ -400,6 +407,9 @@ func gw_receiver(con *net.UDPConn, on_recv func(IP32, uint16), on_emsgsize func(
 				break
 			}
 		}
+		if cli.debug["gw"] {
+			log.debug("gw in:   src IP: %v  rcvlen(%v)", addr, rlen)
+		}
 		if rlen == 0 {
 			log.err("gw in:   read failed (no data), closing connection")
 			retbuf <- pb
@@ -410,7 +420,7 @@ func gw_receiver(con *net.UDPConn, on_recv func(IP32, uint16), on_emsgsize func(
 			retbuf <- pb
 			continue
 		}
-		src_ip := IP32(be.Uint32(addr.IP))
+		src_ip, _ := netip.AddrFromSlice(addr.IP)
 		src_port := uint16(addr.Port)
 		pb.tail = pb.data + rlen
 		if !pb.ipref_ok() {
@@ -418,15 +428,16 @@ func gw_receiver(con *net.UDPConn, on_recv func(IP32, uint16), on_emsgsize func(
 			retbuf <- pb
 			continue
 		}
-		if IP32(be.Uint32(pb.ipref_sref_ip())) != src_ip {
+		sref_ip, _ := netip.AddrFromSlice(pb.ipref_sref_ip())
+		dref_ip, _ := netip.AddrFromSlice(pb.ipref_dref_ip())
+		if sref_ip != src_ip {
 			log.err("gw in:   ipref header src(%v) does not match ip header src(%v), dropping",
-				IP32(be.Uint32(pb.ipref_sref_ip())), src_ip)
+				sref_ip, src_ip)
 			retbuf <- pb
 			continue
 		}
-		if IP32(be.Uint32(pb.ipref_dref_ip())) != cli.gw_ip {
-			log.err("gw in:   ipref header dst(%v) does not match gateway ip, dropping",
-				IP32(be.Uint32(pb.ipref_dref_ip())))
+		if dref_ip != cli.gw_ip {
+			log.err("gw in:   ipref header dst(%v) does not match gateway ip, dropping", dref_ip)
 			retbuf <- pb
 			continue
 		}
@@ -441,7 +452,7 @@ func gw_receiver(con *net.UDPConn, on_recv func(IP32, uint16), on_emsgsize func(
 		if cli.trace {
 			pb.pp_net("gw in:   ")
 			pb.pp_tran("gw in:   ")
-			pb.pp_raw("gw in:   ")
+			// pb.pp_raw("gw in:   ")
 		}
 
 		recv_gw <- pb
@@ -458,30 +469,28 @@ func start_gw() {
 
 	if !cli.devmode {
 
-		gw_ip := []byte{0, 0, 0, 0}
-		be.PutUint32(gw_ip, uint32(cli.gw_ip))
 		var config net.ListenConfig
 		config.Control = func(network, address string, c syscall.RawConn) error {
 			return rawconn_control(c, socket_configure)
 		}
-		packet_con, err := config.ListenPacket(context.Background(), "udp4",
-			(&net.UDPAddr{gw_ip, cli.gw_port, ""}).String())
+		packet_con, err := config.ListenPacket(context.Background(), gw_proto(),
+			(&net.UDPAddr{cli.gw_ip.AsSlice(), cli.gw_port, ""}).String())
 		if err != nil {
-			log.fatal("gw: cannot listen on UDP: %v", err)
+			log.fatal("gw:      cannot listen on UDP: %v", err)
 		}
 		var ok bool
 		con, ok = packet_con.(*net.UDPConn)
 		if !ok {
-			log.fatal("gw: listen UDP: expected net.UDPConn")
+			log.fatal("gw:      listen UDP: expected net.UDPConn")
 		}
 
-		log.info("gw: gateway %v %v mtu(%v) %v pkt buffers",
+		log.info("gw:      gateway %v %v mtu(%v) %v pkt buffers",
 			cli.gw_ip, cli.ifc.Name, cli.ifc.MTU, cli.maxbuf)
 	}
 
 	rgws := new_rgw_table()
 	go gw_sender(&rgws)
-	on_recv := func(saddr IP32, sport uint16) {
+	on_recv := func(saddr netip.Addr, sport uint16) {
 		rgws.set_dport(saddr, sport, true)
 	}
 	on_emsgsize := func() {
@@ -492,6 +501,14 @@ func start_gw() {
 		log.fatal("gw in:   server socket closed")
 	}
 	go gw_receiver(con, on_recv, on_emsgsize, on_close)
+}
+
+func gw_proto() string {
+	if cli.gw_ip.Is4() {
+		return "udp4"
+	} else {
+		return "udp6"
+	}
 }
 
 func udpconn_getmtu(con *net.UDPConn) (mtu int, err error) {

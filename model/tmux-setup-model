@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+set -e
+
+# Usage (from running tmux session):
+# GW_IPv=4 GW7EN_IPv=4 GW8EN_IPv=4 ./tmux-setup-model
+
+cd "$( dirname "${BASH_SOURCE[0]}" )" # Go to directory containing this script
+
+. common.sh
+
+# cmd_left="host711 ping -c 3 -s 1300 -M want host822"
+# cmd_left="host711 traceroute -I --mtu host822"
+# cmd_left="host711 ping host822"
+cmd_left="host711 traceroute --mtu host822"
+cmd_right="host822 traceroute --mtu host711"
+# cmd_left="host711 wget http://host822:8000 -O /dev/null 2>&1 | head -n 5"
+# cmd_right="host822 python3 -m http.server --bind \${GW8EN_IP_PREFIX}192.168.98.22"
+
+setup="\
+cd '$PWD';
+export GW_IPv=$GW_IPv; \
+export GW7EN_IPv=$GW7EN_IPv; \
+export GW8EN_IPv=$GW8EN_IPv; \
+clear"
+
+tmux new-window -n 'model'
+tmux split-window -v
+tmux resize-pane -D 10
+tmux split-window -h
+tmux select-pane -U
+tmux split-window -h
+tmux select-pane -L
+sleep 0.1
+tmux send-keys -l "$setup; . common.sh; cd .."
+tmux send-keys Enter
+tmux select-pane -R
+tmux send-keys -l "$setup; . common.sh; cd .."
+tmux send-keys Enter
+tmux select-pane -D
+tmux send-keys -l "$setup; . common.sh; ./cleanup; ./setup && clear"
+tmux send-keys Enter
+sleep 0.5
+tmux send-keys -l "$cmd_right"
+tmux select-pane -L
+tmux select-pane -U
+tmux send-keys -l "sleep 2"
+tmux send-keys Enter
+tmux send-keys -l "run-gw7"
+tmux send-keys Enter
+tmux select-pane -R
+tmux send-keys -l "sleep 2"
+tmux send-keys Enter
+tmux send-keys -l "run-gw8"
+tmux send-keys Enter
+tmux select-pane -D
+tmux select-pane -L
+tmux send-keys -l "$setup; . common.sh; clear"
+tmux send-keys Enter
+sleep 0.1
+tmux send-keys -l "$cmd_left"

@@ -22,21 +22,21 @@ host711 ip link set dev lo up
 host822 ip link set dev lo up
 
 # Configure router1 and gateways
-router1 sysctl -w net.ipv4.ip_forward=1
-gw7 sysctl -w net.ipv4.ip_forward=1
-gw8 sysctl -w net.ipv4.ip_forward=1
+router1 sysctl -w net.{ipv4.ip_forward,ipv6.conf.all.forwarding}=1
+gw7 sysctl -w net.{ipv4.ip_forward,ipv6.conf.all.forwarding}=1
+gw8 sysctl -w net.{ipv4.ip_forward,ipv6.conf.all.forwarding}=1
 
 # Create two veth pairs to connect gwX/router1
 gw7 ip link add dev vgw7router1 mtu 1500 type veth peer name vrouter1gw7 mtu 1500
-gw8 ip link add dev vgw8router1 mtu 1200 type veth peer name vrouter1gw8 mtu 1200
+gw8 ip link add dev vgw8router1 mtu 1400 type veth peer name vrouter1gw8 mtu 1400
 gw7 ip link set vrouter1gw7 netns router1
 gw8 ip link set vrouter1gw8 netns router1
 
-router1 ip addr add 192.168.11.1/24 dev vrouter1gw7
-router1 ip addr add 192.168.12.1/24 dev vrouter1gw8
+router1 ip addr add ${GW_IP_PREFIX}192.168.11.1/$GW_SUBNET_BITS dev vrouter1gw7
+router1 ip addr add ${GW_IP_PREFIX}192.168.12.1/$GW_SUBNET_BITS dev vrouter1gw8
 
-gw7 ip addr add 192.168.11.97/24 dev vgw7router1
-gw8 ip addr add 192.168.12.98/24 dev vgw8router1
+gw7 ip addr add ${GW_IP_PREFIX}192.168.11.97/$GW_SUBNET_BITS dev vgw7router1
+gw8 ip addr add ${GW_IP_PREFIX}192.168.12.98/$GW_SUBNET_BITS dev vgw8router1
 
 router1 ip link set vrouter1gw7 up
 router1 ip link set vrouter1gw8 up
@@ -44,8 +44,8 @@ gw7 ip link set vgw7router1 up
 gw8 ip link set vgw8router1 up
 
 # Configure default routes for gwX
-gw7 ip route add default via 192.168.11.1 dev vgw7router1
-gw8 ip route add default via 192.168.12.1 dev vgw8router1
+gw7 ip route add default via ${GW_IP_PREFIX}192.168.11.1 dev vgw7router1
+gw8 ip route add default via ${GW_IP_PREFIX}192.168.12.1 dev vgw8router1
 
 # Create two veth pairs to connect gwX/hostXXX
 gw7 ip link add dev vgw7host711 mtu 1500 type veth peer name vhost711gw7 mtu 1500
@@ -53,11 +53,11 @@ gw8 ip link add dev vgw8host822 mtu 1500 type veth peer name vhost822gw8 mtu 150
 gw7 ip link set vhost711gw7 netns host711
 gw8 ip link set vhost822gw8 netns host822
 
-gw7 ip addr add 192.168.97.1/24 dev vgw7host711
-gw8 ip addr add 192.168.98.2/24 dev vgw8host822
+gw7 ip addr add ${GW7EN_IP_PREFIX}192.168.97.1/$GW7EN_SUBNET_BITS dev vgw7host711
+gw8 ip addr add ${GW8EN_IP_PREFIX}192.168.98.2/$GW8EN_SUBNET_BITS dev vgw8host822
 
-host711 ip addr add 192.168.97.11/24 dev vhost711gw7
-host822 ip addr add 192.168.98.22/24 dev vhost822gw8
+host711 ip addr add ${GW7EN_IP_PREFIX}192.168.97.11/$GW7EN_SUBNET_BITS dev vhost711gw7
+host822 ip addr add ${GW8EN_IP_PREFIX}192.168.98.22/$GW8EN_SUBNET_BITS dev vhost822gw8
 
 gw7 ip link set vgw7host711 up
 gw8 ip link set vgw8host822 up
@@ -65,46 +65,52 @@ host711 ip link set vhost711gw7 up
 host822 ip link set vhost822gw8 up
 
 # Configure default routes for hostXXX
-host711 ip route add default via 192.168.97.1 dev vhost711gw7
-host822 ip route add default via 192.168.98.2 dev vhost822gw8
+host711 ip route add default via ${GW7EN_IP_PREFIX}192.168.97.1 dev vhost711gw7
+host822 ip route add default via ${GW8EN_IP_PREFIX}192.168.98.2 dev vhost822gw8
 
 # Create hosts files
 mkdir -p /etc/netns/{router1,gw7,gw8,host711,host822}
 
 cat > /etc/netns/router1/hosts << EOF
-127.0.0.1       router1
-192.168.11.97   gw7
-192.168.12.98   gw8
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4 router1
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6 router1
+
+${GW_IP_PREFIX}192.168.11.97   gw7
+${GW_IP_PREFIX}192.168.12.98   gw8
 EOF
 cat > /etc/netns/gw7/hosts << EOF
-192.168.11.1    router1
-127.0.0.1       gw7
-192.168.12.98   gw8
-192.168.97.11   host711    #= pub 192.168.11.97 + 10711
-10.248.22.222   host822    #= ext 192.168.12.98 + 20822
-10.248.22.223   host823                                 # unreachable at local gw
-10.248.22.224   host824    #= ext 192.168.12.98 + 20824 # unreachable at remote gw
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4 gw7
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6 gw7
+
+${GW_IP_PREFIX}192.168.11.1       router1
+${GW_IP_PREFIX}192.168.12.98      gw8
+${GW7EN_IP_PREFIX}192.168.97.11   host711   #= pub ${GW_IP_PREFIX}192.168.11.97 + 10711
+${GW7EN_IP_PREFIX}10.248.22.222   host822   #= ext ${GW_IP_PREFIX}192.168.12.98 + 20822
+${GW7EN_IP_PREFIX}10.248.22.223   host823                                               # unreachable at local gw
+${GW7EN_IP_PREFIX}10.248.22.224   host824   #= ext ${GW_IP_PREFIX}192.168.12.98 + 20824 # unreachable at remote gw
 EOF
 cat > /etc/netns/gw8/hosts << EOF
-192.168.12.1    router1
-192.168.11.97   gw7
-127.0.0.1       gw8
-10.255.11.111   host711    #= ext 192.168.11.97 + 10711
-192.168.98.22   host822    #= pub 192.168.12.98 + 20822
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4 gw8
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6 gw8
+
+${GW_IP_PREFIX}192.168.12.1       router1
+${GW_IP_PREFIX}192.168.11.97      gw7
+${GW8EN_IP_PREFIX}10.255.11.111   host711   #= ext ${GW_IP_PREFIX}192.168.11.97 + 10711
+${GW8EN_IP_PREFIX}192.168.98.22   host822   #= pub ${GW_IP_PREFIX}192.168.12.98 + 20822
 EOF
 cat > /etc/netns/host711/hosts << EOF
-127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
-::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
-192.168.97.1    gw7
-127.0.0.1       host711
-10.248.22.222   host822
-10.248.22.223   host823
-10.248.22.224   host824
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4 host711
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6 host711
+
+${GW7EN_IP_PREFIX}192.168.97.1    gw7
+${GW7EN_IP_PREFIX}10.248.22.222   host822
+${GW7EN_IP_PREFIX}10.248.22.223   host823
+${GW7EN_IP_PREFIX}10.248.22.224   host824
 EOF
 cat > /etc/netns/host822/hosts << EOF
-127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
-::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
-192.168.98.2    gw8
-10.255.11.111   host711
-127.0.0.1       host822
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4 host822
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6 host822
+
+${GW8EN_IP_PREFIX}192.168.98.2    gw8
+${GW8EN_IP_PREFIX}10.255.11.111   host711
 EOF

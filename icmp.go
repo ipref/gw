@@ -4,7 +4,7 @@ package main
 
 import (
 	"crypto/rand"
-	"net"
+	"net/netip"
 )
 
 var icmpreq chan (*PktBuf)
@@ -21,19 +21,80 @@ const (
 	// ICMPv4 codes for ICMPv4_DEST_UNREACH
 	ICMPv4_NET_UNREACH  = 0
 	ICMPv4_HOST_UNREACH = 1
-	ICMPv4_PROT_UNREACH = 2
+	ICMPv4_PROT_UNREACH = 2 // protocol unreachable
 	ICMPv4_PORT_UNREACH = 3
 	ICMPv4_FRAG_NEEDED  = 4
 	ICMPv4_NET_UNKNOWN  = 6
 	ICMPv4_HOST_UNKNOWN = 7
 
 	// ICMPv4 codes for ICMPv4_TIME_EXCEEDED
-	ICMPv4_EXC_TTL = 0
+	ICMPv4_EXC_TTL  = 0
+	ICMPv4_EXC_FRAG = 1 // fragment reassembly time exceeded
 
-	ICMPv4_SEND_TTL = 64
+	// ICMPv6 types
+	ICMPv6_DEST_UNREACH   = 1
+	ICMPv6_PACKET_TOO_BIG = 2
+	ICMPv6_TIME_EXCEEDED  = 3
+	ICMPv6_ECHO_REQUEST   = 128 // code = 0
+	ICMPv6_ECHO_REPLY     = 129 // code = 0
+
+	// ICMPv6 codes for ICMPv6_DEST_UNREACH
+	ICMPv6_NET_UNREACH = 0
+	ICMPv6_HOST_UNREACH = 3
+	ICMPv6_PORT_UNREACH = 4
+
+	// ICMPv6 codes for ICMPv6_TIME_EXCEEDED
+	ICMPv6_EXC_TTL  = 0 // hop limit exceeded
+	ICMPv6_EXC_FRAG = 1
+
+	// IPREF_ICMP types
+	IPREF_ICMP_ECHO_REPLY = 0
+	IPREF_ICMP_DEST_UNREACH = 3
+	IPREF_ICMP_ECHO_REQUEST = 8
+	IPREF_ICMP_TIME_EXCEEDED = 11
+
+	// IPREF_ICMP codes for IPREF_ICMP_DEST_UNREACH
+	IPREF_ICMP_NET_UNREACH  = 0
+	IPREF_ICMP_HOST_UNREACH = 1
+	IPREF_ICMP_PORT_UNREACH = 2
+	IPREF_ICMP_FRAG_NEEDED  = 4
+
+	// IPREF_ICMP codes for IPREF_ICMP_TIME_EXCEEDED
+	IPREF_ICMP_EXC_TTL  = 0
+	IPREF_ICMP_EXC_FRAG = 1
+
+	ICMPv4_SEND_TTL     = 64
+	ICMPv6_SEND_TTL     = 64
+	IPREF_ICMP_SEND_TTL = 64
 )
 
 // TODO Add a limit to prevent ICMP flooding.
+
+// Allow sending ICMP messages in response to these ICMP messages.
+func icmp_respond_icmp(pkt_typ int, typ byte, code byte) bool {
+
+	switch pkt_typ {
+
+	case PKT_IPREF:
+		switch typ {
+		case IPREF_ICMP_ECHO_REPLY, IPREF_ICMP_ECHO_REQUEST:
+			return true
+		}
+
+	case PKT_IPv4:
+		switch typ {
+		case ICMPv4_ECHO_REPLY, ICMPv4_ECHO_REQUEST:
+			return true
+		}
+
+	case PKT_IPv6:
+		switch typ {
+		case ICMPv6_ECHO_REQUEST, ICMPv6_ECHO_REPLY:
+			return true
+		}
+	}
+	return false
+}
 
 func icmp() {
 
@@ -41,29 +102,31 @@ func icmp() {
 
 		switch {
 
-		case pb.icmp.typ == ICMPv4_DEST_UNREACH && pb.icmp.ours && pb.typ == PKT_IPv4:
+		case pb.typ == PKT_IPv4 && pb.icmp.typ == ICMPv4_DEST_UNREACH && pb.icmp.ours:
 
 			src := IP32(be.Uint32(pb.pkt[pb.data+IPv4_SRC : pb.data+IPv4_SRC+4]))
 			dst := IP32(be.Uint32(pb.pkt[pb.data+IPv4_DST : pb.data+IPv4_DST+4]))
-			log.trace("icmp: dest unreach (ours)  %v  %v", src, dst)
+			log.trace("icmp:    dest unreach (IPv4, ours)  %v  %v", src, dst)
 
-			if pb.ipref_proto() == ICMP {
+			if pb.pkt[IPv4_PROTO] == ICMP {
 				icmp_hdr := pb.data + pb.ip_hdr_len()
 				if pb.tail < icmp_hdr + ICMP_DATA {
-					log.trace("icmp: invalid layer 4, dropping")
+					log.trace("icmp:    invalid layer 4, dropping")
 					retbuf <- pb
 					continue
 				}
 				typ := pb.pkt[icmp_hdr + ICMP_TYPE]
-				if typ != ICMPv4_ECHO_REPLY && typ != ICMPv4_ECHO_REQUEST { // TODO What else to allow?
-					log.trace("icmp: dropping type %v (don't respond to icmp with icmp)", typ)
+				code := pb.pkt[icmp_hdr + ICMP_CODE]
+				if !icmp_respond_icmp(pb.typ, typ, code) {
+					log.trace("icmp:    don't respond to icmp with icmp (%v %v %v), dropping",
+						pb.typ, typ, code)
 					retbuf <- pb
 					continue
 				}
 			}
 			frag_field := be.Uint16(pb.pkt[pb.data + IPv4_FRAG : pb.data + IPv4_FRAG + 2])
 			if frag_field & 0x1fff != 0 {
-				log.trace("icmp: not first fragment, dropping")
+				log.trace("icmp:    not first fragment, dropping")
 				retbuf <- pb
 				continue
 			}
@@ -74,11 +137,12 @@ func icmp() {
 			new_hdrs_len := IPv4_HDR_MIN_LEN + ICMP_DATA
 			if space_needed := new_hdrs_len - pb.data; space_needed > 0 {
 				if len(pb.pkt) - pb.tail < space_needed {
-					log.err("icmp: not enough space in buffer for header, dropping")
+					log.err("icmp:    not enough space in buffer for header, dropping")
 					retbuf <- pb
 					continue
 				}
 				copy(pb.pkt[new_hdrs_len:], pb.pkt[pb.data:pb.tail])
+				pb.data, pb.tail = new_hdrs_len, new_hdrs_len + pb.len()
 			}
 			inner_ip_hdr := pb.data
 			outer_ip_hdr := inner_ip_hdr - new_hdrs_len
@@ -89,7 +153,7 @@ func icmp() {
 			pb.pkt[outer_ip_hdr + IP_VER] = 0x45
 			pb.pkt[outer_ip_hdr + IPv4_DSCP] = 0
 			if (pb.tail - outer_ip_hdr) >> 16 != 0 {
-				log.err("icmp: packet too large, dropping")
+				log.err("icmp:    packet too large, dropping")
 				retbuf <- pb
 				continue
 			}
@@ -118,7 +182,91 @@ func icmp() {
 			send_tun <- pb
 			continue
 
-		case pb.icmp.typ == ICMPv4_DEST_UNREACH && pb.typ == PKT_IPREF:
+		case pb.typ == PKT_IPv6 && pb.icmp.typ == ICMPv6_DEST_UNREACH && pb.icmp.ours:
+
+			src, _ := netip.AddrFromSlice(pb.pkt[pb.data+IPv6_SRC : pb.data+IPv6_SRC+16])
+			dst, _ := netip.AddrFromSlice(pb.pkt[pb.data+IPv6_DST : pb.data+IPv6_DST+16])
+			log.trace("icmp:    dest unreach (IPv6, ours)  %v  %v", src, dst)
+
+			if pb.ip_proto() == ICMPv6 {
+				icmp_hdr := pb.data + pb.ip_hdr_len()
+				if pb.tail < icmp_hdr + ICMP_DATA {
+					log.trace("icmp:    invalid layer 4, dropping")
+					retbuf <- pb
+					continue
+				}
+				typ := pb.pkt[icmp_hdr + ICMP_TYPE]
+				code := pb.pkt[icmp_hdr + ICMP_CODE]
+				if !icmp_respond_icmp(pb.typ, typ, code) {
+					log.trace("icmp:    don't respond to icmp with icmp (%v %v %v), dropping",
+						pb.typ, typ, code)
+					retbuf <- pb
+					continue
+				}
+			}
+			if pb.pkt[pb.data + IPv6_NEXT] == IPv6_FRAG_EXT {
+				i := pb.data + IPv6_HDR_MIN_LEN + IPv6_FRAG_OFF
+				frag_field := be.Uint16(pb.pkt[i : i + 2])
+				frag_off := int(frag_field &^ 3)
+				if frag_off != 0 {
+					log.trace("icmp:    not first fragment, dropping")
+					retbuf <- pb
+					continue
+				}
+			}
+
+			if pb.len() > ICMP_ENCAP_MAX_LEN {
+				pb.tail = pb.data + ICMP_ENCAP_MAX_LEN
+			}
+			new_hdrs_len := IPv6_HDR_MIN_LEN + ICMP_DATA
+			if space_needed := new_hdrs_len - pb.data; space_needed > 0 {
+				if len(pb.pkt) - pb.tail < space_needed {
+					log.err("icmp:    not enough space in buffer for header, dropping")
+					retbuf <- pb
+					continue
+				}
+				copy(pb.pkt[new_hdrs_len:], pb.pkt[pb.data:pb.tail])
+				pb.data, pb.tail = new_hdrs_len, new_hdrs_len + pb.len()
+			}
+			inner_ip_hdr := pb.data
+			outer_ip_hdr := inner_ip_hdr - new_hdrs_len
+			icmp_hdr := inner_ip_hdr - ICMP_DATA
+			pb.data -= new_hdrs_len
+
+			// build outer IP header
+			pb.pkt[outer_ip_hdr + IP_VER] = 0x60
+			pb.pkt[outer_ip_hdr + 1] = 0 // TODO Flow label?
+			pb.pkt[outer_ip_hdr + 2] = 0
+			pb.pkt[outer_ip_hdr + 3] = 0
+			if (pb.tail - icmp_hdr) >> 16 != 0 {
+				log.err("icmp:    packet too large, dropping")
+				retbuf <- pb
+				continue
+			}
+			be.PutUint16(pb.pkt[outer_ip_hdr + IPv6_PLD_LEN : outer_ip_hdr + IPv6_PLD_LEN + 2],
+				uint16(pb.tail - icmp_hdr))
+			pb.pkt[outer_ip_hdr + IPv6_NEXT] = ICMPv6
+			pb.pkt[outer_ip_hdr + IPv6_TTL] = ICMPv6_SEND_TTL
+			copy(pb.pkt[outer_ip_hdr + IPv6_SRC : outer_ip_hdr + IPv6_SRC + 16], dst.AsSlice()) // swap src/dst
+			copy(pb.pkt[outer_ip_hdr + IPv6_DST : outer_ip_hdr + IPv6_DST + 16], src.AsSlice())
+
+			// build ICMP header
+			pb.pkt[icmp_hdr + ICMP_TYPE] = ICMPv6_DEST_UNREACH
+			pb.pkt[icmp_hdr + ICMP_CODE] = pb.icmp.code
+			be.PutUint16(pb.pkt[icmp_hdr + ICMP_CSUM : icmp_hdr + ICMP_CSUM + 2], 0)
+			be.PutUint16(pb.pkt[icmp_hdr + ICMP_CSUM + 2 : icmp_hdr + ICMP_CSUM + 4], 0)
+			be.PutUint16(pb.pkt[icmp_hdr + ICMP_MTU : icmp_hdr + ICMP_MTU + 2], pb.icmp.mtu)
+			icmp_csum := csum_add(0, pb.pkt[outer_ip_hdr + IPv6_SRC : pb.tail])
+			var pseudo [4]byte
+			be.PutUint16(pseudo[:2], uint16(pb.tail - icmp_hdr))
+			pseudo[3] = ICMPv6
+			icmp_csum = csum_add(icmp_csum, pseudo[:])
+			be.PutUint16(pb.pkt[icmp_hdr + ICMP_CSUM : icmp_hdr + ICMP_CSUM + 2], icmp_csum^0xffff)
+
+			send_tun <- pb
+			continue
+
+		case pb.typ == PKT_IPREF && pb.icmp.typ == IPREF_ICMP_DEST_UNREACH:
 
 			var ours_str string
 			if pb.icmp.ours {
@@ -126,29 +274,31 @@ func icmp() {
 			} else {
 				ours_str = "theirs"
 			}
-			log.trace("icmp: dest unreach (%v)  %v + %v  %v + %v",
-				ours_str,
-				net.IP(pb.ipref_sref_ip()),
-				pb.ipref_sref(),
-				net.IP(pb.ipref_dref_ip()),
-				pb.ipref_dref())
+			if !pb.ipref_ok() {
+				log.fatal("icmp:    invalid ipref packet")
+			}
+			src := pb.ipref_src()
+			dst := pb.ipref_dst()
+			log.trace("icmp:    dest unreach (IPREF, %v)  %v  %v", ours_str, src, dst)
 
 			if pb.ipref_proto() == ICMP {
 				icmp_hdr := pb.data + pb.ipref_hdr_len()
 				if pb.tail < icmp_hdr + ICMP_DATA {
-					log.trace("icmp: invalid layer 4, dropping")
+					log.trace("icmp:    invalid layer 4, dropping")
 					retbuf <- pb
 					continue
 				}
 				typ := pb.pkt[icmp_hdr + ICMP_TYPE]
-				if typ != ICMPv4_ECHO_REPLY && typ != ICMPv4_ECHO_REQUEST { // TODO What else to allow?
-					log.trace("icmp: dropping type %v (don't respond to icmp with icmp)", typ)
+				code := pb.pkt[icmp_hdr + ICMP_CODE]
+				if !icmp_respond_icmp(pb.typ, typ, code) {
+					log.trace("icmp:    don't respond to icmp with icmp (%v %v %v), dropping",
+						pb.typ, typ, code)
 					retbuf <- pb
 					continue
 				}
 			}
 			if frag_if, frag_off, _, _ := pb.ipref_frag(); frag_if && frag_off != 0 {
-				log.trace("icmp: not first fragment, dropping")
+				log.trace("icmp:    not first fragment, dropping")
 				retbuf <- pb
 				continue
 			}
@@ -156,15 +306,17 @@ func icmp() {
 			if pb.len() > ICMP_ENCAP_MAX_LEN {
 				pb.tail = pb.data + ICMP_ENCAP_MAX_LEN
 			}
+			iplen := pb.ipref_iplen()
 			reflen := pb.ipref_reflen()
-			new_hdrs_len := 12 + reflen * 2 + ICMP_DATA
+			new_hdrs_len := 4 + iplen * 2 + reflen * 2 + ICMP_DATA
 			if space_needed := new_hdrs_len - pb.data; space_needed > 0 {
 				if len(pb.pkt) - pb.tail < space_needed {
-					log.err("icmp: not enough space in buffer for header, dropping")
+					log.err("icmp:    not enough space in buffer for header, dropping")
 					retbuf <- pb
 					continue
 				}
 				copy(pb.pkt[new_hdrs_len:], pb.pkt[pb.data:pb.tail])
+				pb.data, pb.tail = new_hdrs_len, new_hdrs_len + pb.len()
 			}
 			inner_ipref_hdr := pb.data
 			inner_ipref_srcdst := inner_ipref_hdr + 4
@@ -177,14 +329,14 @@ func icmp() {
 
 			// build outer IPREF header
 			pb.pkt[outer_ipref_hdr] = (0x1 << 4) | (encode_reflen(reflen) << 2)
-			pb.pkt[outer_ipref_hdr + 1] = 0
-			pb.pkt[outer_ipref_hdr + 2] = ICMPv4_SEND_TTL
+			pb.pkt[outer_ipref_hdr + 1] = pb.pkt[inner_ipref_hdr + 1]
+			pb.pkt[outer_ipref_hdr + 2] = IPREF_ICMP_SEND_TTL
 			pb.pkt[outer_ipref_hdr + 3] = ICMP
 			copy(pb.pkt[outer_ipref_hdr + 4 : icmp_hdr], pb.pkt[inner_ipref_srcdst:]) // copy in src/dst
 			pb.ipref_swap_srcdst()
 
 			// build ICMP header
-			pb.pkt[icmp_hdr + ICMP_TYPE] = ICMPv4_DEST_UNREACH
+			pb.pkt[icmp_hdr + ICMP_TYPE] = IPREF_ICMP_DEST_UNREACH
 			pb.pkt[icmp_hdr + ICMP_CODE] = pb.icmp.code
 			be.PutUint16(pb.pkt[icmp_hdr + ICMP_CSUM : icmp_hdr + ICMP_CSUM + 2], 0)
 			be.PutUint16(pb.pkt[icmp_hdr + ICMP_CSUM + 2 : icmp_hdr + ICMP_CSUM + 4], 0)
@@ -200,8 +352,8 @@ func icmp() {
 			continue
 		}
 
-		log.info("icmp: received icmp request (%v %v %v %v), dropping for now",
-			pb.icmp.typ, pb.icmp.code, pb.icmp.mtu, pb.icmp.ours)
+		log.info("icmp:    received icmp request (%v %v %v %v), dropping for now",
+			pb.typ, pb.icmp.typ, pb.icmp.code, pb.icmp.ours)
 		retbuf <- pb
 	}
 }

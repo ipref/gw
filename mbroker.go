@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math/rand"
 	"net"
+	"net/netip"
 	"os"
 	"path"
 	"strings"
@@ -101,7 +102,7 @@ func (mb *MB) get_ea(rpb *PktBuf) int {
 
 		var ipr IpRef
 
-		ipr.ip = IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
+		ipr.ip, _ = netip.AddrFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
 		ipr.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
 		ipr.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
 
@@ -153,7 +154,7 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 
 	var ipr IpRef
 
-	ipr.ip = IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
+	ipr.ip, _ = netip.AddrFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
 	ipr.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
 	ipr.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
 

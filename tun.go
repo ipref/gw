@@ -4,6 +4,7 @@ package main
 
 import (
 	"golang.org/x/sys/unix"
+	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -13,7 +14,6 @@ import (
 const (
 	TUN_HDR_LEN = 4
 	TUN_IFF_TUN = uint16(0x0001)
-	TUN_IPv4    = uint16(0x0800)
 	// TUN header offsets
 	TUN_FLAGS = 0
 	TUN_PROTO = 2
@@ -25,6 +25,11 @@ const (
 	ETHER_SRC_MAC = 6
 	ETHER_TYPE    = 12
 	ETHER_HDRLEN = 6 + 6 + 2
+
+	TUN_RECV_OFF = IPREF_HDR_MAX_LEN +
+		(IPv6_HDR_MIN_LEN + IPv6_FRAG_HDR_LEN - IPv4_HDR_MIN_LEN) +
+		(IPREF_HDR_MAX_LEN - IPREF_HDR_MIN_LEN) -
+		TUN_HDR_LEN
 )
 
 var recv_tun chan (*PktBuf)
@@ -45,13 +50,17 @@ func tun_sender(fd *os.File) {
 		if cli.trace {
 			pb.pp_net("tun out: ")
 			pb.pp_tran("tun out: ")
-			pb.pp_raw("tun out: ")
+			// pb.pp_raw("tun out: ")
 		}
 
-		if pb.typ != PKT_IPv4 {
-			log.err("tun out: not an IPv4 packet (%v), dropping", pb.typ)
-			retbuf <- pb
-			continue
+		var proto uint16
+		switch pb.typ {
+		case PKT_IPv4:
+			proto = ETHER_IPv4
+		case PKT_IPv6:
+			proto = ETHER_IPv6
+		default:
+			log.fatal("tun out: not an IPv4/6 packet (%v)", pb.typ)
 		}
 
 		if pb.data < TUN_HDR_LEN {
@@ -62,7 +71,7 @@ func tun_sender(fd *os.File) {
 		pb.data -= TUN_HDR_LEN
 
 		be.PutUint16(pb.pkt[pb.data+TUN_FLAGS:pb.data+TUN_FLAGS+2], TUN_IFF_TUN)
-		be.PutUint16(pb.pkt[pb.data+TUN_PROTO:pb.data+TUN_PROTO+2], TUN_IPv4)
+		be.PutUint16(pb.pkt[pb.data+TUN_PROTO:pb.data+TUN_PROTO+2], proto)
 
 		wlen, err := fd.Write(pb.pkt[pb.data:pb.tail])
 		if err != nil {
@@ -88,7 +97,7 @@ func tun_receiver(fd *os.File) {
 	for {
 
 		pb := <-getbuf
-		pb.data = IPREF_HDR_MAX_LEN - TUN_HDR_LEN - IPv4_HDR_MIN_LEN
+		pb.data = TUN_RECV_OFF
 		pkt := pb.pkt[pb.data:]
 
 		maxmsg := 3
@@ -101,7 +110,7 @@ func tun_receiver(fd *os.File) {
 			time.Sleep(769 * time.Millisecond)
 		}
 
-		if rlen < TUN_HDR_LEN+IPv4_HDR_MIN_LEN {
+		if rlen < TUN_HDR_LEN + min(IPv4_HDR_MIN_LEN, IPv6_HDR_MIN_LEN) {
 			log.err("tun in: packet too short, dropping")
 			retbuf <- pb
 			continue
@@ -114,13 +123,17 @@ func tun_receiver(fd *os.File) {
 		}
 
 		proto := be.Uint16(pkt[TUN_PROTO : TUN_PROTO+2])
-		if proto != ETHER_IPv4 {
+		var ipver byte
+		switch proto {
+		case ETHER_IPv4:
+			pb.typ = PKT_IPv4
+			ipver = 4
+		case ETHER_IPv6:
+			pb.typ = PKT_IPv6
+			ipver = 6
+		default:
 			if cli.debug["tun"] {
-				if proto == ETHER_IPv6 {
-					log.debug("tun: IPv6 packet, dropping")
-				} else {
-					log.debug("tun in: non-IP packet: %04x, dropping", proto)
-				}
+				log.debug("tun in: non-IP packet: %04x, dropping", proto)
 			}
 			retbuf <- pb
 			continue
@@ -128,11 +141,10 @@ func tun_receiver(fd *os.File) {
 
 		pb.tail = pb.data + rlen
 		pb.data += TUN_HDR_LEN
-		pb.typ = PKT_IPv4
 		pkt = pb.pkt[pb.data:pb.tail]
 
-		if pkt[IP_VER]&0xf0 != 0x40 {
-			log.err("tun in: not an IPv4 packet, dropping")
+		if pkt[IP_VER] >> 4 != ipver {
+			log.err("tun in: invalid IP packet version, dropping")
 			retbuf <- pb
 			continue
 		}
@@ -144,7 +156,7 @@ func tun_receiver(fd *os.File) {
 		if cli.trace {
 			pb.pp_net("tun in:  ")
 			pb.pp_tran("tun in:  ")
-			pb.pp_raw("tun in:  ")
+			// pb.pp_raw("tun in:  ")
 		}
 
 		recv_tun <- pb
@@ -196,29 +208,46 @@ func start_tun() {
 		// bring tun device up
 
 		ifcname := strings.Trim(string(ifreq.name[:]), "\x00")
-		ea_ip := cli.ea_ip + 1 // hard code .1 as tun ip address
-		ea_masklen := cli.ea_masklen
-		mtu := cli.ifc.MTU - UDP_HDR_LEN - IPREF_HDR_MAX_LEN + IPv4_HDR_MIN_LEN
+		ea_ipb := cli.ea_net.Addr().AsSlice()
+		ea_ipb[len(ea_ipb)-1] = 1 // hard code .1 as tun ip address
+		ea_ip, _ := netip.AddrFromSlice(ea_ipb)
+		ea_masklen := cli.ea_net.Bits()
+		mtu := cli.ifc.MTU - UDP_HDR_LEN - IPREF_HDR_MAX_LEN
+		if cli.ea_net.Addr().Is4() {
+			mtu += IPv4_HDR_MIN_LEN
+		} else {
+			mtu += IPv6_HDR_MIN_LEN
+		}
+		if cli.gw_ip.Is4() {
+			mtu += (16 - 4) * 2
+		}
+		mtu += 3
+		mtu &^= 3
+		if cli.ea_net.Addr().Is4() {
+			mtu = max(mtu, 68)
+		} else {
+			mtu = max(mtu, 1280)
+		}
 
 		cmd, out, ret = shell("ip l set %v mtu %v", ifcname, mtu)
 		if ret != 0 {
 			log.debug("tun: %v", cmd)
 			log.debug("tun: %v", strings.TrimSpace(out))
-			log.fatal("tun: cannot set %v MTU: %v", ifcname, err)
+			log.fatal("tun: cannot set %v MTU", ifcname)
 		}
 
 		cmd, out, ret = shell("ip a add %v/%v dev %v", ea_ip, ea_masklen, ifcname)
 		if ret != 0 {
 			log.debug("tun: %v", cmd)
 			log.debug("tun: %v", strings.TrimSpace(out))
-			log.fatal("tun: cannot set address on %v: %v", ifcname, err)
+			log.fatal("tun: cannot set address on %v", ifcname)
 		}
 
 		cmd, out, ret = shell("ip l set dev %v up", ifcname)
 		if ret != 0 {
 			log.debug("tun: %v", cmd)
 			log.debug("tun: %v", strings.TrimSpace(out))
-			log.fatal("tun: cannot bring %v up: %v", ifcname, err)
+			log.fatal("tun: cannot bring %v up", ifcname)
 		}
 
 		log.info("tun: netifc %v %v mtu(%v)", ea_ip, ifcname, mtu)

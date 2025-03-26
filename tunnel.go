@@ -5,63 +5,269 @@ package main
 import (
 	"crypto/rand"
 	rff "github.com/ipref/ref"
+	"net/netip"
+	"strings"
 )
 
 /* IPREF Tunnel Protocol */
 
 const (
-	ICMP_NO_ENCAP = iota
+	ICMP_DROP = iota
+	ICMP_NO_ENCAP
 	ICMP_ENCAP
-	ICMP_DROP
 
 	ICMP_ENCAP_MAX_LEN = 576 // must be at least IPREF_HDR_MAX_LEN
 	ICMP_ENCAP_MAX_DEPTH = 3
 
-	ENCAP_MAP_SUCCESS = iota
-	ENCAP_MAP_UNKNOWN_SRC
-	ENCAP_MAP_UNKNOWN_DST
+	ENCAP_MAP_SUCCESS = 0
+	ENCAP_MAP_UNKNOWN_SRC = 2 // You can swap src/dst with ^1
+	ENCAP_MAP_UNKNOWN_DST = 3
 )
 
-func icmpv4_action(icmp_type byte) int {
-	// TODO Add more
-	switch icmp_type {
-	case ICMPv4_DEST_UNREACH, ICMPv4_TIME_EXCEEDED, ICMPv4_REDIRECT, ICMPv4_SOURCE_QUENCH:
-		return ICMP_ENCAP
-	case ICMPv4_ECHO_REPLY, ICMPv4_ECHO_REQUEST:
-		return ICMP_NO_ENCAP
-	default:
-		return ICMP_DROP
+// Convert an ICMPv4/ICMPv6 message into an IPREF_ICMP message.
+func icmp_encap(pkt_typ int, typ byte, code byte) (byte, byte, int) {
+
+	switch pkt_typ {
+
+	case PKT_IPv4:
+		switch typ {
+		case ICMPv4_ECHO_REPLY:
+			if code == 0 {
+				return IPREF_ICMP_ECHO_REPLY, 0, ICMP_NO_ENCAP
+			}
+		case ICMPv4_DEST_UNREACH:
+			switch code {
+			case ICMPv4_NET_UNREACH:
+				return IPREF_ICMP_DEST_UNREACH, IPREF_ICMP_NET_UNREACH, ICMP_ENCAP
+			case ICMPv4_HOST_UNREACH:
+				return IPREF_ICMP_DEST_UNREACH, IPREF_ICMP_HOST_UNREACH, ICMP_ENCAP
+			case ICMPv4_PORT_UNREACH:
+				return IPREF_ICMP_DEST_UNREACH, IPREF_ICMP_PORT_UNREACH, ICMP_ENCAP
+			case ICMPv4_FRAG_NEEDED:
+				return IPREF_ICMP_DEST_UNREACH, IPREF_ICMP_FRAG_NEEDED, ICMP_ENCAP
+			}
+		case ICMPv4_ECHO_REQUEST:
+			if code == 0 {
+				return IPREF_ICMP_ECHO_REQUEST, 0, ICMP_NO_ENCAP
+			}
+		case ICMPv4_TIME_EXCEEDED:
+			switch code {
+			case ICMPv4_EXC_TTL:
+				return IPREF_ICMP_TIME_EXCEEDED, IPREF_ICMP_EXC_TTL, ICMP_ENCAP
+			case ICMPv4_EXC_FRAG:
+				return IPREF_ICMP_TIME_EXCEEDED, IPREF_ICMP_EXC_FRAG, ICMP_ENCAP
+			}
+		}
+
+	case PKT_IPv6:
+		switch typ {
+		case ICMPv6_DEST_UNREACH:
+			switch code {
+			case ICMPv6_NET_UNREACH:
+				return IPREF_ICMP_DEST_UNREACH, IPREF_ICMP_NET_UNREACH, ICMP_ENCAP
+			case ICMPv6_HOST_UNREACH:
+				return IPREF_ICMP_DEST_UNREACH, IPREF_ICMP_HOST_UNREACH, ICMP_ENCAP
+			case ICMPv6_PORT_UNREACH:
+				return IPREF_ICMP_DEST_UNREACH, IPREF_ICMP_PORT_UNREACH, ICMP_ENCAP
+			}
+		case ICMPv6_PACKET_TOO_BIG:
+			if code == 0 {
+				return IPREF_ICMP_DEST_UNREACH, IPREF_ICMP_FRAG_NEEDED, ICMP_ENCAP
+			}
+		case ICMPv6_TIME_EXCEEDED:
+			switch code {
+			case ICMPv6_EXC_TTL:
+				return IPREF_ICMP_TIME_EXCEEDED, IPREF_ICMP_EXC_TTL, ICMP_ENCAP
+			case ICMPv6_EXC_FRAG:
+				return IPREF_ICMP_TIME_EXCEEDED, IPREF_ICMP_EXC_FRAG, ICMP_ENCAP
+			}
+		case ICMPv6_ECHO_REQUEST:
+			if code == 0 {
+				return IPREF_ICMP_ECHO_REQUEST, 0, ICMP_NO_ENCAP
+			}
+		case ICMPv6_ECHO_REPLY:
+			if code == 0 {
+				return IPREF_ICMP_ECHO_REPLY, 0, ICMP_NO_ENCAP
+			}
+		}
 	}
+
+	return 0, 0, ICMP_DROP
 }
 
-func (mgw *MapGw) get_srcdst_ipref(src, dst IP32) (
-		iprefsrc, iprefdst IpRefRec, status int) {
+// Convert an IPREF_ICMP message into an ICMPv4/ICMPv6 message.
+func icmp_deencap(pkt_typ int, typ byte, code byte) (byte, byte, int) {
 
-	iprefsrc = mgw.get_src_ipref(src)
-	if iprefsrc.ip == 0 {
-		log.err("encap:   unknown src address: %v %v, dropping", src, dst)
-		status = ENCAP_MAP_UNKNOWN_SRC
-		return
+	switch pkt_typ {
+
+	case PKT_IPv4:
+		switch typ {
+		case IPREF_ICMP_ECHO_REPLY:
+			if code == 0 {
+				return ICMPv4_ECHO_REPLY, 0, ICMP_NO_ENCAP
+			}
+		case IPREF_ICMP_DEST_UNREACH:
+			switch code {
+			case IPREF_ICMP_NET_UNREACH:
+				return ICMPv4_DEST_UNREACH, ICMPv4_NET_UNREACH, ICMP_ENCAP
+			case IPREF_ICMP_HOST_UNREACH:
+				return ICMPv4_DEST_UNREACH, ICMPv4_HOST_UNREACH, ICMP_ENCAP
+			case IPREF_ICMP_PORT_UNREACH:
+				return ICMPv4_DEST_UNREACH, ICMPv4_PORT_UNREACH, ICMP_ENCAP
+			case IPREF_ICMP_FRAG_NEEDED:
+				return ICMPv4_DEST_UNREACH, ICMPv4_FRAG_NEEDED, ICMP_ENCAP
+			}
+		case IPREF_ICMP_ECHO_REQUEST:
+			if code == 0 {
+				return ICMPv4_ECHO_REQUEST, 0, ICMP_NO_ENCAP
+			}
+		case IPREF_ICMP_TIME_EXCEEDED:
+			switch code {
+			case IPREF_ICMP_EXC_TTL:
+				return ICMPv4_TIME_EXCEEDED, ICMPv4_EXC_TTL, ICMP_ENCAP
+			case IPREF_ICMP_EXC_FRAG:
+				return ICMPv4_TIME_EXCEEDED, ICMPv4_EXC_FRAG, ICMP_ENCAP
+			}
+		}
+
+	case PKT_IPv6:
+		switch typ {
+		case IPREF_ICMP_ECHO_REPLY:
+			if code == 0 {
+				return ICMPv6_ECHO_REPLY, 0, ICMP_NO_ENCAP
+			}
+		case IPREF_ICMP_DEST_UNREACH:
+			switch code {
+			case IPREF_ICMP_NET_UNREACH:
+				return ICMPv6_DEST_UNREACH, ICMPv6_NET_UNREACH, ICMP_ENCAP
+			case IPREF_ICMP_HOST_UNREACH:
+				return ICMPv6_DEST_UNREACH, ICMPv6_HOST_UNREACH, ICMP_ENCAP
+			case IPREF_ICMP_PORT_UNREACH:
+				return ICMPv6_DEST_UNREACH, ICMPv6_PORT_UNREACH, ICMP_ENCAP
+			case IPREF_ICMP_FRAG_NEEDED:
+				return ICMPv6_PACKET_TOO_BIG, 0, ICMP_ENCAP
+			}
+		case IPREF_ICMP_ECHO_REQUEST:
+			if code == 0 {
+				return ICMPv6_ECHO_REQUEST, 0, ICMP_NO_ENCAP
+			}
+		case IPREF_ICMP_TIME_EXCEEDED:
+			switch code {
+			case IPREF_ICMP_EXC_TTL:
+				return ICMPv6_TIME_EXCEEDED, ICMPv6_EXC_TTL, ICMP_ENCAP
+			case IPREF_ICMP_EXC_FRAG:
+				return ICMPv6_TIME_EXCEEDED, ICMPv6_EXC_FRAG, ICMP_ENCAP
+			}
+		}
 	}
 
-	iprefdst = mgw.get_dst_ipref(dst)
-	if iprefdst.ip == 0 {
-		log.err("encap:   unknown dst address: %v %v, sending icmp", src, dst)
-		status = ENCAP_MAP_UNKNOWN_DST
-		return
-	}
+	return 0, 0, ICMP_DROP
+}
 
-	status = ENCAP_MAP_SUCCESS
+func MustParseRef(str string) rff.Ref {
+	str = strings.TrimSpace(str)
+	ref, err := rff.Parse(str)
+	if err != nil {
+		log.fatal("invalid ref: %v", err)
+	}
+	return ref
+}
+
+func MustParseIpRef(str string) (ipref IpRef) {
+	str = strings.TrimSpace(str)
+	ip, ref, found := strings.Cut(str, "+")
+	if !found {
+		log.fatal("invalid ipref: %v", str)
+	}
+	ipref.ip = netip.MustParseAddr(strings.TrimSpace(ip))
+	ipref.ref = MustParseRef(strings.TrimSpace(ref))
 	return
 }
 
-func (mgw *MapGw) get_srcdst_ipref_rev(src, dst IP32, rev bool) (
-		iprefsrc, iprefdst IpRefRec, status int) {
+func (mgw *MapGw) get_src_ipref(addr netip.Addr) (IpRef, bool) {
+
+	if cli.test_mapper {
+		// TODO TEMP Hard-coded addresses for testing
+		gw_prefix := ""
+		if cli.gw_ip.Is6() {
+			gw_prefix = "fc00::"
+		}
+		ea_prefix := ""
+		if cli.ea_net.Addr().Is6() {
+			ea_prefix = "fc00::"
+		}
+		switch addr {
+		case netip.MustParseAddr(ea_prefix + "192.168.97.11"):
+			return IpRef{netip.MustParseAddr(gw_prefix + "192.168.11.97"), MustParseRef("1-0711")}, true
+		case netip.MustParseAddr(ea_prefix + "192.168.98.22"):
+			return IpRef{netip.MustParseAddr(gw_prefix + "192.168.12.98"), MustParseRef("2-0822")}, true
+		}
+		return IpRef{}, false
+	}
+
+	if addr.Is4() {
+		if rec := mgw.get_src_iprec(IP32FromAddr(addr)); rec.ip != 0 {
+			return rec.AsIpRef(), true
+		}
+	}
+	return IpRef{}, false
+}
+
+func (mgw *MapGw) get_dst_ipref(addr netip.Addr) (IpRef, bool) {
+
+	if cli.test_mapper {
+		// TODO TEMP Hard-coded addresses for testing
+		gw_prefix := ""
+		if cli.gw_ip.Is6() {
+			gw_prefix = "fc00::"
+		}
+		ea_prefix := ""
+		if cli.ea_net.Addr().Is6() {
+			ea_prefix = "fc00::"
+		}
+		switch addr {
+		case netip.MustParseAddr(ea_prefix + "10.248.22.222"):
+			return IpRef{netip.MustParseAddr(gw_prefix + "192.168.12.98"), MustParseRef("2-0822")}, true
+		case netip.MustParseAddr(ea_prefix + "10.248.22.224"):
+			return IpRef{netip.MustParseAddr(gw_prefix + "192.168.12.98"), MustParseRef("2-0824")}, true
+		case netip.MustParseAddr(ea_prefix + "10.255.11.111"):
+			return IpRef{netip.MustParseAddr(gw_prefix + "192.168.11.97"), MustParseRef("1-0711")}, true
+		}
+		return IpRef{}, false
+	}
+
+	if addr.Is4() {
+		if rec := mgw.get_dst_iprec(IP32FromAddr(addr)); rec.ip != 0 {
+			return rec.AsIpRef(), true
+		}
+	}
+	return IpRef{}, false
+}
+
+func (mgw *MapGw) get_srcdst_ipref_rev(src, dst netip.Addr, rev bool) (
+	iprefsrc, iprefdst IpRef, status int) {
 
 	if rev {
-		iprefdst, iprefsrc, status = mgw.get_srcdst_ipref(dst, src)
-	} else {
-		iprefsrc, iprefdst, status = mgw.get_srcdst_ipref(src, dst)
+		src, dst = dst, src
+	}
+	var ok bool
+	if iprefsrc, ok = mgw.get_src_ipref(src); !ok {
+		status = ENCAP_MAP_UNKNOWN_SRC
+		goto fail
+	}
+	if iprefdst, ok = mgw.get_dst_ipref(dst); !ok {
+		status = ENCAP_MAP_UNKNOWN_DST
+		goto fail
+	}
+	if rev {
+		iprefsrc, iprefdst = iprefdst, iprefsrc
+	}
+	status = ENCAP_MAP_SUCCESS
+	return
+fail:
+	iprefsrc, iprefdst = IpRef{}, IpRef{}
+	if rev {
+		status ^= 1 // swap src/dst
 	}
 	return
 }
@@ -72,80 +278,200 @@ func (mgw *MapGw) get_srcdst_ipref_rev(src, dst IP32, rev bool) (
 // if the destination is unreachable.
 func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 
-	if pb.typ != PKT_IPv4 {
-		log.fatal("encap:   not an IPv4 packet")
-	}
+	pkt_typ := pb.typ
 	pkt := pb.pkt
 
-	if pb.tail - pb.data < IPv4_HDR_MIN_LEN {
-		log.err("encap:   invalid packet (too small), dropping")
-		return DROP
+	// decode IP header
+
+	var ident uint32
+	var frag_if, frag_df, frag_mf bool
+	var frag_off int
+	var ttl, proto byte
+	var local_srcdst []byte
+	var local_src, local_dst netip.Addr
+	var l4 int
+	var l4_pkt_len int
+	var frag_end int // the position of the end of the packet in the l4 datagram
+
+	switch pkt_typ {
+
+	case PKT_IPv4:
+
+		if pb.len() < IPv4_HDR_MIN_LEN {
+			log.err("encap:   invalid packet (too small), dropping")
+			return DROP
+		}
+		if (pkt[pb.data+IP_VER] & 0xf0 != 0x40) {
+			log.err("encap:   packet is not IPv4, dropping")
+			return DROP
+		}
+		if (pkt[pb.data+IP_VER] & 0x0f != 5) {
+			log.err("encap:   packet has options, dropping")
+			return DROP
+		}
+		ip_pkt_len := int(be.Uint16(pkt[pb.data+IPv4_LEN:pb.data+IPv4_LEN+2]))
+		// We will still encapsulate packets which have been truncated, because that
+		// can happen with packets inside ICMP.
+		if ip_pkt_len < pb.len() {
+			log.err("encap:   invalid packet (bad length field), dropping")
+			return DROP
+		}
+		ident = uint32(be.Uint16(pkt[pb.data+IPv4_ID:pb.data+IPv4_ID+2]))
+		frag_field := be.Uint16(pkt[pb.data+IPv4_FRAG:pb.data+IPv4_FRAG+2])
+		frag_df = frag_field & 0x4000 != 0
+		frag_mf = frag_field & 0x2000 != 0
+		frag_off = int((frag_field & 0x1fff) << 3)
+		frag_if = frag_off != 0 || frag_mf
+		ttl = pkt[pb.data+IPv4_TTL]
+		proto = pkt[pb.data+IPv4_PROTO]
+		var srcdstb [8]byte
+		copy(srcdstb[:], pkt[pb.data+IPv4_SRC:])
+		local_srcdst = srcdstb[:]
+		local_src, _ = netip.AddrFromSlice(pkt[pb.data+IPv4_SRC : pb.data+IPv4_SRC+4])
+		local_dst, _ = netip.AddrFromSlice(pkt[pb.data+IPv4_DST : pb.data+IPv4_DST+4])
+		l4 = pb.data + IPv4_HDR_MIN_LEN
+		l4_pkt_len = pb.tail - l4
+		frag_end = frag_off + l4_pkt_len
+
+	case PKT_IPv6:
+
+		if pb.len() < IPv6_HDR_MIN_LEN {
+			log.err("encap:   invalid packet (too small), dropping")
+			return DROP
+		}
+		if (pkt[pb.data+IP_VER] & 0xf0 != 0x60) {
+			log.err("encap:   packet is not IPv6, dropping")
+			return DROP
+		}
+		ip_pld_len := int(be.Uint16(pkt[pb.data+IPv6_PLD_LEN:pb.data+IPv6_PLD_LEN+2]))
+		if (ip_pld_len == 0) {
+			log.err("encap:   IPv6 jumbogram, dropping")
+			return DROP
+		}
+		// We will still encapsulate packets which have been truncated, because that
+		// can happen with packets inside ICMP.
+		if IPv6_HDR_MIN_LEN + ip_pld_len < pb.len() {
+			log.err("encap:   invalid packet (bad length field), dropping")
+			return DROP
+		}
+		proto = pkt[pb.data+IPv6_NEXT]
+		ttl = pkt[pb.data+IPv6_TTL]
+		var srcdstb [32]byte
+		copy(srcdstb[:], pkt[pb.data+IPv6_SRC:])
+		local_srcdst = srcdstb[:]
+		local_src, _ = netip.AddrFromSlice(pkt[pb.data+IPv6_SRC : pb.data+IPv6_SRC+16])
+		local_dst, _ = netip.AddrFromSlice(pkt[pb.data+IPv6_DST : pb.data+IPv6_DST+16])
+		if proto == IPv6_FRAG_EXT {
+			i := pb.data + IPv6_HDR_MIN_LEN
+			l4 = i + IPv6_FRAG_HDR_LEN
+			l4_pkt_len = pb.tail - l4
+			if l4_pkt_len < 0 {
+				log.err("encap:   invalid IPv6 fragment extension header (truncated), dropping")
+				return DROP
+			}
+			proto = pkt[i+IPv6_FRAG_NEXT]
+			frag_field := be.Uint16(pkt[i+IPv6_FRAG_OFF:i+IPv6_FRAG_OFF+2])
+			if pkt[i+IPv6_FRAG_RES1] != 0 || frag_field & 6 != 0 {
+				log.err("encap:   IPv6 fragment extension header reserved field is non-zero, dropping")
+				return DROP
+			}
+			frag_if = true
+			frag_df = true
+			frag_mf = frag_field & 1 != 0
+			frag_off = int(frag_field &^ 7)
+			frag_end = frag_off + l4_pkt_len
+			ident = be.Uint32(pkt[pb.data+IPv6_FRAG_IDENT:pb.data+IPv6_FRAG_IDENT+4])
+		} else {
+			ident = 0
+			frag_if = false
+			frag_df = true
+			frag_mf = false
+			frag_off = 0
+			l4 = pb.data + IPv6_HDR_MIN_LEN
+			l4_pkt_len = pb.tail - l4
+			frag_end = l4_pkt_len
+		}
+		if proto == IPv6_FRAG_EXT {
+			log.err("encap:   invalid IPv6 packet (fragment within fragment), dropping")
+			return DROP
+		}
+
+	default:
+
+		log.fatal("encap:   unknown packet type: %v", pkt_typ)
 	}
-	if (pkt[pb.data+IP_VER] & 0xf0 != 0x40) {
-		log.err("encap:   packet is not IPv4, dropping")
-		return DROP
-	}
-	if (pkt[pb.data+IP_VER] & 0x0f != 5) {
-		log.err("encap:   packet has options, dropping")
-		return DROP
-	}
-	ip_pkt_len := int(be.Uint16(pkt[pb.data+IPv4_LEN:pb.data+IPv4_LEN+2]))
-	// We will still encapsulate packets which have been truncated, because that
-	// can happen with packets inside ICMP.
-	if ip_pkt_len < pb.tail - pb.data {
-		log.err("encap:   invalid packet (bad length field), dropping")
-		return DROP
-	}
-	ident := be.Uint16(pkt[pb.data+IPv4_ID:pb.data+IPv4_ID+2])
-	frag_field := be.Uint16(pkt[pb.data+IPv4_FRAG:pb.data+IPv4_FRAG+2])
-	frag_df := frag_field & 0x4000 != 0
-	frag_mf := frag_field & 0x2000 != 0
-	frag_off := int((frag_field & 0x1fff) << 3)
-	frag_if := frag_off != 0 || frag_mf
-	ttl := pkt[pb.data+IPv4_TTL]
-	proto := pkt[pb.data+IPv4_PROTO]
-	var srcdst [8]byte
-	copy(srcdst[:], pkt[pb.data+IPv4_SRC:])
-	src := IP32(be.Uint32(pkt[pb.data+IPv4_SRC : pb.data+IPv4_SRC+4]))
-	dst := IP32(be.Uint32(pkt[pb.data+IPv4_DST : pb.data+IPv4_DST+4]))
-	l4 := pb.data + IPv4_HDR_MIN_LEN
-	l4_pkt_len := pb.tail - l4
-	frag_end := frag_off + l4_pkt_len // the position of the end of the packet in the l4 datagram
-	if l4_pkt_len & 0x7 != 0 && frag_mf {
+	if frag_if && (l4_pkt_len & 0x7 != 0 && frag_mf) {
 		log.err("encap:   invalid packet (fragmentation), dropping")
 		return DROP
 	}
 
-	iprefsrc, iprefdst, map_status := map_gw.get_srcdst_ipref_rev(src, dst, rev_srcdst)
+	// map addresses
+
+	iprefsrc, iprefdst, map_status := map_gw.get_srcdst_ipref_rev(local_src, local_dst, rev_srcdst)
 	switch {
 	case map_status == ENCAP_MAP_SUCCESS:
-	case map_status == ENCAP_MAP_UNKNOWN_DST && steal:
-		pb.icmp.typ = ICMPv4_DEST_UNREACH
-		pb.icmp.code = ICMPv4_NET_UNREACH
-		pb.icmp.mtu = 0
-		pb.icmp.ours = true
-		icmpreq <- pb
-		return STOLEN
+	case map_status == ENCAP_MAP_UNKNOWN_SRC:
+		log.err("encap:   unknown src address: %v %v, dropping", local_src, local_dst)
+		return DROP
+	case map_status == ENCAP_MAP_UNKNOWN_DST:
+		if steal {
+			log.err("encap:   unknown dst address: %v %v, sending icmp", local_src, local_dst)
+			if pkt_typ == PKT_IPv4 {
+				pb.icmp.typ = ICMPv4_DEST_UNREACH
+				pb.icmp.code = ICMPv4_NET_UNREACH
+			} else {
+				pb.icmp.typ = ICMPv6_DEST_UNREACH
+				pb.icmp.code = ICMPv6_NET_UNREACH
+			}
+			pb.icmp.mtu = 0
+			pb.icmp.ours = true
+			icmpreq <- pb
+			return STOLEN
+		}
+		log.err("encap:   unknown dst address: %v %v, dropping", local_src, local_dst)
+		return DROP
 	default:
+		panic("unexpected")
+	}
+	var ipver, iplen int
+	switch {
+	case iprefsrc.ip.Is4() && iprefdst.ip.Is4():
+		ipver = 4
+		iplen = 4
+	case iprefsrc.ip.Is6() && iprefdst.ip.Is6():
+		ipver = 6
+		iplen = 16
+	default:
+		panic("unexpected")
+	}
+
+	// translate layer 4 packet
+
+	pb.data, pb.tail = l4, l4 + l4_pkt_len
+	if !ipref_encap_l4(pb, local_srcdst, &proto,
+		frag_if, frag_df, frag_mf,
+		frag_off, frag_end,
+		icmp_depth) {
+
 		return DROP
 	}
+	l4, l4_pkt_len = pb.data, pb.len()
 
 	// replace IP header with IPREF header
 
 	reflen := max(min_reflen(iprefsrc.ref), min_reflen(iprefdst.ref))
-	ipref_hdr_len := 12 + reflen * 2
+	ipref_hdr_len := 4 + iplen * 2 + reflen * 2
 	if frag_if {
 		ipref_hdr_len += 8
 	}
 	if l4 < ipref_hdr_len {
 		if len(pkt) < ipref_hdr_len + l4_pkt_len {
-			log.err("encap:   not enough space for ipref header, dropping")
+			log.err("encap:   not enough space in buffer for ipref header, dropping")
 			return DROP
-		} else {
-			// This should only happen for packets inside ICMP, which should be pretty small.
-			copy(pkt[ipref_hdr_len:], pkt[l4:pb.tail])
-			l4 = ipref_hdr_len
 		}
+		// This should only happen for packets inside ICMP, which should be pretty small.
+		copy(pkt[ipref_hdr_len:], pkt[l4:pb.tail])
+		l4 = ipref_hdr_len
 	}
 	pb.data = l4 - ipref_hdr_len
 	pb.typ = PKT_IPREF
@@ -157,33 +483,57 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 	if frag_df {
 		pkt[pb.data] |= 1 << 0
 	}
-	pkt[pb.data+1] = 0
+	pkt[pb.data+1] = uint8(ipver) << 4
 	pkt[pb.data+2] = ttl
 	pkt[pb.data+3] = proto
 	i := pb.data + 4
 	if frag_if {
 		pkt[i] = 0
 		pkt[i+1] = 0
-		frag_field = uint16(frag_off)
+		frag_field := uint16(frag_off)
 		if frag_mf {
 			frag_field |= 1
 		}
 		be.PutUint16(pkt[i+2:i+4], frag_field)
-		be.PutUint32(pkt[i+4:i+8], uint32(ident))
+		be.PutUint32(pkt[i+4:i+8], ident)
 		i += 8
 	}
 
-	be.PutUint32(pkt[i:i+4], uint32(iprefsrc.ip))
-	i += 4
-	be.PutUint32(pkt[i:i+4], uint32(iprefdst.ip))
-	i += 4
+	copy(pkt[i:i+iplen], iprefsrc.ip.AsSlice())
+	i += iplen
+	copy(pkt[i:i+iplen], iprefdst.ip.AsSlice())
+	i += iplen
 	encode_ref(pkt[i:i+reflen], iprefsrc.ref)
 	i += reflen
 	encode_ref(pkt[i:i+reflen], iprefdst.ref)
+	i += reflen
 
-	// adjust layer 4 headers
+	return ACCEPT
+}
 
-	switch proto {
+// pb contains a layer 4 datagram (or a fragment thereof). pb.typ is the
+// original layer 3 protocol: PKT_IPv4 or PKT_IPv6. Returns false (to drop) or
+// true (on success).
+func ipref_encap_l4(pb *PktBuf,
+	local_srcdst []byte, // Not modified; used for adjusting checksum
+	proto *byte,
+	frag_if, frag_df, frag_mf bool,
+	frag_off, frag_end int,
+	icmp_depth int) bool {
+
+	pkt := pb.pkt
+
+	var ipver int
+	switch pb.typ {
+	case PKT_IPv4:
+		ipver = 4
+	case PKT_IPv6:
+		ipver = 6
+	default:
+		panic("unexpected")
+	}
+
+	switch *proto {
 
 	case TCP: // subtract ip src/dst addresses from csum
 
@@ -192,14 +542,14 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 		}
 		if frag_end < TCP_CSUM+2 {
 			log.err("encap:   invalid tcp packet, dropping")
-			return DROP
+			return false
 		}
 
-		tcp_csum := be.Uint16(pkt[l4+TCP_CSUM-frag_off : l4+TCP_CSUM-frag_off+2])
+		tcp_csum := be.Uint16(pkt[pb.data+TCP_CSUM-frag_off : pb.data+TCP_CSUM-frag_off+2])
 
 		if tcp_csum != 0 {
-			tcp_csum = csum_subtract(tcp_csum^0xffff, srcdst[:])
-			be.PutUint16(pkt[l4+TCP_CSUM-frag_off:l4+TCP_CSUM-frag_off+2], tcp_csum^0xffff)
+			tcp_csum = csum_subtract(tcp_csum^0xffff, local_srcdst[:])
+			be.PutUint16(pkt[pb.data+TCP_CSUM-frag_off:pb.data+TCP_CSUM-frag_off+2], tcp_csum^0xffff)
 		}
 
 	case UDP: // subtract ip src/dst addresses from csum
@@ -209,100 +559,232 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 		}
 		if frag_end < UDP_HDR_LEN {
 			log.err("encap:   invalid udp packet, dropping")
-			return DROP
+			return false
 		}
 
-		udp_csum := be.Uint16(pkt[l4+UDP_CSUM : l4+UDP_CSUM+2])
+		udp_csum := be.Uint16(pkt[pb.data+UDP_CSUM : pb.data+UDP_CSUM+2])
 
 		if udp_csum != 0 {
-			udp_csum = csum_subtract(udp_csum^0xffff, srcdst[:])
-			be.PutUint16(pkt[l4+UDP_CSUM:l4+UDP_CSUM+2], udp_csum^0xffff)
+			if udp_csum == 0xffff {
+				udp_csum = 0
+			}
+			udp_csum = csum_subtract(udp_csum^0xffff, local_srcdst[:])
+			udp_csum ^= 0xffff
+			if udp_csum == 0 {
+				udp_csum = 0xffff
+			}
+			be.PutUint16(pkt[pb.data+UDP_CSUM:pb.data+UDP_CSUM+2], udp_csum)
 		}
 
-	case ICMP: // replace inner ip packet with ipref packet
+	case ICMP, ICMPv6: // convert type/code and replace inner IP packet with IPREF packet
+
+		if (pb.typ == PKT_IPv4) != (*proto == ICMP) {
+			log.err("encap:   icmp version (%v) does not match IP version (IPv%v), dropping",
+				ip_proto_name(*proto), ipver)
+			return false
+		}
+		*proto = ICMP
 
 		if icmp_depth <= 0 {
 			log.err("encap:   icmp depth limit reached, dropping")
-			return DROP
+			return false
 		}
 		if frag_off != 0 {
 			// TODO This will let non-initial fragments of ICMP_ENCAP packets through.
 			break
 		}
-		if l4_pkt_len < ICMP_DATA {
+		if pb.len() < ICMP_DATA {
 			log.err("encap:   invalid icmp packet, dropping")
-			return DROP
+			return false
 		}
 
-		switch icmpv4_action(pkt[l4+ICMP_TYPE]) {
+		typ, code, action := icmp_encap(pb.typ, pkt[pb.data+ICMP_TYPE], pkt[pb.data+ICMP_CODE])
+		switch action {
 
 		case ICMP_DROP:
 
-			log.err("encap:   unrecognized icmp type (%v)", pkt[l4+ICMP_TYPE])
-			return DROP
+			log.err("encap:   unsupported icmp type/code (%v/%v/%v), dropping",
+				pb.typ,
+				pkt[pb.data+ICMP_TYPE],
+				pkt[pb.data+ICMP_CODE])
+			return false
+
+		case ICMP_NO_ENCAP:
+
+			icmp_csum := be.Uint16(pkt[pb.data+ICMP_CSUM:pb.data+ICMP_CSUM+2]) ^ 0xffff
+			icmp_csum = csum_subtract(icmp_csum, pkt[pb.data+ICMP_TYPE:pb.data+ICMP_CODE+1])
+			pkt[pb.data+ICMP_TYPE] = typ
+			pkt[pb.data+ICMP_CODE] = code
+			icmp_csum = csum_add(icmp_csum, pkt[pb.data+ICMP_TYPE:pb.data+ICMP_CODE+1])
+			if pb.typ == PKT_IPv6 {
+				if frag_if {
+					log.err("encap:   can't calculate checksum for ICMPv6 packet (fragment), dropping")
+					return false
+				}
+				if pb.len() >> 16 != 0  {
+					log.err("encap:   can't calculate checksum for ICMPv6 packet (too big), dropping")
+					return false
+				}
+				icmp_csum = csum_subtract(icmp_csum, local_srcdst)
+				var pseudo [4]byte
+				be.PutUint16(pseudo[:2], uint16(pb.len()))
+				pseudo[3] = ICMPv6
+				icmp_csum = csum_subtract(icmp_csum, pseudo[:])
+			}
+			be.PutUint16(pkt[pb.data+ICMP_CSUM:pb.data+ICMP_CSUM+2], icmp_csum^0xffff)
 
 		case ICMP_ENCAP:
 
+			// encap inner packet
 			if frag_if {
 				log.err("encap:   fragmented icmp packet that needs inner encap, dropping")
-				return DROP
+				return false
 			}
 			inner_pb := PktBuf{
-				pkt: pkt[l4+ICMP_DATA:],
-				typ: PKT_IPv4,
+				pkt: pkt[pb.data+ICMP_DATA:],
+				typ: pb.typ,
 				data: 0,
-				tail: min(l4_pkt_len - ICMP_DATA, ICMP_ENCAP_MAX_LEN)}
+				tail: min(pb.len() - ICMP_DATA, ICMP_ENCAP_MAX_LEN)}
 			if ipref_encap(&inner_pb, true, icmp_depth - 1, false) != ACCEPT {
 				log.err("encap:   dropping icmp due to invalid inner packet")
-				return DROP
+				return false
 			}
 			if inner_pb.data != 0 {
-				copy(pkt[l4+ICMP_DATA:], inner_pb.pkt[inner_pb.data:inner_pb.tail])
+				copy(pkt[pb.data+ICMP_DATA:], inner_pb.pkt[inner_pb.data:inner_pb.tail])
 			}
-			pb.tail = inner_pb.tail - inner_pb.data + l4 + ICMP_DATA
-			pkt[l4+ICMP_CSUM] = 0
-			pkt[l4+ICMP_CSUM+1] = 0
-			icmp_csum := csum_add(0, pkt[l4:pb.tail])
-			be.PutUint16(pkt[l4+ICMP_CSUM:l4+ICMP_CSUM+2], icmp_csum^0xffff)
+			pb.tail = inner_pb.tail - inner_pb.data + pb.data + ICMP_DATA
+
+			// adjust mtu
+			if code == IPREF_ICMP_FRAG_NEEDED {
+				if pb.typ == PKT_IPv6 {
+					upper_mtu := be.Uint16(pkt[pb.data+ICMP_BODY:pb.data+ICMP_BODY+2])
+					if upper_mtu != 0 {
+						// The standard does actually allow 32-bit mtu, but we don't support it.
+						log.err("encap:   bad MTU in ICMPv6 Packet Too Big, dropping")
+						return false
+					}
+				}
+				mtu := int(be.Uint16(pkt[pb.data+ICMP_MTU:pb.data+ICMP_MTU+2]))
+				if ipver == PKT_IPv4 {
+					mtu -= IPv4_HDR_MIN_LEN
+				} else {
+					mtu -= IPv6_HDR_MIN_LEN + IPv6_FRAG_HDR_LEN
+				}
+				mtu += IPREF_HDR_MIN_LEN
+				if mtu <= 0 || mtu >> 16 != 0 {
+					log.err("encap:   bad mtu in icmp dest unreach, dropping")
+					return false
+				}
+				be.PutUint16(pkt[pb.data+ICMP_MTU:pb.data+ICMP_MTU+2], uint16(mtu))
+			}
+
+			// adjust type/code and recalculate checksum
+			pkt[pb.data+ICMP_TYPE] = typ
+			pkt[pb.data+ICMP_CODE] = code
+			be.PutUint16(pkt[pb.data+ICMP_CSUM:pb.data+ICMP_CSUM+2], 0)
+			icmp_csum := csum_add(0, pkt[pb.data:pb.tail])
+			be.PutUint16(pkt[pb.data+ICMP_CSUM:pb.data+ICMP_CSUM+2], icmp_csum^0xffff)
+
+		default:
+
+			panic("unexpected")
+		}
+
+	default:
+
+		log.err("encap:   unsupported layer 4 protocol (%v) in IPv%v, dropping",
+			ip_proto_name(*proto), ipver)
+	}
+
+	return true
+}
+
+func (mtun *MapTun) get_src_addr(src IpRef) (netip.Addr, bool) {
+
+	if cli.test_mapper {
+		// TODO TEMP Hard-coded addresses for testing
+		gw_prefix := ""
+		if cli.gw_ip.Is6() {
+			gw_prefix = "fc00::"
+		}
+		ea_prefix := ""
+		if cli.ea_net.Addr().Is6() {
+			ea_prefix = "fc00::"
+		}
+		switch src {
+		case MustParseIpRef(gw_prefix + "192.168.11.97 + 1-0711"):
+			return netip.MustParseAddr(ea_prefix + "10.255.11.111"), true
+		case MustParseIpRef(gw_prefix + "192.168.12.98 + 2-0822"):
+			return netip.MustParseAddr(ea_prefix + "10.248.22.222"), true
+		case MustParseIpRef(gw_prefix + "192.168.12.98 + 2-0824"):
+			return netip.MustParseAddr(ea_prefix + "10.248.22.224"), true
+		}
+		return netip.Addr{}, false
+	}
+
+	if src.ip.Is4() {
+		if rec := mtun.get_src_iprec(IP32FromAddr(src.ip), src.ref); rec != nil {
+			return AddrFromIP32(rec.ip), true
 		}
 	}
-
-	return ACCEPT
+	return netip.Addr{}, false
 }
 
-func (mtun *MapTun) get_srcdst_ip(sref_ip IP32, sref rff.Ref,
-		dref_ip IP32, dref rff.Ref) (src_ea, dst_ip IP32, status int) {
+func (mtun *MapTun) get_dst_addr(dst IpRef) (netip.Addr, bool) {
 
-	src_ea = IP32(0)
-	if iprec := mtun.get_src_iprec(sref_ip, sref); iprec != nil {
-		src_ea = iprec.ip
-	}
-	if src_ea == 0 {
-		log.err("deencap: unknown src ipref address  %v + %v, dropping",
-			sref_ip, sref)
-		status = ENCAP_MAP_UNKNOWN_SRC
-		return // couldn't assign ea for some reason
+	if cli.test_mapper {
+		// TODO TEMP Hard-coded addresses for testing
+		gw_prefix := ""
+		if cli.gw_ip.Is6() {
+			gw_prefix = "fc00::"
+		}
+		ea_prefix := ""
+		if cli.ea_net.Addr().Is6() {
+			ea_prefix = "fc00::"
+		}
+		switch dst {
+		case MustParseIpRef(gw_prefix + "192.168.11.97 + 1-0711"):
+			return netip.MustParseAddr(ea_prefix + "192.168.97.11"), true
+		case MustParseIpRef(gw_prefix + "192.168.12.98 + 2-0822"):
+			return netip.MustParseAddr(ea_prefix + "192.168.98.22"), true
+		}
+		return netip.Addr{}, false
 	}
 
-	dst_ip = mtun.get_dst_ip(dref_ip, dref)
-	if dst_ip == 0 {
-		log.err("deencap: unknown local destination  %v + %v, sending icmp",
-			dref_ip, &dref)
-		status = ENCAP_MAP_UNKNOWN_DST
-		return
+	if dst.ip.Is4() {
+		dst32 := mtun.get_dst_ip(IP32FromAddr(dst.ip), dst.ref)
+		if dst32 == 0 {
+			return netip.Addr{}, false
+		}
+		return AddrFromIP32(dst32), true
 	}
-
-	status = ENCAP_MAP_SUCCESS
-	return
+	return netip.Addr{}, false
 }
 
-func (mtun *MapTun) get_srcdst_ip_rev(sref_ip IP32, sref rff.Ref,
-		dref_ip IP32, dref rff.Ref, rev bool) (src_ea, dst_ip IP32, status int) {
+func (mtun *MapTun) get_srcdst_ip_rev(src, dst IpRef, rev bool) (
+	src_ea, dst_ip netip.Addr, status int) {
 
 	if rev {
-		dst_ip, src_ea, status = mtun.get_srcdst_ip(dref_ip, dref, sref_ip, sref)
-	} else {
-		src_ea, dst_ip, status = mtun.get_srcdst_ip(sref_ip, sref, dref_ip, dref)
+		src, dst = dst, src
+	}
+	var ok bool
+	if src_ea, ok = mtun.get_src_addr(src); !ok {
+		status = ENCAP_MAP_UNKNOWN_SRC
+		goto fail
+	}
+	if dst_ip, ok = mtun.get_dst_addr(dst); !ok {
+		status = ENCAP_MAP_UNKNOWN_DST
+		goto fail
+	}
+	if rev {
+		src_ea, dst_ip = dst_ip, src_ea
+	}
+	status = ENCAP_MAP_SUCCESS
+	return
+fail:
+	src_ea, dst_ip = netip.Addr{}, netip.Addr{}
+	if rev {
+		status ^= 1 // swap src/dst
 	}
 	return
 }
@@ -317,6 +799,8 @@ func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int 
 		log.fatal("deencap: not an ipref packet")
 	}
 	pkt := pb.pkt
+
+	// decode IPREF header
 
 	if !pb.ipref_ok() {
 		log.err("deencap: invalid ipref packet, dropping")
@@ -339,74 +823,177 @@ func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int 
 	}
 	ttl := pb.ipref_ttl()
 	proto := pb.ipref_proto()
-	sref_ip := IP32(be.Uint32(pb.ipref_sref_ip()))
-	dref_ip := IP32(be.Uint32(pb.ipref_dref_ip()))
-	sref := pb.ipref_sref()
-	dref := pb.ipref_dref()
+	src := pb.ipref_src()
+	dst := pb.ipref_dst()
 	l4 := pb.data + pb.ipref_hdr_len()
 	l4_pkt_len := pb.tail - l4
 	frag_end := frag_off + l4_pkt_len // the position of the end of the packet in the l4 datagram
-	if l4_pkt_len & 0x7 != 0 && frag_mf {
+	if frag_if && (l4_pkt_len & 0x7 != 0 && frag_mf) {
 		log.err("deencap: invalid packet (fragmentation), dropping")
 		return DROP
 	}
 
 	// map addresses
 
-	src_ea, dst_ip, map_status := map_tun.get_srcdst_ip_rev(sref_ip, sref, dref_ip, dref, rev_srcdst)
+	src_ea, dst_ip, map_status := map_tun.get_srcdst_ip_rev(src, dst, rev_srcdst)
 	switch {
 	case map_status == ENCAP_MAP_SUCCESS:
-	case map_status == ENCAP_MAP_UNKNOWN_DST && steal:
-		pb.icmp.typ = ICMPv4_DEST_UNREACH
-		pb.icmp.code = ICMPv4_NET_UNREACH
-		pb.icmp.mtu = 0
-		pb.icmp.ours = false
-		icmpreq <- pb
-		return STOLEN
+	case map_status == ENCAP_MAP_UNKNOWN_SRC:
+		log.err("deencap: unknown src ipref address  %v, dropping", src)
+		return DROP
+	case map_status == ENCAP_MAP_UNKNOWN_DST:
+		if steal {
+			log.err("deencap: unknown local destination  %v, sending icmp", dst)
+			pb.icmp.typ = IPREF_ICMP_DEST_UNREACH
+			pb.icmp.code = IPREF_ICMP_NET_UNREACH
+			pb.icmp.mtu = 0
+			pb.icmp.ours = false
+			icmpreq <- pb
+			return STOLEN
+		}
+		log.err("deencap: unknown local destination  %v, dropping", dst)
+		return DROP
 	default:
+		panic("unexpected")
+	}
+	var iplen int
+	switch {
+	case src_ea.Is4() && dst_ip.Is4():
+		pb.typ = PKT_IPv4
+		iplen = 4
+	case src_ea.Is6() && dst_ip.Is6():
+		pb.typ = PKT_IPv6
+		iplen = 16
+	default:
+		panic("unexpected")
+	}
+	local_srcdst := make([]byte, iplen * 2)
+	copy(local_srcdst[:iplen], src_ea.AsSlice())
+	copy(local_srcdst[iplen:], dst_ip.AsSlice())
+
+	// translate layer 4 packet
+
+	pb.data, pb.tail = l4, l4 + l4_pkt_len
+	if !ipref_deencap_l4(pb, local_srcdst, &proto,
+		frag_if, frag_df, frag_mf, frag_off, frag_end,
+		icmp_depth) {
+
 		return DROP
 	}
+	l4, l4_pkt_len = pb.data, pb.len()
 
 	// replace IPREF header with IP header
 
-	if l4 < IPv4_HDR_MIN_LEN { // this should be impossible
-		log.err("deencap: not enough space for ip header, dropping")
-		return DROP
-	}
-	pb.data = l4 - IPv4_HDR_MIN_LEN
-	pb.typ = PKT_IPv4
+	switch pb.typ {
 
-	pkt[pb.data+IP_VER] = 0x45
-	pkt[pb.data+IPv4_DSCP] = 0
-	if (pb.tail - pb.data) >> 16 != 0 {
-		log.err("deencap: packet too large")
-		return DROP
-	}
-	be.PutUint16(pkt[pb.data+IPv4_LEN:pb.data+IPv4_LEN+2], uint16(pb.tail - pb.data))
-	be.PutUint16(pkt[pb.data+IPv4_ID:pb.data+IPv4_ID+2], uint16(ident))
-	{
-		frag_field := uint16(frag_off) >> 3
-		if frag_df {
-			frag_field |= 1 << 14
+	case PKT_IPv4:
+
+		if pb.data < IPv4_HDR_MIN_LEN {
+			if len(pkt) < IPv4_HDR_MIN_LEN + pb.len() {
+				log.err("deencap: not enough space in buffer for ip header, dropping")
+				return DROP
+			}
+			// This should only happen for packets inside ICMP, which should be pretty small.
+			copy(pb.pkt[IPv4_HDR_MIN_LEN:], pb.pkt[pb.data:pb.tail])
+			pb.data, pb.tail = IPv4_HDR_MIN_LEN, pb.len()
 		}
-		if frag_mf {
-			frag_field |= 1 << 13
+		pb.data -= IPv4_HDR_MIN_LEN
+
+		pkt[pb.data+IP_VER] = 0x45
+		pkt[pb.data+IPv4_DSCP] = 0
+		if pb.len() >> 16 != 0 {
+			log.err("deencap: packet too big, dropping")
+			return DROP
 		}
-		be.PutUint16(pkt[pb.data+IPv4_FRAG:pb.data+IPv4_FRAG+2], frag_field)
+		be.PutUint16(pkt[pb.data+IPv4_LEN:pb.data+IPv4_LEN+2], uint16(pb.len()))
+		be.PutUint16(pkt[pb.data+IPv4_ID:pb.data+IPv4_ID+2], uint16(ident))
+		{
+			frag_field := uint16(frag_off) >> 3
+			if frag_df {
+				frag_field |= 1 << 14
+			}
+			if frag_if && frag_mf {
+				frag_field |= 1 << 13
+			}
+			be.PutUint16(pkt[pb.data+IPv4_FRAG:pb.data+IPv4_FRAG+2], frag_field)
+		}
+		pkt[pb.data+IPv4_TTL] = ttl
+		pkt[pb.data+IPv4_PROTO] = proto
+		be.PutUint16(pkt[pb.data+IPv4_CSUM:pb.data+IPv4_CSUM+2], 0)
+		copy(pkt[pb.data+IPv4_SRC:pb.data+IPv4_DST+4], local_srcdst)
+
+		// compute IP checksum
+		ip_csum := csum_add(0, pkt[pb.data:pb.data+IPv4_HDR_MIN_LEN])
+		be.PutUint16(pkt[pb.data+IPv4_CSUM:pb.data+IPv4_CSUM+2], ip_csum^0xffff)
+
+	case PKT_IPv6:
+
+		ip_hdr_len := IPv6_HDR_MIN_LEN
+		if frag_if {
+			ip_hdr_len += IPv6_FRAG_HDR_LEN
+		}
+		if pb.data < ip_hdr_len {
+			if len(pkt) < ip_hdr_len + pb.len() {
+				log.err("deencap: not enough space in buffer for ip header, dropping",
+					pb.data, ip_hdr_len)
+				return DROP
+			}
+			// This should only happen for packets inside ICMP, which should be pretty small.
+			copy(pb.pkt[ip_hdr_len:], pb.pkt[pb.data:pb.tail])
+			pb.data, pb.tail = ip_hdr_len, pb.len()
+		}
+		pb.data -= ip_hdr_len
+
+		pkt[pb.data+IP_VER] = 0x60
+		pkt[pb.data+1] = 0 // TODO Flow label?
+		pkt[pb.data+2] = 0
+		pkt[pb.data+3] = 0
+		first_pld_len := l4_pkt_len
+		if frag_if {
+			first_pld_len += IPv6_FRAG_HDR_LEN
+		}
+		if first_pld_len >> 16 != 0 {
+			log.err("deencap: packet too big, dropping")
+			return DROP
+		}
+		be.PutUint16(pkt[pb.data+IPv6_PLD_LEN:pb.data+IPv6_PLD_LEN+2], uint16(first_pld_len))
+		pkt[pb.data+IPv6_TTL] = ttl
+		copy(pkt[pb.data+IPv6_SRC:pb.data+IPv6_DST+16], local_srcdst)
+		if !frag_if {
+			pkt[pb.data+IPv6_NEXT] = proto
+		} else {
+			i := pb.data+IPv6_HDR_MIN_LEN
+			pkt[i+IPv6_FRAG_NEXT] = proto
+			pkt[i+IPv6_FRAG_RES1] = 0
+			frag_field := uint16(frag_off) &^ 7
+			if frag_mf {
+				frag_field |= 1
+			}
+			be.PutUint16(pkt[i+IPv6_FRAG_OFF:i+IPv6_FRAG_OFF+2], frag_field)
+			be.PutUint32(pkt[i+IPv6_FRAG_IDENT:i+IPv6_FRAG_IDENT+4], ident)
+		}
+
+	default:
+
+		panic("unexpected")
 	}
-	pkt[pb.data+IPv4_TTL] = ttl
-	pkt[pb.data+IPv4_PROTO] = proto
-	be.PutUint16(pkt[pb.data+IPv4_CSUM:pb.data+IPv4_CSUM+2], 0)
-	be.PutUint32(pkt[pb.data+IPv4_SRC:pb.data+IPv4_SRC+4], uint32(src_ea))
-	be.PutUint32(pkt[pb.data+IPv4_DST:pb.data+IPv4_DST+4], uint32(dst_ip))
 
-	// compute IP checksum
-	ip_csum := csum_add(0, pkt[pb.data:pb.data+IPv4_HDR_MIN_LEN])
-	be.PutUint16(pkt[pb.data+IPv4_CSUM:pb.data+IPv4_CSUM+2], ip_csum^0xffff)
+	return ACCEPT
+}
 
-	// adjust layer 4 headers
+// pb contains a layer 4 datagram (or a fragment thereof). pb.typ is the target
+// layer 3 protocol: PKT_IPv4 or PKT_IPv6. Returns false (to drop) or true (on
+// success).
+func ipref_deencap_l4(pb *PktBuf,
+	local_srcdst []byte, // Not modified; used for adjusting checksum
+	proto *byte,
+	frag_if, frag_df, frag_mf bool,
+	frag_off, frag_end int,
+	icmp_depth int) bool {
 
-	switch proto {
+	pkt := pb.pkt
+
+	switch *proto {
 
 	case TCP: // add ip src/dst addresses to csum
 
@@ -415,14 +1002,14 @@ func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int 
 		}
 		if frag_end < TCP_CSUM {
 			log.err("deencap: invalid tcp packet, dropping")
-			return DROP
+			return false
 		}
 
-		tcp_csum := be.Uint16(pkt[l4+TCP_CSUM-frag_off : l4+TCP_CSUM-frag_off+2])
+		tcp_csum := be.Uint16(pkt[pb.data+TCP_CSUM-frag_off : pb.data+TCP_CSUM-frag_off+2])
 
 		if tcp_csum != 0 {
-			tcp_csum = csum_add(tcp_csum^0xffff, pkt[pb.data+IPv4_SRC:pb.data+IPv4_DST+4])
-			be.PutUint16(pkt[l4+TCP_CSUM-frag_off:l4+TCP_CSUM-frag_off+2], tcp_csum^0xffff)
+			tcp_csum = csum_add(tcp_csum^0xffff, local_srcdst)
+			be.PutUint16(pkt[pb.data+TCP_CSUM-frag_off:pb.data+TCP_CSUM-frag_off+2], tcp_csum^0xffff)
 		}
 
 	case UDP: // add ip src/dst addresses to csum
@@ -432,65 +1019,149 @@ func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int 
 		}
 		if frag_end < UDP_HDR_LEN {
 			log.err("deencap: invalid udp packet, dropping")
-			return DROP
+			return false
 		}
 
-		udp_csum := be.Uint16(pkt[l4+UDP_CSUM : l4+UDP_CSUM+2])
+		udp_csum := be.Uint16(pkt[pb.data+UDP_CSUM : pb.data+UDP_CSUM+2])
 
 		if udp_csum != 0 {
-			udp_csum = csum_add(udp_csum^0xffff, pkt[pb.data+IPv4_SRC:pb.data+IPv4_DST+4])
-			be.PutUint16(pkt[l4+UDP_CSUM:l4+UDP_CSUM+2], udp_csum^0xffff)
+			if udp_csum == 0xffff {
+				udp_csum = 0
+			}
+			udp_csum = csum_add(udp_csum^0xffff, local_srcdst)
+			udp_csum ^= 0xffff
+			if udp_csum == 0 {
+				udp_csum = 0xffff
+			}
+			be.PutUint16(pkt[pb.data+UDP_CSUM:pb.data+UDP_CSUM+2], udp_csum)
 		}
 
-	case ICMP: // replace inner ipref packet with ip packet
+	case ICMP: // convert type/code and replace inner IPREF packet with IP packet
 
+		if pb.typ == PKT_IPv6 {
+			*proto = ICMPv6
+		}
 		if icmp_depth <= 0 {
 			log.err("deencap: icmp depth limit reached, dropping")
-			return DROP
+			return false
 		}
 		if frag_off != 0 {
 			// TODO This will let non-initial fragments of ICMP_ENCAP packets through.
 			break
 		}
-		if l4_pkt_len < ICMP_DATA {
+		if pb.len() < ICMP_DATA {
 			log.err("deencap: invalid icmp packet, dropping")
-			return DROP
+			return false
 		}
 
-		switch icmpv4_action(pkt[l4+ICMP_TYPE]) {
+		typ, code, action := icmp_deencap(pb.typ, pkt[pb.data+ICMP_TYPE], pkt[pb.data+ICMP_CODE])
+		switch action {
 
 		case ICMP_DROP:
 
-			log.err("deencap: unrecognized icmp type (%v)", pkt[l4+ICMP_TYPE])
-			return DROP
+			log.err("deencap: unsupported icmp type/code (%v/%v/%v), dropping",
+				pb.typ,
+				pkt[pb.data+ICMP_TYPE],
+				pkt[pb.data+ICMP_CODE])
+			return false
+
+		case ICMP_NO_ENCAP:
+
+			icmp_csum := be.Uint16(pkt[pb.data+ICMP_CSUM:pb.data+ICMP_CSUM+2]) ^ 0xffff
+			icmp_csum = csum_subtract(icmp_csum, pkt[pb.data+ICMP_TYPE:pb.data+ICMP_CODE+1])
+			pkt[pb.data+ICMP_TYPE] = typ
+			pkt[pb.data+ICMP_CODE] = code
+			icmp_csum = csum_add(icmp_csum, pkt[pb.data+ICMP_TYPE:pb.data+ICMP_CODE+1])
+			if pb.typ == PKT_IPv6 {
+				if frag_if  {
+					log.err("deencap: can't calculate checksum for ICMPv6 packet (fragment), dropping")
+					return false
+				}
+				if pb.len() >> 16 != 0  {
+					log.err("deencap: can't calculate checksum for ICMPv6 packet (too big), dropping")
+					return false
+				}
+				icmp_csum = csum_add(icmp_csum, local_srcdst)
+				var pseudo [4]byte
+				be.PutUint16(pseudo[:2], uint16(pb.len()))
+				pseudo[3] = ICMPv6
+				icmp_csum = csum_add(icmp_csum, pseudo[:])
+			}
+			be.PutUint16(pkt[pb.data+ICMP_CSUM:pb.data+ICMP_CSUM+2], icmp_csum^0xffff)
 
 		case ICMP_ENCAP:
 
+			// deencap inner packet
 			if frag_if {
 				log.err("deencap: fragmented icmp packet that needs inner deencap, dropping")
-				return DROP
+				return false
 			}
 			inner_pb := PktBuf{
-				pkt: pkt[l4+ICMP_DATA:],
+				pkt: pkt[pb.data+ICMP_DATA:],
 				typ: PKT_IPREF,
 				data: 0,
-				tail: min(l4_pkt_len - ICMP_DATA, ICMP_ENCAP_MAX_LEN)}
+				tail: min(pb.len() - ICMP_DATA, ICMP_ENCAP_MAX_LEN)}
 			if ipref_deencap(&inner_pb, true, icmp_depth - 1, false) != ACCEPT {
 				log.err("deencap: dropping icmp due to invalid inner packet")
-				return DROP
+				return false
 			}
 			if inner_pb.data != 0 {
-				copy(pkt[l4+ICMP_DATA:], inner_pb.pkt[inner_pb.data:inner_pb.tail])
+				copy(pkt[pb.data+ICMP_DATA:], inner_pb.pkt[inner_pb.data:inner_pb.tail])
 			}
-			pb.tail = inner_pb.tail - inner_pb.data + l4 + ICMP_DATA
-			pkt[l4+ICMP_CSUM] = 0
-			pkt[l4+ICMP_CSUM+1] = 0
-			icmp_csum := csum_add(0, pkt[l4:pb.tail])
-			be.PutUint16(pkt[l4+ICMP_CSUM:l4+ICMP_CSUM+2], icmp_csum^0xffff)
+			pb.tail = inner_pb.tail - inner_pb.data + pb.data + ICMP_DATA
+
+			// adjust mtu
+			if pkt[pb.data+ICMP_CODE] == IPREF_ICMP_FRAG_NEEDED {
+				mtu := int(be.Uint16(pkt[pb.data+ICMP_MTU:pb.data+ICMP_MTU+2]))
+				mtu -= IPREF_HDR_MAX_LEN
+				if pb.typ == PKT_IPv4 {
+					mtu += IPv4_HDR_MIN_LEN
+				} else {
+					mtu += IPv6_HDR_MIN_LEN
+				}
+				if mtu <= 0 || mtu >> 16 != 0 {
+					log.err("deencap: bad mtu in icmp dest unreach, dropping")
+					return false
+				}
+				be.PutUint16(pkt[pb.data+ICMP_MTU:pb.data+ICMP_MTU+2], uint16(mtu))
+			}
+
+			// adjust type/code and recalculate checksum
+			pkt[pb.data+ICMP_TYPE] = typ
+			pkt[pb.data+ICMP_CODE] = code
+			be.PutUint16(pkt[pb.data+ICMP_CSUM:pb.data+ICMP_CSUM+2], 0)
+			var icmp_csum uint16
+			switch pb.typ {
+			case PKT_IPv4:
+				icmp_csum = csum_add(0, pkt[pb.data:pb.tail])
+			case PKT_IPv6:
+				icmp_csum = csum_add(0, local_srcdst)
+				var pseudo [4]byte
+				if pb.len() >> 16 != 0 {
+					log.err("deencap: can't calculate checksum for IPv6 packet (too big), dropping")
+					return false
+				}
+				be.PutUint16(pseudo[:2], uint16(pb.len()))
+				pseudo[3] = ICMPv6
+				icmp_csum = csum_add(icmp_csum, pseudo[:])
+				icmp_csum = csum_add(icmp_csum, pkt[pb.data:pb.tail])
+			default:
+				panic("unexpected")
+			}
+			be.PutUint16(pkt[pb.data+ICMP_CSUM:pb.data+ICMP_CSUM+2], icmp_csum^0xffff)
+
+		default:
+
+			panic("unexpected")
 		}
+
+	default:
+
+		log.err("deencap: unsupported IPREF layer 4 protocol (%v), dropping", ip_proto_name(*proto))
+		return false
 	}
 
-	return ACCEPT
+	return true
 }
 
 type IPREFFragInPlaceStatus int

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ const (
 var cli struct { // no locks, once setup in cli, never modified thereafter
 	debuglist  string
 	devmode    bool
+	test_mapper bool
 	ticks      bool
 	trace      bool
 	stamps     bool
@@ -30,10 +32,8 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	maxrgws    int
 	// derived
 	debug      map[string]bool
-	ea_ip      IP32
-	ea_mask    IP32
-	ea_masklen int
-	gw_ip      IP32
+	ea_net     netip.Prefix
+	gw_ip      netip.Addr
 	gw_port    int
 	rgw_port   int
 	ifc        net.Interface
@@ -47,6 +47,7 @@ func parse_cli() {
 	flag.BoolVar(&cli.ticks, "ticks", false, "include timer ticks in debug")
 	flag.BoolVar(&cli.trace, "trace", false, "enable packet trace")
 	flag.BoolVar(&cli.devmode, "devmode", false, "development mode, disable forwarding, run as a standalone mapper broker")
+	flag.BoolVar(&cli.test_mapper, "test-mapper", false, "use hard-coded address mappings for testing")
 	flag.BoolVar(&cli.stamps, "time-stamps", false, "print logs with time stamps")
 	flag.StringVar(&cli.datadir, "data", ddir, "data directory")
 	flag.StringVar(&cli.gw, "gateway", "", "ip address of the public network interface")
@@ -100,15 +101,15 @@ func parse_cli() {
 	if cli.devmode {
 
 		cli.gw = "198.51.100.1"
-		cli.gw_ip = IP32(be.Uint32(net.ParseIP(cli.gw).To4()))
+		cli.gw_ip = netip.MustParseAddr(cli.gw)
 		cli.ifc.MTU = 1500
 
 	} else {
 
 		// parse gw addresses
 
-		gw := net.ParseIP(cli.gw)
-		if gw == nil {
+		gw, err := netip.ParseAddr(cli.gw)
+		if err != nil || gw.Zone() != "" {
 			if len(cli.gw) == 0 {
 				log.fatal("missing gateway IP address")
 			} else {
@@ -119,7 +120,7 @@ func parse_cli() {
 		if !gw.IsGlobalUnicast() {
 			log.fatal("gateway IP address is not a valid unicast address: %v", cli.gw)
 		}
-		cli.gw_ip = IP32(be.Uint32(gw.To4()))
+		cli.gw_ip = gw
 
 		// deduce gw interface
 
@@ -132,15 +133,12 @@ func parse_cli() {
 			addrs, err := ifc.Addrs()
 			if err == nil {
 				for _, addr := range addrs {
-					ip := net.ParseIP(strings.Split(addr.String(), "/")[0]) // addr string: 192.168.80.10/24
-					if ip == nil {
+					net, err := netip.ParsePrefix(addr.String())
+					if err != nil {
+						log.err("unrecognized address for interface %v: %v", ifc, addr)
 						continue
 					}
-					ip4 := ip.To4()
-					if ip4 == nil {
-						continue
-					}
-					if IP32(be.Uint32(ip4)) == cli.gw_ip {
+					if net.Contains(cli.gw_ip) {
 						cli.ifc = ifc
 						break ifc_loop
 					}
@@ -160,30 +158,24 @@ func parse_cli() {
 		cli.rgw_port = IPREF_PORT
 	}
 
-	cli.pktbuflen = cli.ifc.MTU - IPv4_HDR_MIN_LEN + IPREF_HDR_MAX_LEN + 8
-	cli.pktbuflen += 3
-	cli.pktbuflen &^= 3
+	cli.pktbuflen = TUN_HDR_LEN + TUN_RECV_OFF + cli.ifc.MTU + 8
+	cli.pktbuflen += 7
+	cli.pktbuflen &^= 7
 
 	// parse ea net
 
-	_, ipnet, err := net.ParseCIDR(cli.ea)
+	var err error
+	cli.ea_net, err = netip.ParsePrefix(cli.ea)
 	if err != nil {
 		log.fatal("invalid encode-net: %v", cli.ea)
 	}
-
-	if !ipnet.IP.IsGlobalUnicast() {
+	cli.ea_net = cli.ea_net.Masked()
+	if cli.ea_net.Addr().BitLen() - cli.ea_net.Bits() < 16 {
+		log.fatal("invalid encode-net (subnet not large enough, need at least 16 bits): %v", cli.ea)
+	}
+	if !cli.ea_net.Addr().IsGlobalUnicast() {
 		log.fatal("encode-net is not a valid unicast address: %v", cli.ea)
 	}
-
-	ones, bits := ipnet.Mask.Size()
-	if ones == 0 || ones > 16 || bits != 32 { // needs full second to last byte for allocation
-		log.fatal("invalid encode-net mask: %v", cli.ea)
-	}
-
-	cli.ea_ip = IP32(be.Uint32(ipnet.IP.To4()))
-	cli.ea_mask = IP32(be.Uint32(net.IP(ipnet.Mask).To4()))
-	cli.ea_masklen = ones
-	cli.ea_ip &= cli.ea_mask
 
 	// validate file paths
 

@@ -5,6 +5,7 @@ package main
 import (
 	rff "github.com/ipref/ref"
 	"net"
+	"net/netip"
 )
 
 /* Data organization
@@ -56,6 +57,17 @@ func (ip IP32) String() string {
 	return net.IP(addr).String()
 }
 
+func AddrFromIP32(ip IP32) netip.Addr {
+	var ipb [4]byte
+	be.PutUint32(ipb[:], uint32(ip))
+	return netip.AddrFrom4(ipb)
+}
+
+func IP32FromAddr(addr netip.Addr) IP32 {
+	ipb := addr.As4()
+	return IP32(be.Uint32(ipb[:]))
+}
+
 type AddrRec struct {
 	ea  IP32
 	ip  IP32
@@ -64,8 +76,12 @@ type AddrRec struct {
 }
 
 type IpRef struct {
-	ip  IP32
+	ip  netip.Addr // ip.Zone() must be ""
 	ref rff.Ref
+}
+
+func (ipref IpRef) String() string {
+	return ipref.ip.String() + " + " + ipref.ref.String()
 }
 
 type IpRefRec struct {
@@ -73,6 +89,10 @@ type IpRefRec struct {
 	ref  rff.Ref
 	oid  O32 // owner id
 	mark M32 // time offset or revision (which could be time offset, too)
+}
+
+func (rec IpRefRec) AsIpRef() IpRef {
+	return IpRef{AddrFromIP32(rec.ip), rec.ref}
 }
 
 type IpRec struct {
@@ -177,7 +197,7 @@ func (mgw *MapGw) set_cur_mark(oid O32, mark M32) {
 	mgw.cur_mark[oid] = mark
 }
 
-func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
+func (mgw *MapGw) get_dst_iprec(dst IP32) IpRefRec {
 
 	rec, ok := mgw.their_ipref[dst]
 	if !ok {
@@ -218,7 +238,7 @@ func (mgw *MapGw) get_dst_ipref(dst IP32) IpRefRec {
 	return rec
 }
 
-func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
+func (mgw *MapGw) get_src_iprec(src IP32) IpRefRec {
 
 	rec, ok := mgw.our_ipref[src]
 
@@ -267,7 +287,7 @@ func (mgw *MapGw) get_src_ipref(src IP32) IpRefRec {
 		return IpRefRec{0, rff.Ref{0, 0}, 0, 0}
 	}
 	mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
-	rec = IpRefRec{cli.gw_ip, ref, mgw.oid, mark}
+	rec = IpRefRec{IP32(be.Uint32(cli.gw_ip.AsSlice())), ref, mgw.oid, mark}
 	mgw.our_ipref[src] = rec // add new record
 	pb := get_arec_pkt(0, src, rec.ip, rec.ref, rec.oid, rec.mark)
 	pbb := <-getbuf
@@ -376,7 +396,7 @@ func (mgw *MapGw) get_ref(pb *PktBuf) int {
 
 	ip := IP32(be.Uint32(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4]))
 
-	rec := mgw.get_src_ipref(ip)
+	rec := mgw.get_src_iprec(ip)
 
 	if rec.ref.IsZero() {
 		// NACK
