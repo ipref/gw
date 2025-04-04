@@ -19,7 +19,6 @@ const (
 var cli struct { // no locks, once setup in cli, never modified thereafter
 	debuglist  string
 	devmode    bool
-	test_mapper bool
 	ticks      bool
 	trace      bool
 	stamps     bool
@@ -67,7 +66,6 @@ func parse_cli() {
 	flag.BoolVar(&cli.ticks, "ticks", false, "include timer ticks in debug")
 	flag.BoolVar(&cli.trace, "trace", false, "enable packet trace")
 	flag.BoolVar(&cli.devmode, "devmode", false, "development mode, disable forwarding, run as a standalone mapper broker")
-	flag.BoolVar(&cli.test_mapper, "test-mapper", false, "use hard-coded address mappings for testing")
 	flag.BoolVar(&cli.stamps, "time-stamps", false, "print logs with time stamps")
 	flag.StringVar(&cli.datadir, "data", ddir, "data directory")
 	flag.StringVar(&cli.gw, "gateway", "", "ip address of the public network interface")

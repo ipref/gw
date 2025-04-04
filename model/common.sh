@@ -33,7 +33,6 @@ gw_args=(
     -debug gw,pkt,tun,mapper
     # -time-stamps
     -trace
-    # -test-mapper
 )
 
 function run-gw7 {
