@@ -210,10 +210,8 @@ func (mgw *MapGw) get_src_ipref(ip IP) (IpRef, bool) {
 		return IpRef{}, false
 	}
 
-	if ip.Is4() {
-		if rec, found := mgw.get_src_iprec(ip); found {
-			return rec.AsIpRef(), true
-		}
+	if rec, found := mgw.get_src_iprec(ip); found {
+		return rec.IpRef, true
 	}
 	return IpRef{}, false
 }
@@ -241,10 +239,8 @@ func (mgw *MapGw) get_dst_ipref(ip IP) (IpRef, bool) {
 		return IpRef{}, false
 	}
 
-	if ip.Is4() {
-		if rec := mgw.get_dst_iprec(ip); !rec.ip.IsZeroAddr() {
-			return rec.AsIpRef(), true
-		}
+	if rec, found := mgw.get_dst_iprec(ip); found {
+		return rec.IpRef, true
 	}
 	return IpRef{}, false
 }
@@ -285,6 +281,11 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 
 	pkt_typ := pb.typ
 	pkt := pb.pkt
+
+	if (ea_iplen == 4 && pkt_typ != PKT_IPv4) || (ea_iplen == 16 && pkt_typ != PKT_IPv6) {
+		log.debug("encap:   packet IP version doesn't match local network, dropping")
+		return DROP
+	}
 
 	// decode IP header
 
@@ -481,7 +482,7 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 	pb.data = l4 - ipref_hdr_len
 	pb.typ = PKT_IPREF
 
-	pkt[pb.data] = (0x1 << 4) | encode_reflen(reflen) << 2
+	pkt[pb.data] = (0x1 << 4) | ipref_encode_reflen(reflen) << 2
 	if frag_if {
 		pkt[pb.data] |= 1 << 1
 	}
@@ -508,9 +509,9 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 	i += iplen
 	copy(pkt[i:i+iplen], iprefdst.ip.AsSlice())
 	i += iplen
-	encode_ref(pkt[i:i+reflen], iprefsrc.ref)
+	ipref_encode_ref(pkt[i:i+reflen], iprefsrc.ref)
 	i += reflen
-	encode_ref(pkt[i:i+reflen], iprefdst.ref)
+	ipref_encode_ref(pkt[i:i+reflen], iprefdst.ref)
 	i += reflen
 
 	return ACCEPT
@@ -735,10 +736,8 @@ func (mtun *MapTun) get_src_addr(src IpRef) (IP, bool) {
 		return IP{}, false
 	}
 
-	if src.ip.Is4() {
-		if rec, found := mtun.get_src_iprec(src.ip, src.ref); found {
-			return rec.ip, true
-		}
+	if rec, found := mtun.get_src_iprec(src.ip, src.ref); found {
+		return rec.ip, true
 	}
 	return IP{}, false
 }
@@ -770,10 +769,8 @@ func (mtun *MapTun) get_dst_addr(dst IpRef) (IP, bool) {
 		return IP{}, false
 	}
 
-	if dst.ip.Is4() {
-		if rec, found := mtun.get_dst_ip(dst.ip, dst.ref); found {
-			return rec, true
-		}
+	if rec, found := mtun.get_dst_ip(dst.ip, dst.ref); found {
+		return rec, true
 	}
 	return IP{}, false
 }
@@ -845,10 +842,12 @@ func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int 
 	l4 := pb.data + pb.ipref_hdr_len()
 	l4_pkt_len := pb.tail - l4
 	frag_end := frag_off + l4_pkt_len // the position of the end of the packet in the l4 datagram
-	if frag_if && (l4_pkt_len & 0x7 != 0 && frag_mf) {
-		log.err("deencap: invalid packet (fragmentation), dropping")
-		return DROP
-	}
+	// We don't enforce this, because we still want to de-encapsulate packets
+	// which have been truncated, which might happen with packets inside ICMP.
+	// if frag_if && (l4_pkt_len & 0x7 != 0 && frag_mf) {
+	// 	log.err("deencap: invalid packet (fragmentation), dropping")
+	// 	return DROP
+	// }
 
 	// map addresses
 

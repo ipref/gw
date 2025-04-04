@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"math/rand"
 	"net"
@@ -84,7 +83,7 @@ func (mb *MB) get_ea(rpb *PktBuf) int {
 
 	case V1_ACK | V1_GET_EA:
 
-		if len(rpkt) < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+		if len(rpkt) < V1_HDR_LEN+V1_MARK_LEN+v1_arec_len {
 			log.err("mb: get ea response pkt pktid[%04x]: len(%v) too short, dropping", pktid, len(rpkt))
 			retbuf <- pb
 			return DROP // rpb
@@ -93,31 +92,25 @@ func (mb *MB) get_ea(rpb *PktBuf) int {
 		off := V1_HDR_LEN                // offset to arec in originator's packet
 		roff := V1_HDR_LEN + V1_MARK_LEN // offset to arec in response
 
-		if !bytes.Equal(pkt[off+V1_AREC_IP:off+V1_AREC_IP+24], rpkt[roff+V1_AREC_IP:roff+V1_AREC_IP+24]) {
+		arec := v1_arec_decode(pkt[off:])
+		rarec := v1_arec_decode(rpkt[roff:])
+		arec.ea = rarec.ea
+
+		if arec != rarec {
 			log.err("mb: get ea response pkt pktid[%04x]: request/response mismatch, dropping", pktid)
 			retbuf <- pb
 			return DROP // rpb
 		}
 
-		var ipr IpRef
+		mb.eacache[IpRef{arec.gw, arec.ref}] = IpRec{
+			ip: rarec.ea,
+			oid: O32(be.Uint32(rpkt[roff-V1_MARK_LEN+V1_OID:])),
+			mark: M32(be.Uint32(rpkt[roff-V1_MARK_LEN+V1_MARK:])),
+		}
 
-		ipr.ip = IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
-		ipr.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-		ipr.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
-
-		var iprec IpRec
-
-		roff = V1_HDR_LEN
-		iprec.oid = O32(be.Uint32(rpkt[roff+V1_OID : roff+V1_OID+4]))
-		iprec.mark = M32(be.Uint32(rpkt[roff+V1_MARK : roff+V1_MARK+4]))
-		roff += V1_MARK_LEN
-		iprec.ip = IPFromSlice(rpkt[roff+V1_AREC_EA : roff+V1_AREC_EA+4])
-
-		mb.eacache[ipr] = iprec
-
-		copy(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], rpkt[roff+V1_AREC_EA:roff+V1_AREC_EA+4])
+		v1_arec_encode(pkt[off:], arec)
 		pkt[V1_CMD] = V1_ACK | V1_MC_GET_EA
-		pb.tail = pb.data + V1_HDR_LEN + V1_AREC_LEN
+		pb.tail = pb.data + V1_HDR_LEN + v1_arec_len
 
 	case V1_NACK | V1_GET_EA:
 
@@ -144,18 +137,16 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.data:pb.tail]
 
-	if len(pkt) < V1_HDR_LEN+V1_AREC_LEN {
+	if len(pkt) < V1_HDR_LEN+v1_arec_len {
 		log.err("mb: mc get ea pkt: len(%v) too short, dropping", len(pkt))
 		return DROP
 	}
 
 	off := V1_HDR_LEN
 
-	var ipr IpRef
+	arec := v1_arec_decode(pkt[off:])
 
-	ipr.ip = IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
-	ipr.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-	ipr.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+	ipr := IpRef{arec.gw, arec.ref}
 
 	// return the ea if found in cache...
 
@@ -169,10 +160,11 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 			// found it
 
 			off := V1_HDR_LEN
-			wlen := V1_HDR_LEN + V1_AREC_LEN
+			wlen := V1_HDR_LEN + v1_arec_len
 
 			pkt[V1_CMD] = V1_ACK | V1_MC_GET_EA
-			copy(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], iprec.ip.AsSlice4())
+			arec.ea = iprec.ip
+			v1_arec_encode(pkt[off:], arec)
 			be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((wlen / 4)))
 			pb.tail = pb.data + wlen
 
@@ -207,7 +199,7 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 
 	off += V1_MARK_LEN
 
-	copy(rpkt[off:off+V1_AREC_LEN], pkt[V1_HDR_LEN:V1_HDR_LEN+V1_AREC_LEN])
+	copy(rpkt[off:off+v1_arec_len], pkt[V1_HDR_LEN:V1_HDR_LEN+v1_arec_len])
 
 	// don't wait too long
 
@@ -216,8 +208,8 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 
 	// send to fwd_to_tun
 
-	rpb.tail = rpb.data + V1_HDR_LEN + V1_MARK_LEN + V1_AREC_LEN
-	be.PutUint16(rpkt[V1_PKTLEN:V1_PKTLEN+2], (V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN)/4)
+	rpb.tail = rpb.data + V1_HDR_LEN + V1_MARK_LEN + v1_arec_len
+	be.PutUint16(rpkt[V1_PKTLEN:V1_PKTLEN+2], uint16(V1_HDR_LEN+V1_MARK_LEN+v1_arec_len)/4)
 	rpb.peer = "mbroker"
 	rpb.schan = mb.recv
 	recv_gw <- rpb
@@ -403,22 +395,17 @@ func (mb *MB) mc_host_data(pb *PktBuf) int {
 
 	// extract address mapping
 
-	var arec AddrRec
-
 	log.info("source:  %v  hash[%016x]  batch[%08x]", source, hash, batch)
 
-	for ; off <= pktlen-V1_AREC_LEN; off += V1_AREC_LEN {
+	for ; off <= pktlen-v1_arec_len; off += v1_arec_len {
 
-		arec.ip = IPFromSlice(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4])
-		arec.gw = IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
-		arec.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-		arec.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+		arec := v1_arec_decode(pkt[off:])
 
 		log.info("   host:  %v + %v -> %v", arec.gw, &arec.ref, arec.ip)
 
-		copy(pkta[offa:], pkt[off:off+V1_AREC_LEN])
+		copy(pkta[offa:], pkt[off:off+v1_arec_len])
 		dnssrc.recs[arec] = true
-		offa += V1_AREC_LEN
+		offa += v1_arec_len
 	}
 
 	if off != pktlen {

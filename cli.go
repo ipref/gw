@@ -42,6 +42,25 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	log_level  uint
 }
 
+var ea_iplen int
+var gw_iplen int
+
+func is_ea_iplen(ip IP) IP {
+	if ip.Len() != ea_iplen {
+		panic("invalid IP length")
+	}
+	return ip
+}
+
+func is_gw_iplen(ip IP) IP {
+	if ip.Len() != gw_iplen {
+		panic("invalid IP length")
+	}
+	return ip
+}
+
+var v1_arec_len int
+
 func parse_cli() {
 
 	flag.StringVar(&cli.debuglist, "debug", "", "enable debug in listed files, comma separated")
@@ -151,6 +170,7 @@ func parse_cli() {
 			log.fatal("cannot find interface with gw address %v", cli.gw_ip)
 		}
 	}
+	gw_iplen = cli.gw_ip.Len()
 
 	if cli.gw_port <= 0 || cli.gw_port > 0xffff {
 		cli.gw_port = IPREF_PORT
@@ -180,6 +200,9 @@ func parse_cli() {
 	ea_ipb := cli.ea_net.Addr().AsSlice()
 	ea_ipb[len(ea_ipb)-1] = 1 // hard code .1 as tun ip address
 	cli.ea_ip = IPFromSlice(ea_ipb)
+	ea_iplen = cli.ea_ip.Len()
+
+	v1_arec_len = ea_iplen * 2 + gw_iplen + 16 // ea + ip + gw + ref.h + ref.l
 
 	// validate file paths
 

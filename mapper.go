@@ -56,6 +56,39 @@ type AddrRec struct {
 	ref rff.Ref
 }
 
+func v1_arec_slices(arec []byte) (ea, ip, gw, refh, refl []byte) {
+	i := 0
+	ea = arec[i : i + ea_iplen]
+	i += ea_iplen
+	ip = arec[i : i + ea_iplen]
+	i += ea_iplen
+	gw = arec[i : i + gw_iplen]
+	i += gw_iplen
+	refh = arec[i : i + 8]
+	i += 8
+	refl = arec[i : i + 8]
+	return
+}
+
+func v1_arec_encode(arecb []byte, arec AddrRec) {
+	eab, ipb, gwb, refhb, reflb := v1_arec_slices(arecb)
+	copy(eab, is_ea_iplen(arec.ea).AsSlice())
+	copy(ipb, is_ea_iplen(arec.ip).AsSlice())
+	copy(gwb, is_gw_iplen(arec.gw).AsSlice())
+	be.PutUint64(refhb, arec.ref.H)
+	be.PutUint64(reflb, arec.ref.L)
+}
+
+func v1_arec_decode(arecb []byte) (arec AddrRec) {
+	eab, ipb, gwb, refhb, reflb := v1_arec_slices(arecb)
+	arec.ea = IPFromSlice(eab)
+	arec.ip = IPFromSlice(ipb)
+	arec.gw = IPFromSlice(gwb)
+	arec.ref.H = be.Uint64(refhb)
+	arec.ref.L = be.Uint64(reflb)
+	return
+}
+
 type IpRef struct {
 	ip  IP
 	ref rff.Ref
@@ -66,14 +99,9 @@ func (ipref IpRef) String() string {
 }
 
 type IpRefRec struct {
-	ip   IP
-	ref  rff.Ref
+	IpRef
 	oid  O32 // owner id
 	mark M32 // time offset or revision (which could be time offset, too)
-}
-
-func (rec IpRefRec) AsIpRef() IpRef {
-	return IpRef{rec.ip, rec.ref}
 }
 
 type IpRec struct {
@@ -121,18 +149,14 @@ func get_arec_pkt(ea, ip, gw IP, ref rff.Ref, oid O32, mark M32) *PktBuf {
 
 	off := V1_HDR_LEN
 
-	be.PutUint32(pkt[off+V1_OID:off+V1_OID+4], uint32(oid))
-	be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+4], uint32(mark))
+	be.PutUint32(pkt[off+V1_OID:], uint32(oid))
+	be.PutUint32(pkt[off+V1_MARK:], uint32(mark))
 
 	off += V1_MARK_LEN
 
-	copy(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], ea.AsSlice4())
-	copy(pkt[off+V1_AREC_IP:off+V1_AREC_IP+4], ip.AsSlice4())
-	copy(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], gw.AsSlice4())
-	be.PutUint64(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], ref.H)
-	be.PutUint64(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], ref.L)
+	v1_arec_encode(pkt[off:], AddrRec{ea, ip, gw, ref})
 
-	off += V1_AREC_LEN
+	off += v1_arec_len
 
 	pb.tail = off
 	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
@@ -180,26 +204,27 @@ func (mgw *MapGw) set_cur_mark(oid O32, mark M32) {
 	mgw.cur_mark[oid] = mark
 }
 
-func (mgw *MapGw) get_dst_iprec(dst IP) IpRefRec {
+func (mgw *MapGw) get_dst_iprec(dst IP) (IpRefRec, bool) {
 
+	is_ea_iplen(dst)
 	rec, ok := mgw.their_ipref[dst]
 	if !ok {
 		if cli.debug["mapper"] {
 			log.debug("mgw:  dst ipref not found for: %v", dst)
 		}
-		return IpRefRec{} // not found
+		return IpRefRec{}, false // not found
 	}
 
 	if int(rec.oid) >= len(mgw.cur_mark) {
 		log.err("mgw:  invalid oid(%v) in their_ipref, ignoring record", rec.oid)
-		return IpRefRec{}
+		return IpRefRec{}, false
 	}
 
 	if rec.mark < mgw.cur_mark[rec.oid] {
 		if cli.debug["mapper"] {
 			log.debug("mgw:  dst ipref expired for: %v", dst)
 		}
-		return IpRefRec{} // expired
+		return IpRefRec{}, false // expired
 	}
 
 	if rec.oid == mgw.oid && rec.mark-mgw.cur_mark[mgw.oid] < MAPPER_REFRESH {
@@ -210,7 +235,7 @@ func (mgw *MapGw) get_dst_iprec(dst IP) IpRefRec {
 		mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
 		rec.mark = mark
 		mgw.their_ipref[dst] = rec // bump up expiration
-		pb := get_arec_pkt(dst, IPNum(cli.ea_ip.Len(), 0), rec.ip, rec.ref, rec.oid, rec.mark)
+		pb := get_arec_pkt(dst, IPNum(ea_iplen, 0), rec.ip, rec.ref, rec.oid, rec.mark)
 		pbb := <-getbuf
 		pbb.copy_from(pb)
 		recv_gw <- pb  // tell mtun
@@ -218,11 +243,12 @@ func (mgw *MapGw) get_dst_iprec(dst IP) IpRefRec {
 
 	}
 
-	return rec
+	return rec, true
 }
 
 func (mgw *MapGw) get_src_iprec(src IP) (IpRefRec, bool) {
 
+	is_ea_iplen(src)
 	rec, ok := mgw.our_ipref[src]
 
 	if ok {
@@ -248,7 +274,7 @@ func (mgw *MapGw) get_src_iprec(src IP) (IpRefRec, bool) {
 				mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
 				rec.mark = mark
 				mgw.our_ipref[src] = rec // bump up expiration
-				pb := get_arec_pkt(IPNum(cli.ea_ip.Len(), 0), src, rec.ip, rec.ref, rec.oid, rec.mark)
+				pb := get_arec_pkt(IPNum(ea_iplen, 0), src, rec.ip, rec.ref, rec.oid, rec.mark)
 				pbb := <-getbuf
 				pbb.copy_from(pb)
 				recv_gw <- pb  // tell mtun
@@ -270,9 +296,9 @@ func (mgw *MapGw) get_src_iprec(src IP) (IpRefRec, bool) {
 		return IpRefRec{}, false
 	}
 	mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
-	rec = IpRefRec{cli.gw_ip, ref, mgw.oid, mark}
+	rec = IpRefRec{IpRef{cli.gw_ip, ref}, mgw.oid, mark}
 	mgw.our_ipref[src] = rec // add new record
-	pb := get_arec_pkt(IPNum(cli.ea_ip.Len(), 0), src, rec.ip, rec.ref, rec.oid, rec.mark)
+	pb := get_arec_pkt(IPNum(ea_iplen, 0), src, rec.ip, rec.ref, rec.oid, rec.mark)
 	pbb := <-getbuf
 	pbb.copy_from(pb)
 	recv_gw <- pb  // tell mtun
@@ -281,51 +307,48 @@ func (mgw *MapGw) get_src_iprec(src IP) (IpRefRec, bool) {
 	return rec, true
 }
 
-func (mgw *MapGw) insert_record(oid O32, mark M32, arec []byte) {
+func (mgw *MapGw) insert_record(oid O32, mark M32, arecb []byte) {
 
-	var ref rff.Ref
-	ea := IPFromSlice(arec[V1_AREC_EA : V1_AREC_EA+4])
-	ip := IPFromSlice(arec[V1_AREC_IP : V1_AREC_IP+4])
-	gw := IPFromSlice(arec[V1_AREC_GW : V1_AREC_GW+4])
-	ref.H = be.Uint64(arec[V1_AREC_REFH : V1_AREC_REFH+8])
-	ref.L = be.Uint64(arec[V1_AREC_REFL : V1_AREC_REFL+8])
+	arec := v1_arec_decode(arecb)
 
-	if gw.IsZeroAddr() || ref.IsZero() {
-		log.err("mgw:  unexpected null gw + ref, %v %v %v %v, dropping record", ea, ip, gw, &ref)
+	if arec.gw.IsZeroAddr() || arec.ref.IsZero() {
+		log.err("mgw:  unexpected null gw + ref, %v %v %v %v, dropping record",
+			arec.ea, arec.ip, arec.gw, &arec.ref)
 		return
 	}
 
-	if !ea.IsZeroAddr() && ip.IsZeroAddr() {
+	if !arec.ea.IsZeroAddr() && arec.ip.IsZeroAddr() {
 
-		if (oid == mgw.oid && arec[V1_AREC_EA+2] < SECOND_BYTE) ||
-			(oid != mgw.oid && arec[V1_AREC_EA+2] >= SECOND_BYTE) {
+		if (oid == mgw.oid && arec.ea.ByteFromEnd(1) < SECOND_BYTE) ||
+			(oid != mgw.oid && arec.ea.ByteFromEnd(1) >= SECOND_BYTE) {
 
 			log.err("mgw:  %v(%v): second byte rule violation(ea), %v %v %v %v, dropping record",
-				owners.name(oid), oid, ea, ip, gw, &ref)
+				owners.name(oid), oid, arec.ea, arec.ip, arec.gw, &arec.ref)
 			return
 		}
 
 		if cli.debug["mapper"] {
-			log.debug("mgw:  set their_ipref  %v  ->  %v + %v", ea, gw, &ref)
+			log.debug("mgw:  set their_ipref  %v  ->  %v + %v", arec.ea, arec.gw, &arec.ref)
 		}
-		mgw.their_ipref[ea] = IpRefRec{gw, ref, oid, mark}
+		mgw.their_ipref[arec.ea] = IpRefRec{IpRef{arec.gw, arec.ref}, oid, mark}
 
-	} else if ea.IsZeroAddr() && !ip.IsZeroAddr() {
+	} else if arec.ea.IsZeroAddr() && !arec.ip.IsZeroAddr() {
 
-		if (oid == mgw.oid && arec[V1_AREC_REFL+6] < SECOND_BYTE) ||
-			(oid != mgw.oid && arec[V1_AREC_REFL+6] >= SECOND_BYTE) {
+		if (oid == mgw.oid && ref_secondbyte(arec.ref) < SECOND_BYTE) ||
+			(oid != mgw.oid && ref_secondbyte(arec.ref) >= SECOND_BYTE) {
 			log.err("mgw:  %v(%v): second byte rule violation(ref), %v %v %v %v, dropping record",
-				owners.name(oid), oid, ea, ip, gw, &ref)
+				owners.name(oid), oid, arec.ea, arec.ip, arec.gw, &arec.ref)
 			return
 		}
 
 		if cli.debug["mapper"] {
-			log.debug("mgw:  set our_ipref  %v  ->  %v + %v", ip, gw, &ref)
+			log.debug("mgw:  set our_ipref  %v  ->  %v + %v", arec.ip, arec.gw, &arec.ref)
 		}
-		mgw.our_ipref[ip] = IpRefRec{gw, ref, oid, mark}
+		mgw.our_ipref[arec.ip] = IpRefRec{IpRef{arec.gw, arec.ref}, oid, mark}
 
 	} else {
-		log.err("mgw:  invalid address record, %v %v %v %v, dropping record", ea, ip, gw, &ref)
+		log.err("mgw:  invalid address record, %v %v %v %v, dropping record",
+			arec.ea, arec.ip, arec.gw, &arec.ref)
 	}
 }
 
@@ -333,7 +356,7 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
-	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+	if pktlen < V1_HDR_LEN+V1_MARK_LEN+v1_arec_len {
 		log.err("mgw:  SET_AREC packet too short, dropping")
 		return DROP
 	}
@@ -347,8 +370,8 @@ func (mgw *MapGw) set_new_address_records(pb *PktBuf) int {
 	oid := O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
 	mark := M32(be.Uint32(pkt[off+V1_MARK : off+V1_MARK+4]))
 
-	for off += V1_MARK_LEN; off < pktlen; off += V1_AREC_LEN {
-		mgw.insert_record(oid, mark, pkt[off:off+V1_AREC_LEN])
+	for off += V1_MARK_LEN; off < pktlen; off += v1_arec_len {
+		mgw.insert_record(oid, mark, pkt[off:off+v1_arec_len])
 	}
 
 	return DROP
@@ -370,16 +393,16 @@ func (mgw *MapGw) get_ref(pb *PktBuf) int {
 		pb.pp_raw("mgw in:  ")
 	}
 
-	if len(pkt) != V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+	if len(pkt) != V1_HDR_LEN+V1_MARK_LEN+v1_arec_len {
 		log.err("mgw:  invalid GET_REF pkt")
 		return DROP
 	}
 
 	off := V1_HDR_LEN + V1_MARK_LEN
 
-	ip := IPFromSlice(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4])
+	arec := v1_arec_decode(pkt[off:])
 
-	rec, found := mgw.get_src_iprec(ip)
+	rec, found := mgw.get_src_iprec(arec.ip)
 
 	if !found {
 		// NACK
@@ -393,9 +416,9 @@ func (mgw *MapGw) get_ref(pb *PktBuf) int {
 		be.PutUint32(pkt[off+V1_OID:off+V1_OID+32], uint32(rec.oid))
 		be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+32], uint32(rec.mark))
 		off += V1_MARK_LEN
-		copy(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], rec.ip.AsSlice4())
-		be.PutUint64(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], rec.ref.H)
-		be.PutUint64(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], rec.ref.L)
+		arec.gw = rec.ip
+		arec.ref = rec.ref
+		v1_arec_encode(pkt[off:], arec)
 	}
 
 	if pb.schan == nil {
@@ -433,7 +456,7 @@ func (mgw *MapGw) remove_expired_eas(pb *PktBuf) int {
 
 	off := V1_HDR_LEN
 
-	if off+V1_MARK_LEN+V1_AREC_LEN > pktlen {
+	if off+V1_MARK_LEN+v1_arec_len > pktlen {
 		log.err("mgw:  remove expired eas pkt too short")
 		return DROP
 	}
@@ -447,19 +470,14 @@ func (mgw *MapGw) remove_expired_eas(pb *PktBuf) int {
 
 	off += V1_MARK_LEN
 
-	if (pktlen-off)%V1_AREC_LEN != 0 {
+	if (pktlen-off)%v1_arec_len != 0 {
 		log.err("mgw:  remove expired eas pkt corrupted")
 		return DROP
 	}
 
-	var arec AddrRec
+	for ; off < pktlen; off += v1_arec_len {
 
-	for ; off < pktlen; off += V1_AREC_LEN {
-
-		arec.ea = IPFromSlice(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4])
-		arec.gw = IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
-		arec.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-		arec.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+		arec := v1_arec_decode(pkt[off:])
 
 		if arec.ea.IsZeroAddr() {
 			continue
@@ -508,7 +526,7 @@ func (mgw *MapGw) query_expired_refs(pb *PktBuf) int {
 
 	off := V1_HDR_LEN
 
-	if off+V1_MARK_LEN+V1_AREC_LEN > pktlen {
+	if off+V1_MARK_LEN+v1_arec_len > pktlen {
 		log.err("mgw:  query expired refs pkt too short")
 		return DROP
 	}
@@ -522,19 +540,14 @@ func (mgw *MapGw) query_expired_refs(pb *PktBuf) int {
 
 	off += V1_MARK_LEN
 
-	if (pktlen-off)%V1_AREC_LEN != 0 {
+	if (pktlen-off)%v1_arec_len != 0 {
 		log.err("mgw:  query expired refs pkt corrupted")
 		return DROP
 	}
 
-	var arec AddrRec
+	for ; off < pktlen; off += v1_arec_len {
 
-	for ; off < pktlen; off += V1_AREC_LEN {
-
-		arec.ip = IPFromSlice(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4])
-		arec.gw = IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
-		arec.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-		arec.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+		arec := v1_arec_decode(pkt[off:])
 
 		rec, ok := mgw.our_ipref[arec.ip]
 
@@ -571,9 +584,9 @@ func (mgw *MapGw) query_expired_refs(pb *PktBuf) int {
 		}
 
 		if !(rec.mark < mgw.cur_mark[rec.oid]) {
-			be.PutUint32(pkt[off+V1_AREC_IP:off+V1_AREC_IP+4], 0)
-			be.PutUint64(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], 0)
-			be.PutUint64(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], 0)
+			arec.ip = IPNum(arec.ip.Len(), 0)
+			arec.ref = rff.Ref{}
+			v1_arec_encode(pkt[off:], arec)
 			if cli.debug["mapper"] {
 				log.debug("mgw:  keeping non-expired gw+ref(%v + %v) -> %v rec.mark(%v) not less than mark(%v)",
 					arec.gw, &arec.ref, arec.ip, rec.mark, mgw.cur_mark[rec.oid])
@@ -626,6 +639,7 @@ func (mtun *MapTun) set_cur_mark(oid O32, mark M32) {
 
 func (mtun *MapTun) get_dst_ip(gw IP, ref rff.Ref) (IP, bool) {
 
+	is_gw_iplen(gw)
 	our_refs, ok := mtun.our_ip[gw]
 	if !ok {
 		log.err("mtun: local gw not in the map: %v", gw)
@@ -658,7 +672,7 @@ func (mtun *MapTun) get_dst_ip(gw IP, ref rff.Ref) (IP, bool) {
 		mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
 		rec.mark = mark
 		our_refs[ref] = rec // bump up expiration
-		pb := get_arec_pkt(IPNum(cli.ea_ip.Len(), 0), rec.ip, gw, ref, rec.oid, rec.mark)
+		pb := get_arec_pkt(IPNum(ea_iplen, 0), rec.ip, gw, ref, rec.oid, rec.mark)
 		pbb := <-getbuf
 		pbb.copy_from(pb)
 		recv_tun <- pb // tell mgw
@@ -670,6 +684,7 @@ func (mtun *MapTun) get_dst_ip(gw IP, ref rff.Ref) (IP, bool) {
 
 func (mtun *MapTun) get_src_iprec(gw IP, ref rff.Ref) (IpRec, bool) {
 
+	is_gw_iplen(gw)
 	their_refs, ok := mtun.our_ea[gw]
 	if !ok {
 		// unknown remote gw, allocate a map for it
@@ -702,7 +717,7 @@ func (mtun *MapTun) get_src_iprec(gw IP, ref rff.Ref) (IpRec, bool) {
 				mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
 				rec.mark = mark
 				their_refs[ref] = rec // bump up expiration
-				pb := get_arec_pkt(rec.ip, IPNum(cli.ea_ip.Len(), 0), gw, ref, rec.oid, rec.mark)
+				pb := get_arec_pkt(rec.ip, IPNum(ea_iplen, 0), gw, ref, rec.oid, rec.mark)
 				pbb := <-getbuf
 				pbb.copy_from(pb)
 				recv_tun <- pb // tell mgw
@@ -726,7 +741,7 @@ func (mtun *MapTun) get_src_iprec(gw IP, ref rff.Ref) (IpRec, bool) {
 	mark := mtun.cur_mark[mtun.oid] + MAPPER_TMOUT
 	rec = IpRec{ea, mtun.oid, mark}
 	their_refs[ref] = rec
-	pb := get_arec_pkt(rec.ip, IPNum(cli.ea_ip.Len(), 0), gw, ref, rec.oid, rec.mark)
+	pb := get_arec_pkt(rec.ip, IPNum(ea_iplen, 0), gw, ref, rec.oid, rec.mark)
 	pbb := <-getbuf
 	pbb.copy_from(pb)
 	recv_tun <- pb // tell mgw
@@ -735,60 +750,58 @@ func (mtun *MapTun) get_src_iprec(gw IP, ref rff.Ref) (IpRec, bool) {
 	return rec, true
 }
 
-func (mtun *MapTun) insert_record(oid O32, mark M32, arec []byte) {
+func (mtun *MapTun) insert_record(oid O32, mark M32, arecb []byte) {
 
-	var ref rff.Ref
-	ea := IPFromSlice(arec[V1_AREC_EA : V1_AREC_EA+4])
-	ip := IPFromSlice(arec[V1_AREC_IP : V1_AREC_IP+4])
-	gw := IPFromSlice(arec[V1_AREC_GW : V1_AREC_GW+4])
-	ref.H = be.Uint64(arec[V1_AREC_REFH : V1_AREC_REFH+8])
-	ref.L = be.Uint64(arec[V1_AREC_REFL : V1_AREC_REFL+8])
+	arec := v1_arec_decode(arecb)
 
-	if gw.IsZeroAddr() || ref.IsZero() {
-		log.err("mtun: unexpected null gw + ref, %v %v %v %v, dropping record", ea, ip, gw, &ref)
+	if arec.gw.IsZeroAddr() || arec.ref.IsZero() {
+		log.err("mtun: unexpected null gw + ref, %v %v %v %v, dropping record",
+			arec.ea, arec.ip, arec.gw, &arec.ref)
 		return
 	}
 
-	if !ea.IsZeroAddr() && ip.IsZeroAddr() {
+	if !arec.ea.IsZeroAddr() && arec.ip.IsZeroAddr() {
 
-		if (oid == mtun.oid && arec[V1_AREC_EA+2] < SECOND_BYTE) ||
-			(oid != mtun.oid && arec[V1_AREC_EA+2] >= SECOND_BYTE) {
+		if (oid == mtun.oid && arec.ea.ByteFromEnd(1) < SECOND_BYTE) ||
+			(oid != mtun.oid && arec.ea.ByteFromEnd(1) >= SECOND_BYTE) {
 			log.err("mtun: %v(%v): second byte rule violation(ea), %v %v %v %v, dropping record",
-				owners.name(oid), oid, ea, ip, gw, &ref)
+				owners.name(oid), oid, arec.ea, arec.ip, arec.gw, &arec.ref)
 			return
 		}
 
-		their_refs, ok := mtun.our_ea[gw]
+		their_refs, ok := mtun.our_ea[arec.gw]
 		if !ok {
 			their_refs = make(map[rff.Ref]IpRec)
-			mtun.our_ea[gw] = their_refs
+			mtun.our_ea[arec.gw] = their_refs
 		}
 		if cli.debug["mapper"] {
-			log.debug("mtun: set their_refs  %v  ->  %v  ->  %v", gw, &ref, ea)
+			log.debug("mtun: set their_refs  %v  ->  %v  ->  %v", arec.gw, &arec.ref, arec.ea)
 		}
-		their_refs[ref] = IpRec{ea, oid, mark}
+		their_refs[arec.ref] = IpRec{arec.ea, oid, mark}
 
-	} else if ea.IsZeroAddr() && !ip.IsZeroAddr() {
+	} else if arec.ea.IsZeroAddr() && !arec.ip.IsZeroAddr() {
 
-		if (oid == mtun.oid && arec[V1_AREC_REFL+6] < SECOND_BYTE) ||
-			(oid != mtun.oid && arec[V1_AREC_REFL+6] >= SECOND_BYTE) {
+		if (oid == mtun.oid && ref_secondbyte(arec.ref) < SECOND_BYTE) ||
+			(oid != mtun.oid && ref_secondbyte(arec.ref) >= SECOND_BYTE) {
 			log.err("mtun: %v(%v): second byte rule violation(ref), %v %v %v %v, dropping record",
-				owners.name(oid), oid, ea, ip, gw, &ref)
+				owners.name(oid), oid, arec.ea, arec.ip, arec.gw, &arec.ref)
 			return
 		}
 
-		our_refs, ok := mtun.our_ip[gw]
+		our_refs, ok := mtun.our_ip[arec.gw]
 		if !ok {
 			our_refs = make(map[rff.Ref]IpRec)
-			mtun.our_ip[gw] = our_refs
+			mtun.our_ip[arec.gw] = our_refs
 		}
 		if cli.debug["mapper"] {
-			log.debug("mtun: set our_refs  %v  ->  %v  ->  %v", gw, &ref, ip)
+			log.debug("mtun: set our_refs  %v  ->  %v  ->  %v",
+				arec.gw, &arec.ref, arec.ip)
 		}
-		our_refs[ref] = IpRec{ip, oid, mark}
+		our_refs[arec.ref] = IpRec{arec.ip, oid, mark}
 
 	} else {
-		log.err("mtun: invalid address record, %v %v %v %v, dropping record", ea, ip, gw, &ref)
+		log.err("mtun: invalid address record, %v %v %v %v, dropping record",
+			arec.ea, arec.ip, arec.gw, &arec.ref)
 	}
 }
 
@@ -796,7 +809,7 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
-	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+	if pktlen < V1_HDR_LEN+V1_MARK_LEN+v1_arec_len {
 		log.err("mtun: SET_AREC packet too short, dropping")
 		return DROP
 	}
@@ -810,8 +823,8 @@ func (mtun *MapTun) set_new_address_records(pb *PktBuf) int {
 	oid := O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
 	mark := M32(be.Uint32(pkt[off+V1_MARK : off+V1_MARK+4]))
 
-	for off += V1_MARK_LEN; off < pktlen; off += V1_AREC_LEN {
-		mtun.insert_record(oid, mark, pkt[off:off+V1_AREC_LEN])
+	for off += V1_MARK_LEN; off < pktlen; off += v1_arec_len {
+		mtun.insert_record(oid, mark, pkt[off:off+v1_arec_len])
 	}
 
 	return DROP
@@ -833,21 +846,16 @@ func (mtun *MapTun) get_ea(pb *PktBuf) int {
 		pb.pp_raw("mtun in: ")
 	}
 
-	if len(pkt) != V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+	if len(pkt) != V1_HDR_LEN+V1_MARK_LEN+v1_arec_len {
 		log.err("mtun: invalid GET_EA pkt")
 		return DROP
 	}
 
-	var gw IP
-	var ref rff.Ref
-
 	off := V1_HDR_LEN + V1_MARK_LEN
 
-	gw = IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
-	ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-	ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+	arec := v1_arec_decode(pkt[off:])
 
-	iprec, found := mtun.get_src_iprec(gw, ref)
+	iprec, found := mtun.get_src_iprec(arec.gw, arec.ref)
 
 	if !found {
 		// NACK
@@ -861,7 +869,8 @@ func (mtun *MapTun) get_ea(pb *PktBuf) int {
 		be.PutUint32(pkt[off+V1_OID:off+V1_OID+32], uint32(iprec.oid))
 		be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+32], uint32(iprec.mark))
 		off += V1_MARK_LEN
-		copy(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], iprec.ip.AsSlice4())
+		arec.ea = iprec.ip
+		v1_arec_encode(pkt[off:], arec)
 	}
 
 	if pb.schan == nil {
@@ -899,7 +908,7 @@ func (mtun *MapTun) remove_expired_refs(pb *PktBuf) int {
 
 	off := V1_HDR_LEN
 
-	if off+V1_MARK_LEN+V1_AREC_LEN > pktlen {
+	if off+V1_MARK_LEN+v1_arec_len > pktlen {
 		log.err("mtun: remove expired refs pkt too short")
 		return DROP
 	}
@@ -913,24 +922,18 @@ func (mtun *MapTun) remove_expired_refs(pb *PktBuf) int {
 
 	off += V1_MARK_LEN
 
-	if (pktlen-off)%V1_AREC_LEN != 0 {
+	if (pktlen-off)%v1_arec_len != 0 {
 		log.err("mtun: remove expired refs pkt corrupted")
 		return DROP
 	}
 
-	var arec AddrRec
+	for ; off < pktlen; off += v1_arec_len {
 
-	for ; off < pktlen; off += V1_AREC_LEN {
-
-		arec.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-		arec.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+		arec := v1_arec_decode(pkt[off:])
 
 		if arec.ref.IsZero() {
 			continue
 		}
-
-		arec.ip = IPFromSlice(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4])
-		arec.gw = IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
 
 		our_refs, ok := mtun.our_ip[arec.gw]
 		if !ok {
@@ -989,7 +992,7 @@ func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
 
 	off := V1_HDR_LEN
 
-	if off+V1_MARK_LEN+V1_AREC_LEN > pktlen {
+	if off+V1_MARK_LEN+v1_arec_len > pktlen {
 		log.err("mtun: query expired eas pkt too short")
 		return DROP
 	}
@@ -1003,19 +1006,14 @@ func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
 
 	off += V1_MARK_LEN
 
-	if (pktlen-off)%V1_AREC_LEN != 0 {
+	if (pktlen-off)%v1_arec_len != 0 {
 		log.err("mtun: query expired eas pkt corrupted")
 		return DROP
 	}
 
-	var arec AddrRec
+	for ; off < pktlen; off += v1_arec_len {
 
-	for ; off < pktlen; off += V1_AREC_LEN {
-
-		arec.ea = IPFromSlice(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4])
-		arec.gw = IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
-		arec.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-		arec.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+		arec := v1_arec_decode(pkt[off:])
 
 		their_refs, ok := mtun.our_ea[arec.gw]
 
@@ -1054,7 +1052,8 @@ func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
 		}
 
 		if !(rec.mark < mtun.cur_mark[rec.oid]) {
-			be.PutUint32(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], 0)
+			arec.ea = IPNum(ea_iplen, 0)
+			v1_arec_encode(pkt[off:], arec)
 			if cli.debug["mapper"] {
 				log.debug("mtun: keeping non-expired ea(%v): %v + %v rec.mark(%v) not less than mark(%v)",
 					arec.ea, arec.gw, &arec.ref, rec.mark, mtun.cur_mark[rec.oid])

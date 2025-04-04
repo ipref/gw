@@ -31,8 +31,7 @@ immediately expired whenever a new set becomes available.
 */
 
 const (
-	TIMER_TICK = 16811          // [ms] avg  16.811 [s]
-	ARP_TICK   = TIMER_TICK / 3 // [ms] avg   5.603 [s]
+	TIMER_TICK = 16811 // [ms] avg  16.811 [s]
 	TIMER_FUZZ = 7
 )
 
@@ -95,10 +94,6 @@ func send_marker(mark M32, oid O32, from string) {
 		db.recv <- pbc
 		mb.recv <- pbd
 
-	case arp_oid:
-
-		send_gw <- pb
-
 	default:
 
 		pbb := <-getbuf
@@ -110,14 +105,6 @@ func send_marker(mark M32, oid O32, from string) {
 		recv_tun <- pb
 		recv_gw <- pbb
 		db.recv <- pbc
-	}
-}
-
-func arp_tick() {
-
-	for {
-		sleep(ARP_TICK, ARP_TICK/TIMER_FUZZ)
-		send_marker(marker.now(), arp_oid, "arp_timer")
 	}
 }
 

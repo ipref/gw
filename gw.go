@@ -260,27 +260,9 @@ func gw_sender(rgws *RemoteGwTable) {
 
 		case PKT_V1:
 
-			pkt := pb.pkt[pb.data:pb.tail]
-
-			if pkt[V1_CMD] == V1_SET_MARK {
-
-				// update time mark
-
-				off := V1_HDR_LEN
-				oid := O32(be.Uint32(pkt[off+V1_OID : off+V1_OID+4]))
-				if oid == arp_oid {
-					// arp_marker = M32(be.Uint32(pkt[off+V1_MARK : off+V1_MARK+4]))
-				} else {
-					log.err("gw out:  arp timer update oid(%v) does not match arp_oid(%v), ignoring", oid, arp_oid)
-				}
-				retbuf <- pb
-				continue
-
-			} else {
-				log.err("gw out:  unknown v1 packet data/end(%v/%v), dropping", pb.data, len(pb.pkt))
-				retbuf <- pb
-				continue
-			}
+			log.err("gw out:  unknown v1 packet data/end(%v/%v), dropping", pb.data, len(pb.pkt))
+			retbuf <- pb
+			continue
 
 		case PKT_IPREF:
 

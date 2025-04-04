@@ -120,7 +120,12 @@ func (ip IP) Is6() bool {
 }
 
 func (ip IP) Len() int {
-	return len(ip.AsSlice())
+
+	if ip.Is4() {
+		return 4
+	} else {
+		return 16
+	}
 }
 
 func (ip IP) ByteFromEnd(i int) byte {

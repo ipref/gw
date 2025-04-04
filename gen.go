@@ -53,7 +53,7 @@ func (gen *GenEA) recover_expired_eas() {
 		sleep(prng.Intn(MAPPER_TMOUT/3)*1000, (MAPPER_TMOUT/8)*1000) // random start point
 		for {
 			sleep(RCVY_INTERVAL, RCVY_INTERVAL/8)
-			gen.rcvy <- IP{}
+			gen.rcvy <- IPNum(ea_iplen, 0)
 		}
 	}()
 
@@ -76,13 +76,11 @@ func (gen *GenEA) recover_expired_eas() {
 
 		off += V1_MARK_LEN
 
-		for ii := off; ii < V1_AREC_LEN; ii++ {
-			pkt[off+ii] = 0
-		}
+		arec := v1_arec_decode(pkt[off:])
+		arec.ea = search_ea
+		v1_arec_encode(pkt[off:], arec)
 
-		copy(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], search_ea.AsSlice4())
-
-		off += V1_AREC_LEN
+		off += v1_arec_len
 
 		pb.tail = pb.data + off
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
@@ -115,7 +113,7 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 
 	case V1_ACK | V1_RECOVER_EA:
 
-		last_off := pktlen - V1_AREC_LEN
+		last_off := pktlen - v1_arec_len
 
 		if last_off < V1_HDR_LEN+V1_MARK_LEN {
 			break // paranoia, should never happen
@@ -123,8 +121,8 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 
 		// trigger next batch
 
-		ea := IPFromSlice(pkt[last_off+V1_AREC_EA : last_off+V1_AREC_EA+4])
-		gen.rcvy <- ea.Add(IPNum(cli.ea_ip.Len(), 1))
+		arec := v1_arec_decode(pkt[last_off:])
+		gen.rcvy <- arec.ea.Add(IPNum(ea_iplen, 1))
 
 		// pass the list to fwd_to_tun
 
@@ -141,31 +139,26 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 
 	case V1_DATA | V1_RECOVER_EA:
 
-		if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+		if pktlen < V1_HDR_LEN+V1_MARK_LEN+v1_arec_len {
 			log.err("gen ea:  packet too short, ignoring")
 			break
 		}
 
 		off := V1_HDR_LEN + V1_MARK_LEN
 
-		if (pktlen-off)%V1_AREC_LEN != 0 {
+		if (pktlen-off)%v1_arec_len != 0 {
 			log.err("gen ea:  corrupted packet, ignoring")
 			break
 		}
 
-		for ; off < pktlen; off += V1_AREC_LEN {
+		for ; off < pktlen; off += v1_arec_len {
 
-			ea := IPFromSlice(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4])
+			arec := v1_arec_decode(pkt[off:])
 
-			if !ea.IsZeroAddr() {
-				delete(gen.allocated, ea)
+			if !arec.ea.IsZeroAddr() {
+				delete(gen.allocated, arec.ea)
 				if cli.debug["gen"] {
-					var gw IP
-					var ref rff.Ref
-					gw = IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
-					ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-					ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
-					log.debug("gen ea:  deleted allocated ea(%v): %v + %v", ea, gw, &ref)
+					log.debug("gen ea:  deleted allocated ea(%v): %v + %v", arec.ea, arec.gw, &arec.ref)
 				}
 			}
 		}
@@ -180,7 +173,7 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 // generate a random ea with second to last byte >= SECOND_BYTE
 func (gen *GenEA) next_ea() IP {
 
-	creep := make([]byte, cli.ea_ip.Len())
+	creep := make([]byte, ea_iplen)
 	var err error
 
 	// clear ea before incrementing ii
@@ -289,14 +282,11 @@ func (gen *GenREF) recover_expired_refs() {
 
 		off += V1_MARK_LEN
 
-		for ii := off; ii < V1_AREC_LEN; ii++ {
-			pkt[off+ii] = 0
-		}
+		arec := v1_arec_decode(pkt[off:])
+		arec.ref = search_ref
+		v1_arec_encode(pkt[off:], arec)
 
-		be.PutUint64(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], search_ref.H)
-		be.PutUint64(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], search_ref.L)
-
-		off += V1_AREC_LEN
+		off += v1_arec_len
 
 		pb.tail = pb.data + off
 		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(off/4))
@@ -335,7 +325,7 @@ func (gen *GenREF) receive(pb *PktBuf) int {
 
 	case V1_ACK | V1_RECOVER_REF:
 
-		last_off := pktlen - V1_AREC_LEN
+		last_off := pktlen - v1_arec_len
 
 		if last_off < V1_HDR_LEN+V1_MARK_LEN {
 			break // paranoia, should never happen
@@ -343,14 +333,13 @@ func (gen *GenREF) receive(pb *PktBuf) int {
 
 		// trigger next batch
 
-		ref.H = be.Uint64(pkt[last_off+V1_AREC_REFH : last_off+V1_AREC_REFH+8])
-		ref.L = be.Uint64(pkt[last_off+V1_AREC_REFL : last_off+V1_AREC_REFL+8])
+		arec := v1_arec_decode(pkt[last_off:])
 
-		if ref.L == 0xffffffffffffffff {
-			ref.H++
-			ref.L = 0
+		if ^arec.ref.L == 0 {
+			arec.ref.H++
+			arec.ref.L = 0
 		} else {
-			ref.L++
+			arec.ref.L++
 		}
 
 		gen.rcvy <- ref
@@ -370,29 +359,27 @@ func (gen *GenREF) receive(pb *PktBuf) int {
 
 	case V1_DATA | V1_RECOVER_REF:
 
-		if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+		if pktlen < V1_HDR_LEN+V1_MARK_LEN+v1_arec_len {
 			log.err("gen ref: packet too short, ignoring")
 			break
 		}
 
 		off := V1_HDR_LEN + V1_MARK_LEN
 
-		if (pktlen-off)%V1_AREC_LEN != 0 {
+		if (pktlen-off)%v1_arec_len != 0 {
 			log.err("gen ref: corrupted packet, ignoring")
 			break
 		}
 
-		for ; off < pktlen; off += V1_AREC_LEN {
+		for ; off < pktlen; off += v1_arec_len {
 
-			ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-			ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+			arec := v1_arec_decode(pkt[off:])
 
-			if !ref.IsZero() {
-				delete(gen.allocated, ref)
+			if !arec.ref.IsZero() {
+				delete(gen.allocated, arec.ref)
 				if cli.debug["gen"] {
-					ip := IPFromSlice(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4])
-					gw := IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
-					log.debug("gen ref:  deleted allocated gw+ref(%v + %v) -> %v", gw, &ref, ip)
+					log.debug("gen ref:  deleted allocated gw+ref(%v + %v) -> %v",
+						arec.gw, &arec.ref, arec.ip)
 				}
 			}
 		}

@@ -3,8 +3,6 @@
 package main
 
 import (
-	"bytes"
-	rff "github.com/ipref/ref"
 	bolt "go.etcd.io/bbolt"
 	"os"
 	"path"
@@ -20,18 +18,22 @@ completes.
 */
 
 const (
-	dbname   = "mapper.db"
-	base_bkt = "base" // various base data
-	ea_bkt   = "ea"   // ea  -> db_arec
-	ref_bkt  = "ref"  // ref -> db_arec
-	mark_bkt = "mark" // oid -> mark
-	oid_bkt  = "oid"  // oid -> name
+	dbbasename = "mapper"
+	base_bkt   = "base" // various base data
+	ea_bkt     = "ea"   // ea  -> db_arec
+	ref_bkt    = "ref"  // ref -> db_arec
+	mark_bkt   = "mark" // oid -> mark
+	oid_bkt    = "oid"  // oid -> name
 )
 
 type DB struct {
-	db   *bolt.DB // current DB
-	rdb  *bolt.DB // restore DB
-	recv chan *PktBuf
+	dbname  string
+	rdbname string
+	dbpath  string
+	rdbpath string
+	db      *bolt.DB // current DB
+	rdb     *bolt.DB // restore DB
+	recv    chan *PktBuf
 }
 
 var db DB
@@ -177,19 +179,20 @@ func (mgw *MapGw) restore_eas() {
 
 			oid := O32(be.Uint32(val[:4]))
 			mark := M32(be.Uint32(val[4:8]))
-			ea := IPFromSlice(val[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4])
+			arec := v1_arec_decode(val[V1_MARK_LEN:])
 
 			if oid == 0 || mark == 0 {
-				log.err("mgw:  restore ea: %v invalid oid mark: %v(%v): %v, discarding", ea, owners.name(oid), oid, mark)
+				log.err("mgw:  restore ea: %v invalid oid mark: %v(%v): %v, discarding",
+					arec.ea, owners.name(oid), oid, mark)
 			} else if oid == mgw.oid && mark < mgw.cur_mark[oid] {
-				log.debug("mgw:  restore ea: %v expired, discarding", ea)
+				log.debug("mgw:  restore ea: %v expired, discarding", arec.ea)
 			} else {
 
 				mgw.insert_record(oid, mark, val[V1_MARK_LEN:])
 				map_tun.insert_record(oid, mark, val[V1_MARK_LEN:])
 				db.insert_record(val)
 				if oid == mapper_oid {
-					gen_ea.allocated[ea] = true
+					gen_ea.allocated[arec.ea] = true
 				}
 			}
 			return nil
@@ -216,21 +219,20 @@ func (mtun *MapTun) restore_refs() {
 
 			oid := O32(be.Uint32(val[:4]))
 			mark := M32(be.Uint32(val[4:8]))
-			var ref rff.Ref
-			ref.H = be.Uint64(val[V1_MARK_LEN+V1_AREC_REFH : V1_MARK_LEN+V1_AREC_REFH+8])
-			ref.L = be.Uint64(val[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
+			arec := v1_arec_decode(val[V1_MARK_LEN:])
 
 			if oid == 0 || mark == 0 {
-				log.err("mtun: restore ref: %v invalid oid(mark): %v(%v), discarding", &ref, owners.name(oid), mark)
+				log.err("mtun: restore ref: %v invalid oid(mark): %v(%v), discarding",
+					&arec.ref, owners.name(oid), mark)
 			} else if oid == mtun.oid && mark < mtun.cur_mark[oid] {
-				log.debug("mtun: restore ref: %v expired, discarding", &ref)
+				log.debug("mtun: restore ref: %v expired, discarding", &arec.ref)
 			} else {
 
 				mtun.insert_record(oid, mark, val[V1_MARK_LEN:])
 				map_gw.insert_record(oid, mark, val[V1_MARK_LEN:])
 				db.insert_record(val)
 				if oid == mapper_oid {
-					gen_ref.allocated[ref] = true
+					gen_ref.allocated[arec.ref] = true
 				}
 			}
 			return nil
@@ -348,33 +350,23 @@ func (db *DB) save_mark(pb *PktBuf) {
 
 func (db *DB) insert_record(db_arec []byte) {
 
-	if is_zero(db_arec[V1_MARK_LEN+V1_AREC_GW:V1_MARK_LEN+V1_AREC_GW+4]) ||
-		is_zero(db_arec[V1_MARK_LEN+V1_AREC_REFH:V1_MARK_LEN+V1_AREC_REFL+8]) {
+	// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
+
+	arec := v1_arec_decode(db_arec[V1_MARK_LEN:])
+
+	if arec.gw.IsZeroAddr() || arec.ref.IsZero()  {
 		log.err("db insert arec: null gw + ref, ignoring")
 		return
 	}
 
-	// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
-
 	var err error
 	var mark M32
-	var ea IP
-	var ip IP
-	var gw IP
-	var ref rff.Ref
 
-	ea_zero := is_zero(db_arec[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4])
-	ip_zero := is_zero(db_arec[V1_MARK_LEN+V1_AREC_IP : V1_MARK_LEN+V1_AREC_IP+4])
-
-	if !ea_zero && ip_zero {
+	if !arec.ea.IsZeroAddr() && arec.ip.IsZeroAddr() {
 
 		if cli.debug["db"] {
 			mark = M32(be.Uint32(db_arec[V1_MARK : V1_MARK+4]))
-			ea = IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4])
-			gw = IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_GW : V1_MARK_LEN+V1_AREC_GW+4])
-			ref.H = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFH : V1_MARK_LEN+V1_AREC_REFH+8])
-			ref.L = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
-			log.debug("db save: mark(%v) %v -> %v + %v", mark, ea, gw, &ref)
+			log.debug("db save: mark(%v) %v -> %v + %v", mark, arec.ea, arec.gw, &arec.ref)
 		}
 
 		err = db.db.Update(func(tx *bolt.Tx) error {
@@ -387,21 +379,18 @@ func (db *DB) insert_record(db_arec []byte) {
 
 		err = db.db.Update(func(tx *bolt.Tx) error {
 			bkt := tx.Bucket([]byte(ea_bkt))
-			err := bkt.Put(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4], db_arec)
+			err := bkt.Put(arec.ea.AsSlice(), db_arec)
 			return err
 		})
 		if err != nil {
 			log.err("db insert arec: failed to save arec: %v", err)
 		}
 
-	} else if ea_zero && !ip_zero {
+	} else if arec.ea.IsZeroAddr() && !arec.ip.IsZeroAddr() {
 
 		if cli.debug["db"] {
 			mark = M32(be.Uint32(db_arec[V1_MARK : V1_MARK+4]))
-			ip = IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_IP : V1_MARK_LEN+V1_AREC_IP+4])
-			ref.H = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFH : V1_MARK_LEN+V1_AREC_REFH+8])
-			ref.L = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
-			log.debug("db save: mark(%v) %v -> %v", mark, &ref, ip)
+			log.debug("db save: mark(%v) %v -> %v", mark, &arec.ref, arec.ip)
 		}
 
 		err = db.db.Update(func(tx *bolt.Tx) error {
@@ -414,7 +403,7 @@ func (db *DB) insert_record(db_arec []byte) {
 
 		err = db.db.Update(func(tx *bolt.Tx) error {
 			bkt := tx.Bucket([]byte(ref_bkt))
-			err := bkt.Put(db_arec[V1_MARK_LEN+V1_AREC_REFH:V1_MARK_LEN+V1_AREC_REFL+8], db_arec)
+			err := bkt.Put(ref_asslice(arec.ref), db_arec)
 			return err
 		})
 		if err != nil {
@@ -430,7 +419,7 @@ func (db *DB) save_arec(pb *PktBuf) {
 
 	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
-	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+	if pktlen < V1_HDR_LEN+V1_MARK_LEN+v1_arec_len {
 		log.err("db save arec: packet too short, ignoring")
 		return
 	}
@@ -449,18 +438,18 @@ func (db *DB) save_arec(pb *PktBuf) {
 
 	// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
 
-	db_arec := make([]byte, V1_MARK_LEN+V1_AREC_LEN, V1_MARK_LEN+V1_AREC_LEN)
+	db_arec := make([]byte, V1_MARK_LEN+v1_arec_len, V1_MARK_LEN+v1_arec_len)
 	copy(db_arec, pkt[off+V1_OID:off+V1_MARK+4])
 
 	off += V1_MARK_LEN
 
-	if (pktlen-off)%V1_AREC_LEN != 0 {
+	if (pktlen-off)%v1_arec_len != 0 {
 		log.err("db save arec: corrupted packet, ignoring")
 		return
 	}
 
-	for ; off < pktlen; off += V1_AREC_LEN {
-		copy(db_arec[V1_MARK_LEN:], pkt[off:off+V1_AREC_LEN])
+	for ; off < pktlen; off += v1_arec_len {
+		copy(db_arec[V1_MARK_LEN:], pkt[off:off+v1_arec_len])
 		db.insert_record(db_arec)
 	}
 }
@@ -469,14 +458,14 @@ func (db *DB) remove_expired_eas(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
-	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+	if pktlen < V1_HDR_LEN+V1_MARK_LEN+v1_arec_len {
 		log.err("db remove eas: packet too short, ignoring")
 		return DROP
 	}
 
 	off := V1_HDR_LEN + V1_MARK_LEN
 
-	if (pktlen-off)%V1_AREC_LEN != 0 {
+	if (pktlen-off)%v1_arec_len != 0 {
 		log.err("db remove eas: corrupted packet, ignoring")
 		return DROP
 	}
@@ -486,9 +475,6 @@ func (db *DB) remove_expired_eas(pb *PktBuf) int {
 	}
 
 	var err error
-	var ea IP
-	var gw IP
-	var ref rff.Ref
 
 	err = db.db.Update(func(tx *bolt.Tx) error {
 
@@ -498,42 +484,37 @@ func (db *DB) remove_expired_eas(pb *PktBuf) int {
 			return nil
 		}
 
-		for ; off < pktlen; off += V1_AREC_LEN {
+		for ; off < pktlen; off += v1_arec_len {
 
-			if is_zero(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4]) {
+			arec := v1_arec_decode(pkt[off:])
+
+			if arec.ea.IsZeroAddr() {
 				continue
 			}
 
-			// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
+			// db_arecb is a slice containing: oid + mark + ea + ip + gw + ref
 
-			db_arec := bkt.Get(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4])
+			db_arecb := bkt.Get(arec.ea.AsSlice())
+			db_arec := v1_arec_decode(db_arecb[V1_MARK_LEN:])
 
-			if bytes.Compare(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4]) != 0 {
-				log.err("db remove ea(%v): ea mismatch, cannot remove ea",
-					IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4]))
+			if arec.ea != db_arec.ea {
+				log.err("db remove ea(%v): ea mismatch, cannot remove ea", db_arec.ea)
 				continue
 			}
-			if bytes.Compare(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], db_arec[V1_MARK_LEN+V1_AREC_GW:V1_MARK_LEN+V1_AREC_GW+4]) != 0 {
-				log.err("db remove ea(%v): gw mismatch, cannot remove ea",
-					IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4]))
+			if arec.gw != db_arec.gw {
+				log.err("db remove ea(%v): gw mismatch, cannot remove ea", db_arec.ea)
 				continue
 			}
-			if bytes.Compare(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], db_arec[V1_MARK_LEN+V1_AREC_REFH:V1_MARK_LEN+V1_AREC_REFH+8]) != 0 ||
-				bytes.Compare(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], db_arec[V1_MARK_LEN+V1_AREC_REFL:V1_MARK_LEN+V1_AREC_REFL+8]) != 0 {
-				log.err("db remove ea(%v): ref mismatch, cannot remove ea",
-					IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4]))
+			if arec.ref != db_arec.ref {
+				log.err("db remove ea(%v): ref mismatch, cannot remove ea", db_arec.ea)
 				continue
 			}
 
 			if cli.debug["db"] {
-				ea = IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4])
-				gw = IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_GW : V1_MARK_LEN+V1_AREC_GW+4])
-				ref.H = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFH : V1_MARK_LEN+V1_AREC_REFH+8])
-				ref.L = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
-				log.debug("db remove ea(%v): %v + %v", ea, gw, &ref)
+				log.debug("db remove ea(%v): %v + %v", db_arec.ea, db_arec.gw, &db_arec.ref)
 			}
 
-			err = bkt.Delete(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4])
+			err = bkt.Delete(arec.ea.AsSlice())
 
 			if err != nil {
 				break
@@ -557,7 +538,7 @@ func (db *DB) find_expired_eas(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
-	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+	if pktlen < V1_HDR_LEN+V1_MARK_LEN+v1_arec_len {
 		log.err("db find eas: packet too short, ignoring")
 		return DROP
 	}
@@ -573,12 +554,12 @@ func (db *DB) find_expired_eas(pb *PktBuf) int {
 
 	off += V1_MARK_LEN
 
-	if (pktlen - off) != V1_AREC_LEN {
+	if (pktlen - off) != v1_arec_len {
 		log.err("db find eas: corrupted packet, ignoring")
 		return DROP
 	}
 
-	seek_ea := pkt[off+V1_AREC_EA : off+V1_AREC_EA+4]
+	seek_ea := v1_arec_decode(pkt[off:]).ea.AsSlice()
 
 	// assume NACK
 
@@ -635,10 +616,10 @@ func (db *DB) find_expired_eas(pb *PktBuf) int {
 				continue
 			}
 
-			copy(pkt[off:off+V1_AREC_LEN], db_arec[V1_MARK_LEN:V1_MARK_LEN+V1_AREC_LEN])
+			copy(pkt[off:off+v1_arec_len], db_arec[V1_MARK_LEN:V1_MARK_LEN+v1_arec_len])
 
-			off += V1_AREC_LEN
-			if off >= RCVY_MAX*V1_AREC_LEN+V1_HDR_LEN+V1_MARK_LEN {
+			off += v1_arec_len
+			if off >= RCVY_MAX*v1_arec_len+V1_HDR_LEN+V1_MARK_LEN {
 				break
 			}
 		}
@@ -662,14 +643,14 @@ func (db *DB) remove_expired_refs(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
-	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+	if pktlen < V1_HDR_LEN+V1_MARK_LEN+v1_arec_len {
 		log.err("db remove refs: packet too short, ignoring")
 		return DROP
 	}
 
 	off := V1_HDR_LEN + V1_MARK_LEN
 
-	if (pktlen-off)%V1_AREC_LEN != 0 {
+	if (pktlen-off)%v1_arec_len != 0 {
 		log.err("db remove refs: corrupted packet, ignoring")
 		return DROP
 	}
@@ -679,9 +660,6 @@ func (db *DB) remove_expired_refs(pb *PktBuf) int {
 	}
 
 	var err error
-	var ip IP
-	var gw IP
-	var ref rff.Ref
 
 	err = db.db.Update(func(tx *bolt.Tx) error {
 
@@ -691,40 +669,37 @@ func (db *DB) remove_expired_refs(pb *PktBuf) int {
 			return nil
 		}
 
-		for ; off < pktlen; off += V1_AREC_LEN {
+		for ; off < pktlen; off += v1_arec_len {
 
-			if is_zero(pkt[off+V1_AREC_REFH : off+V1_AREC_REFL+8]) {
+			arec := v1_arec_decode(pkt[off:])
+
+			if arec.ref.IsZero() {
 				continue
 			}
 
-			ip = IPFromSlice(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4])
-			gw = IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
-			ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-			ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
+			// db_arecb is a slice containing: oid + mark + ea + ip + gw + ref
 
-			// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
+			db_arecb := bkt.Get(ref_asslice(arec.ref))
+			db_arec := v1_arec_decode(db_arecb[V1_MARK_LEN:])
 
-			db_arec := bkt.Get(pkt[off+V1_AREC_REFH : off+V1_AREC_REFL+8])
-
-			if bytes.Compare(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], db_arec[V1_MARK_LEN+V1_AREC_GW:V1_MARK_LEN+V1_AREC_GW+4]) != 0 {
-				log.err("db remove gw+ref(%v + %v): gw mismatch, cannot remove ref", gw, &ref)
+			if arec.gw != db_arec.gw {
+				log.err("db remove gw+ref(%v + %v): gw mismatch, cannot remove ref", arec.gw, &arec.ref)
 				continue
 			}
-			if bytes.Compare(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], db_arec[V1_MARK_LEN+V1_AREC_REFH:V1_MARK_LEN+V1_AREC_REFH+8]) != 0 ||
-				bytes.Compare(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], db_arec[V1_MARK_LEN+V1_AREC_REFL:V1_MARK_LEN+V1_AREC_REFL+8]) != 0 {
-				log.err("db remove gw+ref(%v + %v): ref mismatch, cannot remove ref", gw, &ref)
+			if arec.ref != db_arec.ref {
+				log.err("db remove gw+ref(%v + %v): ref mismatch, cannot remove ref", arec.gw, &arec.ref)
 				continue
 			}
-			if bytes.Compare(pkt[off+V1_AREC_IP:off+V1_AREC_IP+4], db_arec[V1_MARK_LEN+V1_AREC_IP:V1_MARK_LEN+V1_AREC_IP+4]) != 0 {
-				log.err("db remove gw+ref(%v + %v): ip mismatch, cannot remove ref", gw, &ref)
+			if arec.ip != db_arec.ip {
+				log.err("db remove gw+ref(%v + %v): ip mismatch, cannot remove ref", arec.gw, &arec.ref)
 				continue
 			}
 
 			if cli.debug["db"] {
-				log.debug("db remove gw+ref(%v + %v -> %v)", gw, &ref, ip)
+				log.debug("db remove gw+ref(%v + %v -> %v)", arec.gw, &arec.ref, arec.ip)
 			}
 
-			err = bkt.Delete(pkt[off+V1_AREC_REFH : off+V1_AREC_REFL+8])
+			err = bkt.Delete(ref_asslice(arec.ref))
 
 			if err != nil {
 				break
@@ -748,7 +723,7 @@ func (db *DB) find_expired_refs(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.data:pb.tail]
 	pktlen := len(pkt)
-	if pktlen < V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN {
+	if pktlen < V1_HDR_LEN+V1_MARK_LEN+v1_arec_len {
 		log.err("db find refs: packet too short, ignoring")
 		return DROP
 	}
@@ -764,12 +739,12 @@ func (db *DB) find_expired_refs(pb *PktBuf) int {
 
 	off += V1_MARK_LEN
 
-	if (pktlen - off) != V1_AREC_LEN {
+	if (pktlen - off) != v1_arec_len {
 		log.err("db find refs: corrupted packet, ignoring")
 		return DROP
 	}
 
-	seek_ref := pkt[off+V1_AREC_REFH : off+V1_AREC_REFL+8]
+	seek_ref := ref_asslice(v1_arec_decode(pkt[off:]).ref)
 
 	// assume NACK
 
@@ -826,10 +801,10 @@ func (db *DB) find_expired_refs(pb *PktBuf) int {
 				continue
 			}
 
-			copy(pkt[off:off+V1_AREC_LEN], db_arec[V1_MARK_LEN:V1_MARK_LEN+V1_AREC_LEN])
+			copy(pkt[off:off+v1_arec_len], db_arec[V1_MARK_LEN:V1_MARK_LEN+v1_arec_len])
 
-			off += V1_AREC_LEN
-			if off >= RCVY_MAX*V1_AREC_LEN+V1_HDR_LEN+V1_MARK_LEN {
+			off += v1_arec_len
+			if off >= RCVY_MAX*v1_arec_len+V1_HDR_LEN+V1_MARK_LEN {
 				break
 			}
 		}
@@ -898,26 +873,22 @@ func (db *DB) receive(pb *PktBuf) {
 
 func (db *DB) open_db() {
 
-	rdbname := dbname + "~"
-	dbpath := path.Join(cli.datadir, dbname)
-	rdbpath := path.Join(cli.datadir, rdbname)
-
 	// if restore DB exists then we restore from it regardless of whether DB exists
 	// or not presuming this is a result of a previously failed or aborted startup
 
-	if fd, err := os.Open(rdbpath); os.IsNotExist(err) {
+	if fd, err := os.Open(db.rdbpath); os.IsNotExist(err) {
 
-		if err := os.Rename(dbpath, rdbpath); err != nil {
+		if err := os.Rename(db.dbpath, db.rdbpath); err != nil {
 			if os.IsNotExist(err) {
 				db.rdb = nil
 			} else {
-				log.fatal("cannot rename DB %v to %v: %v", dbname, rdbname, err)
+				log.fatal("cannot rename DB %v to %v: %v", db.dbname, db.rdbname, err)
 			}
 		} else {
-			log.info("opening existing DB %v as restore DB renamed to %v", dbname, rdbname)
-			frdb, err := bolt.Open(rdbpath, 0440, &bolt.Options{Timeout: 1 * time.Second, ReadOnly: true})
+			log.info("opening existing DB %v as restore DB renamed to %v", db.dbname, db.rdbname)
+			frdb, err := bolt.Open(db.rdbpath, 0440, &bolt.Options{Timeout: 1 * time.Second, ReadOnly: true})
 			if err != nil {
-				log.fatal("cannot open restore DB %v: %v", rdbname, err)
+				log.fatal("cannot open restore DB %v: %v", db.rdbname, err)
 			}
 			db.rdb = frdb
 		}
@@ -926,22 +897,22 @@ func (db *DB) open_db() {
 
 		fd.Close()
 
-		os.Remove(dbpath)
-		log.info("opening existing restore DB %v", rdbname)
+		os.Remove(db.dbpath)
+		log.info("opening existing restore DB %v", db.rdbname)
 
-		frdb, err := bolt.Open(rdbpath, 0440, &bolt.Options{Timeout: 1 * time.Second, ReadOnly: true})
+		frdb, err := bolt.Open(db.rdbpath, 0440, &bolt.Options{Timeout: 1 * time.Second, ReadOnly: true})
 		if err != nil {
-			log.fatal("cannot open existing restore DB %v: %v", rdbname, err)
+			log.fatal("cannot open existing restore DB %v: %v", db.rdbname, err)
 		}
 		db.rdb = frdb
 	}
 
-	log.info("creating DB %v", dbname)
+	log.info("creating DB %v", db.dbname)
 
 	os.MkdirAll(cli.datadir, 0770)
-	fdb, err := bolt.Open(dbpath, 0660, &bolt.Options{Timeout: 1 * time.Second})
+	fdb, err := bolt.Open(db.dbpath, 0660, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
-		log.fatal("cannot create %v: %v", dbname, err)
+		log.fatal("cannot create %v: %v", db.dbname, err)
 	}
 	db.db = fdb
 }
@@ -949,18 +920,18 @@ func (db *DB) open_db() {
 func (db *DB) stop_restore() {
 
 	if db.rdb != nil {
-		log.info("closing restore DB: %v", dbname+"~")
+		log.info("closing restore DB: %v", db.rdbname)
 		db.rdb.Close()
 		db.rdb = nil
 	}
-	rdbpath := path.Join(cli.datadir, dbname+"~")
+	rdbpath := path.Join(cli.datadir, db.rdbname)
 	os.Remove(rdbpath)
 }
 
 func (db *DB) stop() {
 
 	if db.db != nil {
-		log.info("closing DB: %v", dbname)
+		log.info("closing DB: %v", db.dbname)
 		db.db.Close()
 		db.db = nil
 	}
@@ -979,5 +950,20 @@ func (db *DB) start() {
 }
 
 func (db *DB) init() {
+	db.dbname = dbbasename
+	if ea_iplen == 4 {
+		db.dbname += "_ea4"
+	} else {
+		db.dbname += "_ea6"
+	}
+	if gw_iplen == 4 {
+		db.dbname += "_gw4"
+	} else {
+		db.dbname += "_gw6"
+	}
+	db.dbname += ".db"
+	db.rdbname = db.dbname + "~"
+	db.dbpath = path.Join(cli.datadir, db.dbname)
+	db.rdbpath = path.Join(cli.datadir, db.rdbname)
 	db.recv = make(chan *PktBuf, PKTQLEN*4)
 }

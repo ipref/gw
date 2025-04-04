@@ -327,7 +327,7 @@ func icmp() {
 			pb.data -= new_hdrs_len
 
 			// build outer IPREF header
-			pb.pkt[outer_ipref_hdr] = (0x1 << 4) | (encode_reflen(reflen) << 2)
+			pb.pkt[outer_ipref_hdr] = (0x1 << 4) | (ipref_encode_reflen(reflen) << 2)
 			pb.pkt[outer_ipref_hdr + 1] = pb.pkt[inner_ipref_hdr + 1]
 			pb.pkt[outer_ipref_hdr + 2] = IPREF_ICMP_SEND_TTL
 			pb.pkt[outer_ipref_hdr + 3] = ICMP

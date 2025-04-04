@@ -84,7 +84,6 @@ func main() {
 	owners.restore_oids()
 
 	mapper_oid = owners.get_oid("mapper")
-	arp_oid = owners.get_oid("arp")
 
 	map_gw.init(mapper_oid)
 	map_tun.init(mapper_oid)
@@ -114,7 +113,6 @@ func main() {
 	start_tun()
 
 	go timer_tick()
-	go arp_tick()
 
 	mb.start()
 

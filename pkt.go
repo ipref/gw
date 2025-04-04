@@ -15,20 +15,13 @@ const ( // v1 constants
 
 	V1_SIG      = 0x11 // v1 signature
 	V1_HDR_LEN  = 8
-	V1_AREC_LEN = 4 + 4 + 4 + 8 + 8     // ea + ip + gw + ref.h + ref.l
-	V1_MARK_LEN = 4 + 4                 // oid + mark
+	V1_MARK_LEN = 4 + 4 // oid + mark
 	// v1 header offsets
 	V1_VER      = 0
 	V1_CMD      = 1
 	V1_PKTID    = 2
 	V1_RESERVED = 4
 	V1_PKTLEN   = 6
-	// v1 arec offsets
-	V1_AREC_EA   = 0
-	V1_AREC_IP   = 4
-	V1_AREC_GW   = 8
-	V1_AREC_REFH = 12
-	V1_AREC_REFL = 20
 	// v1 mark offsets
 	V1_OID  = 0
 	V1_MARK = 4
@@ -58,7 +51,6 @@ const ( // v1 commands
 	V1_SET_AREC       = 1
 	V1_SET_MARK       = 2
 	V1_GET_REF        = 4
-	V1_INDUCE_ARP     = 5 // TODO remove (obsolete)
 	V1_GET_EA         = 6
 	V1_MC_GET_EA      = 7
 	V1_SAVE_OID       = 8
@@ -331,8 +323,6 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 			ss += fmt.Sprintf(" SET_MARK(%v) oid %v(%v) mark(%v)",
 				cmd, owners.name(oid), oid, be.Uint32(pkt[off+V1_MARK:off+V1_MARK+4]))
 
-		case V1_INDUCE_ARP:
-			ss += fmt.Sprintf(" INDUCE_ARP(%v)", cmd)
 		case V1_DATA | V1_GET_EA:
 			ss += fmt.Sprintf(" DATA GET_EA(%v) invalid", cmd&0x3f)
 		case V1_REQ | V1_GET_EA:
@@ -346,14 +336,11 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 
 			off += V1_MARK_LEN
 
-			if pktlen-off < V1_AREC_LEN {
+			if pktlen-off < v1_arec_len {
 				ss += fmt.Sprintf(" too short")
 			} else {
-
-				var ref rff.Ref
-				ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-				ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
-				ss += fmt.Sprintf(" %v + %v", net.IP(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4]).To4(), &ref)
+				arec := v1_arec_decode(pkt[off:])
+				ss += fmt.Sprintf(" %v + %v", arec.gw, &arec.ref)
 			}
 
 		case V1_ACK | V1_GET_EA:
@@ -367,15 +354,11 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 
 			off += V1_MARK_LEN
 
-			if pktlen-off < V1_AREC_LEN {
+			if pktlen-off < v1_arec_len {
 				ss += fmt.Sprintf(" too short")
 			} else {
-
-				var ref rff.Ref
-				ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-				ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
-				ss += fmt.Sprintf(" %v + %v", net.IP(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4]).To4(), &ref)
-				ss += fmt.Sprintf(" = %v", net.IP(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4]).To4())
+				arec := v1_arec_decode(pkt[off:])
+				ss += fmt.Sprintf(" %v + %v = %v", arec.gw, &arec.ref, arec.ea)
 			}
 
 		case V1_NACK | V1_GET_EA:
@@ -396,16 +379,13 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 			ss += fmt.Sprintf("  REQ MC_GET_EA(%v) pktid[%04x]",
 				cmd&0x3f, be.Uint16(pkt[V1_PKTID:V1_PKTID+2]))
 
-			if pktlen-off < V1_AREC_LEN {
+			if pktlen-off < v1_arec_len {
 				ss += fmt.Sprintf(" too short")
 			} else {
+				arec := v1_arec_decode(pkt[off:])
+				ss += fmt.Sprintf(" %v + %v", arec.gw, &arec.ref)
 
-				var ref rff.Ref
-				ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-				ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
-				ss += fmt.Sprintf(" %v + %v", net.IP(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4]).To4(), &ref)
-
-				off += V1_AREC_LEN
+				off += v1_arec_len
 				if pktlen-off > 4 && pkt[off] == V1_TYPE_STRING && int(pkt[off+1]) <= pktlen-off-2 {
 					ss += fmt.Sprintf("   %v", string(pkt[off+2:off+2+int(pkt[off+1])]))
 				}
@@ -417,15 +397,11 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 			ss += fmt.Sprintf("  ACK MC_GET_EA(%v) pktid[%04x]",
 				cmd&0x3f, be.Uint16(pkt[V1_PKTID:V1_PKTID+2]))
 
-			if pktlen-off < V1_AREC_LEN {
+			if pktlen-off < v1_arec_len {
 				ss += fmt.Sprintf(" too short")
 			} else {
-
-				var ref rff.Ref
-				ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
-				ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
-				ss += fmt.Sprintf(" %v + %v", net.IP(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4]).To4(), &ref)
-				ss += fmt.Sprintf(" = %v", net.IP(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4]).To4())
+				arec := v1_arec_decode(pkt[off:])
+				ss += fmt.Sprintf(" %v + %v = %v", arec.gw, &arec.ref, arec.ea)
 			}
 
 		case V1_NACK | V1_MC_GET_EA:
@@ -611,6 +587,25 @@ func (pb *PktBuf) pp_tran(pfx string) {
 	}
 }
 
+// TODO Move to ipref/ref
+func ref_asslice(ref rff.Ref) (refb []byte) {
+	refb = make([]byte, 16)
+	be.PutUint64(refb[:8], ref.H)
+	be.PutUint64(refb[8:], ref.L)
+	return
+}
+
+// TODO Move to ipref/ref
+func ref_fromslice(refb []byte) (ref rff.Ref) {
+	ref.H = be.Uint64(refb[:8])
+	ref.L = be.Uint64(refb[8:])
+	return
+}
+
+func ref_secondbyte(ref rff.Ref) byte {
+	return byte(ref.L >> 8)
+}
+
 // Don't call until you've checked that the packet size is at least 1 or
 // ipref_ok().
 func (pb *PktBuf) ipref_ver_ok() bool {
@@ -633,7 +628,7 @@ func (pb *PktBuf) ipref_reflen() int {
 	}
 }
 
-func encode_reflen(reflen int) byte {
+func ipref_encode_reflen(reflen int) byte {
 
 	switch reflen {
 	case 4:
@@ -771,7 +766,7 @@ func (pb *PktBuf) ipref_sref() rff.Ref {
 	if pb.ipref_if() {
 		i += 8
 	}
-	return decode_ref(pb.pkt[i : i + reflen])
+	return ipref_decode_ref(pb.pkt[i : i + reflen])
 }
 
 // Don't call until you've checked ipref_ok().
@@ -782,7 +777,7 @@ func (pb *PktBuf) ipref_dref() rff.Ref {
 	if pb.ipref_if() {
 		i += 8
 	}
-	return decode_ref(pb.pkt[i : i + reflen])
+	return ipref_decode_ref(pb.pkt[i : i + reflen])
 }
 
 // Don't call until you've checked ipref_ok().
@@ -831,7 +826,7 @@ func min_reflen(ref rff.Ref) int {
 	}
 }
 
-func encode_ref(bs []byte, ref rff.Ref) {
+func ipref_encode_ref(bs []byte, ref rff.Ref) {
 
 	switch len(bs) {
 	case 4:
@@ -846,7 +841,7 @@ func encode_ref(bs []byte, ref rff.Ref) {
 	}
 }
 
-func decode_ref(bs []byte) (ref rff.Ref) {
+func ipref_decode_ref(bs []byte) (ref rff.Ref) {
 
 	switch len(bs) {
 	case 4:

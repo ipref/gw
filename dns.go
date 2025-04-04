@@ -238,7 +238,7 @@ func install_hosts_records(oid O32, arecs map[IP]AddrRec) {
 
 		off += V1_MARK_LEN
 
-		for off <= len(pkt)-V1_AREC_LEN {
+		for off <= len(pkt)-v1_arec_len {
 
 			rec, ok := arecs[keys[ix]]
 			if !ok {
@@ -308,23 +308,15 @@ func install_hosts_records(oid O32, arecs map[IP]AddrRec) {
 
 			// pack it up
 
-			{
-				ea := rec.ea
-				if ea.IsZero() {
-					ea = IPNum(rec.ip.Len(), 0)
-				}
-				ip := rec.ip
-				if ip.IsZero() {
-					ip = IPNum(rec.ea.Len(), 0)
-				}
-				copy(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], ea.AsSlice4())
-				copy(pkt[off+V1_AREC_IP:off+V1_AREC_IP+4], ip.AsSlice4())
-				copy(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], rec.gw.AsSlice4())
-				be.PutUint64(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], rec.ref.H)
-				be.PutUint64(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], rec.ref.L)
+			if rec.ea.IsZero() {
+				rec.ea = IPNum(ea_iplen, 0)
 			}
+			if rec.ip.IsZero() {
+				rec.ip = IPNum(ea_iplen, 0)
+			}
+			v1_arec_encode(pkt[off:], rec)
 
-			off += V1_AREC_LEN
+			off += v1_arec_len
 
 		skip_record:
 
@@ -345,7 +337,7 @@ func install_hosts_records(oid O32, arecs map[IP]AddrRec) {
 			pbb.copy_from(pb)
 
 			log.debug("dns watcher: sending packet with hosts records: %v(%v) mark(%v), num(%v)",
-				owners.name(oid), oid, mark, (off-V1_HDR_LEN-V1_MARK_LEN)/V1_AREC_LEN)
+				owners.name(oid), oid, mark, (off-V1_HDR_LEN-V1_MARK_LEN)/v1_arec_len)
 
 			recv_tun <- pb
 			recv_gw <- pbb

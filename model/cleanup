@@ -6,4 +6,4 @@ ip netns delete gw8
 ip netns delete host711
 ip netns delete host822
 
-rm -f /var/lib/ipref/gw{7,8}/mapper.db
+rm -f /var/lib/ipref/gw{7,8}/mapper_ea{4,6}_gw{4,6}.db

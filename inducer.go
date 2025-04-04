@@ -23,6 +23,11 @@ func allocate_eas(gw []IP, ref rff.Ref, from, to uint64) {
 
 	log.info("inducing ea allocation")
 
+	var arec AddrRec
+	arec.ea = IPNum(ea_iplen, 0)
+	arec.ip = IPNum(ea_iplen, 0)
+	arec.ref = ref
+
 	for lword := from; lword < to+1; lword++ {
 
 		pktid++
@@ -41,16 +46,14 @@ func allocate_eas(gw []IP, ref rff.Ref, from, to uint64) {
 
 		off += V1_MARK_LEN
 
-		copy(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], []byte{0, 0, 0, 0})
-		copy(pkt[off+V1_AREC_IP:off+V1_AREC_IP+4], []byte{0, 0, 0, 0})
-		copy(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], gw[int(lword)%len(gw)].AsSlice4())
-		be.PutUint64(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], ref.H)
-		be.PutUint64(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], ref.L+lword)
+		arec.gw = gw[int(lword)%len(gw)]
+		arec.ref.L++
+		v1_arec_encode(pkt[off:], arec)
 
 		// send to fwd_to_tun and forget it
 
-		pb.tail = pb.data + V1_HDR_LEN + V1_MARK_LEN + V1_AREC_LEN
-		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], (V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN)/4)
+		pb.tail = pb.data + V1_HDR_LEN + V1_MARK_LEN + v1_arec_len
+		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(V1_HDR_LEN+V1_MARK_LEN+v1_arec_len)/4)
 		pb.peer = "ea allocation inducer"
 		pb.schan = retbuf
 		recv_gw <- pb
@@ -63,10 +66,10 @@ func induce_ea_allocation() {
 
 	base_ref := rff.Ref{0, 0x11110000}
 	base_gw := []IP{
-		IPNum(cli.gw_ip.Len(), 0x01010101),
-		IPNum(cli.gw_ip.Len(), 0x01010102),
-		IPNum(cli.gw_ip.Len(), 0x01010103),
-		IPNum(cli.gw_ip.Len(), 0x01010104)}
+		IPNum(gw_iplen, 0x01010101),
+		IPNum(gw_iplen, 0x01010102),
+		IPNum(gw_iplen, 0x01010103),
+		IPNum(gw_iplen, 0x01010104)}
 
 	log.info("START inducing ea allocation")
 
@@ -103,6 +106,11 @@ func allocate_refs(base, from, to IP) {
 	log.info("inducing ref allocation")
 
 	one := IPNum(from.Len(), 1)
+
+	var arec AddrRec
+	arec.ea = IPNum(ea_iplen, 0)
+	arec.gw = cli.gw_ip
+
 	for ip := from;; {
 
 		if pktid++; pktid == 0 {
@@ -120,16 +128,13 @@ func allocate_refs(base, from, to IP) {
 
 		off += V1_MARK_LEN
 
-		be.PutUint32(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], 0)
-		copy(pkt[off+V1_AREC_IP:off+V1_AREC_IP+4], base.Add(ip).AsSlice4())
-		copy(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], cli.gw_ip.AsSlice4())
-		be.PutUint64(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], 0)
-		be.PutUint64(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], 0)
+		arec.ip = base.Add(ip)
+		v1_arec_encode(pkt[off:], arec)
 
 		// send to fwd_to_gw and forget it
 
-		pb.tail = pb.data + V1_HDR_LEN + V1_MARK_LEN + V1_AREC_LEN
-		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], (V1_HDR_LEN+V1_MARK_LEN+V1_AREC_LEN)/4)
+		pb.tail = pb.data + V1_HDR_LEN + V1_MARK_LEN + v1_arec_len
+		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16(V1_HDR_LEN+V1_MARK_LEN+v1_arec_len)/4)
 		pb.peer = "ref allocation inducer"
 		pb.schan = retbuf
 		recv_tun <- pb
@@ -145,7 +150,7 @@ func induce_ref_allocation() {
 
 	dly := (MAPPER_TMOUT * 1000) / 3
 
-	iplen := cli.ea_ip.Len()
+	iplen := ea_iplen
 	base_ip := IPNum(iplen, 0xac160000)
 
 	sleep(dly/2, dly/16)
