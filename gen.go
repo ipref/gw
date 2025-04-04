@@ -35,11 +35,11 @@ var refzero rff.Ref // constant rff.Ref{0,0}
 // -- ea gen -------------------------------------------------------------------
 
 type GenEA struct {
-	allocated map[IP32]bool
-	bcast     IP32
-	ea        chan IP32 // mapper random ea
+	allocated map[IP]bool
+	bcast     IP
+	ea        chan IP // mapper random ea
 	recv      chan *PktBuf
-	rcvy      chan IP32
+	rcvy      chan IP
 }
 
 var gen_ea GenEA
@@ -53,7 +53,7 @@ func (gen *GenEA) recover_expired_eas() {
 		sleep(prng.Intn(MAPPER_TMOUT/3)*1000, (MAPPER_TMOUT/8)*1000) // random start point
 		for {
 			sleep(RCVY_INTERVAL, RCVY_INTERVAL/8)
-			gen.rcvy <- 0
+			gen.rcvy <- IP{}
 		}
 	}()
 
@@ -80,7 +80,7 @@ func (gen *GenEA) recover_expired_eas() {
 			pkt[off+ii] = 0
 		}
 
-		be.PutUint32(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], uint32(search_ea))
+		copy(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], search_ea.AsSlice4())
 
 		off += V1_AREC_LEN
 
@@ -123,8 +123,8 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 
 		// trigger next batch
 
-		ea := IP32(be.Uint32(pkt[last_off+V1_AREC_EA : last_off+V1_AREC_EA+4]))
-		gen.rcvy <- ea + 1
+		ea := IPFromSlice(pkt[last_off+V1_AREC_EA : last_off+V1_AREC_EA+4])
+		gen.rcvy <- ea.Add(IPNum(cli.ea_ip.Len(), 1))
 
 		// pass the list to fwd_to_tun
 
@@ -155,14 +155,14 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 
 		for ; off < pktlen; off += V1_AREC_LEN {
 
-			ea := IP32(be.Uint32(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4]))
+			ea := IPFromSlice(pkt[off+V1_AREC_EA : off+V1_AREC_EA+4])
 
-			if ea != 0 {
+			if !ea.IsZeroAddr() {
 				delete(gen.allocated, ea)
 				if cli.debug["gen"] {
-					var gw IP32
+					var gw IP
 					var ref rff.Ref
-					gw = IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
+					gw = IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
 					ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
 					ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
 					log.debug("gen ea:  deleted allocated ea(%v): %v + %v", ea, gw, &ref)
@@ -178,14 +178,13 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 }
 
 // generate a random ea with second to last byte >= SECOND_BYTE
-func (gen *GenEA) next_ea() IP32 {
+func (gen *GenEA) next_ea() IP {
 
-	var ea IP32
-	creep := make([]byte, 4)
+	creep := make([]byte, cli.ea_ip.Len())
 	var err error
 
 	// clear ea before incrementing ii
-	for ii := 0; ii < MAXTRIES; ii, ea = ii+1, 0 {
+	for ii := 0; ii < MAXTRIES; ii = ii+1 {
 
 		_, err = rand.Read(creep[1:])
 		if err != nil {
@@ -194,14 +193,14 @@ func (gen *GenEA) next_ea() IP32 {
 
 		creep[2] %= 256 - SECOND_BYTE
 		creep[2] += SECOND_BYTE
-		ea = IP32(be.Uint32(creep))
+		ea := IPFromSlice(creep)
 
-		ea &= gen.bcast
-		if ea == 0 || ea == gen.bcast {
+		ea = ea.And(gen.bcast)
+		if ea.IsZeroAddr() || ea == gen.bcast {
 			continue // zero address or broadcast address, try another
 		}
 
-		ea |= IP32FromAddr(cli.ea_net.Addr())
+		ea = ea.Or(IP(cli.ea_net.Addr()))
 
 		if gen.allocated[ea] {
 			continue // already allocated, try another
@@ -213,7 +212,7 @@ func (gen *GenEA) next_ea() IP32 {
 	}
 
 	log.err("gen ea:  cannot allocate ea")
-	return 0
+	return IP{}
 }
 
 func (gen *GenEA) start() {
@@ -240,11 +239,11 @@ func (gen *GenEA) start() {
 }
 
 func (gen *GenEA) init() {
-	gen.allocated = make(map[IP32]bool)
-	gen.bcast = 0xffff_ffff >> cli.ea_net.Bits()
-	gen.ea = make(chan IP32, GENQLEN)
+	gen.allocated = make(map[IP]bool)
+	gen.bcast = IPBits(len(cli.ea_ip.AsSlice()), cli.ea_net.Bits()).Not()
+	gen.ea = make(chan IP, GENQLEN)
 	gen.recv = make(chan *PktBuf, PKTQLEN)
-	gen.rcvy = make(chan IP32, PKTQLEN)
+	gen.rcvy = make(chan IP, PKTQLEN)
 }
 
 // -- ref gen ------------------------------------------------------------------
@@ -391,10 +390,8 @@ func (gen *GenREF) receive(pb *PktBuf) int {
 			if !ref.IsZero() {
 				delete(gen.allocated, ref)
 				if cli.debug["gen"] {
-					var ip IP32
-					var gw IP32
-					ip = IP32(be.Uint32(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4]))
-					gw = IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
+					ip := IPFromSlice(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4])
+					gw := IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
 					log.debug("gen ref:  deleted allocated gw+ref(%v + %v) -> %v", gw, &ref, ip)
 				}
 			}

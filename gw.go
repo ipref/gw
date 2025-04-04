@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"net"
-	"net/netip"
 	"os"
 	"sync"
 	"syscall"
@@ -24,7 +23,7 @@ const (
 )
 
 type RemoteGw struct {
-	addr netip.Addr
+	addr IP
 }
 
 type RemoteGwConn struct {
@@ -143,7 +142,7 @@ func (rgws *RemoteGwTable) remove_rcon(rcon *RemoteGwConn, lock bool) {
 
 // Use dport = 0 to get the connection regardless of port, or use the default
 // port when creating a new connection.
-func (rgws *RemoteGwTable) get_rcon(daddr netip.Addr, dport uint16,
+func (rgws *RemoteGwTable) get_rcon(daddr IP, dport uint16,
 	lock bool) (*RemoteGwConn, error) {
 
 	// look for existing rcon
@@ -211,7 +210,7 @@ func (rgws *RemoteGwTable) get_rcon(daddr netip.Addr, dport uint16,
 	rgws.rcons[key] = rcon
 	rgws.nrcons++
 
-	on_recv := func(netip.Addr, uint16) {
+	on_recv := func(IP, uint16) {
 		rgws.active_rcon(rcon, true)
 	}
 	on_emsgsize := func() {
@@ -225,7 +224,7 @@ func (rgws *RemoteGwTable) get_rcon(daddr netip.Addr, dport uint16,
 	return rcon, nil
 }
 
-func (rgws *RemoteGwTable) set_dport(daddr netip.Addr, dport uint16, lock bool) {
+func (rgws *RemoteGwTable) set_dport(daddr IP, dport uint16, lock bool) {
 
 	_, err := rgws.get_rcon(daddr, dport, lock)
 	if err != nil {
@@ -302,8 +301,8 @@ func gw_sender(rgws *RemoteGwTable) {
 				retbuf <- pb
 				continue
 			}
-			src_ip, _ := netip.AddrFromSlice(pb.ipref_sref_ip())
-			dst_ip, _ := netip.AddrFromSlice(pb.ipref_dref_ip())
+			src_ip := IPFromSlice(pb.ipref_sref_ip())
+			dst_ip := IPFromSlice(pb.ipref_dref_ip())
 			if src_ip != cli.gw_ip {
 				log.err("gw out:  src(%v) is not gateway, packet dropped", src_ip)
 				retbuf <- pb
@@ -380,7 +379,7 @@ func gw_sender(rgws *RemoteGwTable) {
 }
 
 func gw_receiver(con *net.UDPConn,
-	on_recv func(netip.Addr, uint16), on_emsgsize func(), on_close func()) {
+	on_recv func(IP, uint16), on_emsgsize func(), on_close func()) {
 
 	if cli.devmode {
 		return
@@ -420,7 +419,7 @@ func gw_receiver(con *net.UDPConn,
 			retbuf <- pb
 			continue
 		}
-		src_ip, _ := netip.AddrFromSlice(addr.IP)
+		src_ip := IPFromSlice(addr.IP)
 		src_port := uint16(addr.Port)
 		pb.tail = pb.data + rlen
 		if !pb.ipref_ok() {
@@ -428,8 +427,8 @@ func gw_receiver(con *net.UDPConn,
 			retbuf <- pb
 			continue
 		}
-		sref_ip, _ := netip.AddrFromSlice(pb.ipref_sref_ip())
-		dref_ip, _ := netip.AddrFromSlice(pb.ipref_dref_ip())
+		sref_ip := IPFromSlice(pb.ipref_sref_ip())
+		dref_ip := IPFromSlice(pb.ipref_dref_ip())
 		if sref_ip != src_ip {
 			log.err("gw in:   ipref header src(%v) does not match ip header src(%v), dropping",
 				sref_ip, src_ip)
@@ -490,7 +489,7 @@ func start_gw() {
 
 	rgws := new_rgw_table()
 	go gw_sender(&rgws)
-	on_recv := func(saddr netip.Addr, sport uint16) {
+	on_recv := func(saddr IP, sport uint16) {
 		rgws.set_dport(saddr, sport, true)
 	}
 	on_emsgsize := func() {

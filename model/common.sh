@@ -30,10 +30,10 @@ done
 export GW{,7EN,8EN}_{IPv,IP_PREFIX,SUBNET_BITS}
 
 gw_args=(
-    # -debug gw,pkt,tun
+    # -debug gw,pkt,tun,mapper
     # -time-stamps
     -trace
-    -test-mapper
+    # -test-mapper
 )
 
 function run-gw7 {

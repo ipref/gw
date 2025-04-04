@@ -4,7 +4,6 @@ package main
 
 import (
 	"crypto/rand"
-	"net/netip"
 )
 
 var icmpreq chan (*PktBuf)
@@ -104,8 +103,8 @@ func icmp() {
 
 		case pb.typ == PKT_IPv4 && pb.icmp.typ == ICMPv4_DEST_UNREACH && pb.icmp.ours:
 
-			src := IP32(be.Uint32(pb.pkt[pb.data+IPv4_SRC : pb.data+IPv4_SRC+4]))
-			dst := IP32(be.Uint32(pb.pkt[pb.data+IPv4_DST : pb.data+IPv4_DST+4]))
+			src := IPFromSlice(pb.pkt[pb.data+IPv4_SRC : pb.data+IPv4_SRC+4])
+			dst := IPFromSlice(pb.pkt[pb.data+IPv4_DST : pb.data+IPv4_DST+4])
 			log.trace("icmp:    dest unreach (IPv4, ours)  %v  %v", src, dst)
 
 			if pb.pkt[IPv4_PROTO] == ICMP {
@@ -165,8 +164,8 @@ func icmp() {
 			pb.pkt[outer_ip_hdr + IPv4_TTL] = ICMPv4_SEND_TTL
 			pb.pkt[outer_ip_hdr + IPv4_PROTO] = ICMP
 			be.PutUint16(pb.pkt[outer_ip_hdr + IPv4_CSUM : outer_ip_hdr + IPv4_CSUM + 2], 0)
-			be.PutUint32(pb.pkt[outer_ip_hdr + IPv4_SRC:], uint32(dst)) // swap src/dst
-			be.PutUint32(pb.pkt[outer_ip_hdr + IPv4_DST:], uint32(src))
+			copy(pb.pkt[outer_ip_hdr + IPv4_SRC:], dst.AsSlice4()) // swap src/dst
+			copy(pb.pkt[outer_ip_hdr + IPv4_DST:], src.AsSlice4())
 			ip_csum := csum_add(0, pb.pkt[outer_ip_hdr : outer_ip_hdr + IPv4_HDR_MIN_LEN])
 			be.PutUint16(pb.pkt[outer_ip_hdr + IPv4_CSUM : outer_ip_hdr + IPv4_CSUM + 2], ip_csum^0xffff)
 
@@ -184,8 +183,8 @@ func icmp() {
 
 		case pb.typ == PKT_IPv6 && pb.icmp.typ == ICMPv6_DEST_UNREACH && pb.icmp.ours:
 
-			src, _ := netip.AddrFromSlice(pb.pkt[pb.data+IPv6_SRC : pb.data+IPv6_SRC+16])
-			dst, _ := netip.AddrFromSlice(pb.pkt[pb.data+IPv6_DST : pb.data+IPv6_DST+16])
+			src := IPFromSlice(pb.pkt[pb.data+IPv6_SRC : pb.data+IPv6_SRC+16])
+			dst := IPFromSlice(pb.pkt[pb.data+IPv6_DST : pb.data+IPv6_DST+16])
 			log.trace("icmp:    dest unreach (IPv6, ours)  %v  %v", src, dst)
 
 			if pb.ip_proto() == ICMPv6 {
@@ -247,8 +246,8 @@ func icmp() {
 				uint16(pb.tail - icmp_hdr))
 			pb.pkt[outer_ip_hdr + IPv6_NEXT] = ICMPv6
 			pb.pkt[outer_ip_hdr + IPv6_TTL] = ICMPv6_SEND_TTL
-			copy(pb.pkt[outer_ip_hdr + IPv6_SRC : outer_ip_hdr + IPv6_SRC + 16], dst.AsSlice()) // swap src/dst
-			copy(pb.pkt[outer_ip_hdr + IPv6_DST : outer_ip_hdr + IPv6_DST + 16], src.AsSlice())
+			copy(pb.pkt[outer_ip_hdr + IPv6_SRC:], dst.AsSlice6()) // swap src/dst
+			copy(pb.pkt[outer_ip_hdr + IPv6_DST:], src.AsSlice6())
 
 			// build ICMP header
 			pb.pkt[icmp_hdr + ICMP_TYPE] = ICMPv6_DEST_UNREACH

@@ -177,7 +177,7 @@ func (mgw *MapGw) restore_eas() {
 
 			oid := O32(be.Uint32(val[:4]))
 			mark := M32(be.Uint32(val[4:8]))
-			ea := IP32(be.Uint32(val[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4]))
+			ea := IPFromSlice(val[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4])
 
 			if oid == 0 || mark == 0 {
 				log.err("mgw:  restore ea: %v invalid oid mark: %v(%v): %v, discarding", ea, owners.name(oid), oid, mark)
@@ -358,9 +358,9 @@ func (db *DB) insert_record(db_arec []byte) {
 
 	var err error
 	var mark M32
-	var ea IP32
-	var ip IP32
-	var gw IP32
+	var ea IP
+	var ip IP
+	var gw IP
 	var ref rff.Ref
 
 	ea_zero := is_zero(db_arec[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4])
@@ -370,8 +370,8 @@ func (db *DB) insert_record(db_arec []byte) {
 
 		if cli.debug["db"] {
 			mark = M32(be.Uint32(db_arec[V1_MARK : V1_MARK+4]))
-			ea = IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4]))
-			gw = IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_GW : V1_MARK_LEN+V1_AREC_GW+4]))
+			ea = IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4])
+			gw = IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_GW : V1_MARK_LEN+V1_AREC_GW+4])
 			ref.H = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFH : V1_MARK_LEN+V1_AREC_REFH+8])
 			ref.L = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
 			log.debug("db save: mark(%v) %v -> %v + %v", mark, ea, gw, &ref)
@@ -398,7 +398,7 @@ func (db *DB) insert_record(db_arec []byte) {
 
 		if cli.debug["db"] {
 			mark = M32(be.Uint32(db_arec[V1_MARK : V1_MARK+4]))
-			ip = IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_IP : V1_MARK_LEN+V1_AREC_IP+4]))
+			ip = IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_IP : V1_MARK_LEN+V1_AREC_IP+4])
 			ref.H = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFH : V1_MARK_LEN+V1_AREC_REFH+8])
 			ref.L = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
 			log.debug("db save: mark(%v) %v -> %v", mark, &ref, ip)
@@ -486,8 +486,8 @@ func (db *DB) remove_expired_eas(pb *PktBuf) int {
 	}
 
 	var err error
-	var ea IP32
-	var gw IP32
+	var ea IP
+	var gw IP
 	var ref rff.Ref
 
 	err = db.db.Update(func(tx *bolt.Tx) error {
@@ -510,24 +510,24 @@ func (db *DB) remove_expired_eas(pb *PktBuf) int {
 
 			if bytes.Compare(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4]) != 0 {
 				log.err("db remove ea(%v): ea mismatch, cannot remove ea",
-					IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4])))
+					IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4]))
 				continue
 			}
 			if bytes.Compare(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], db_arec[V1_MARK_LEN+V1_AREC_GW:V1_MARK_LEN+V1_AREC_GW+4]) != 0 {
 				log.err("db remove ea(%v): gw mismatch, cannot remove ea",
-					IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4])))
+					IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4]))
 				continue
 			}
 			if bytes.Compare(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], db_arec[V1_MARK_LEN+V1_AREC_REFH:V1_MARK_LEN+V1_AREC_REFH+8]) != 0 ||
 				bytes.Compare(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], db_arec[V1_MARK_LEN+V1_AREC_REFL:V1_MARK_LEN+V1_AREC_REFL+8]) != 0 {
 				log.err("db remove ea(%v): ref mismatch, cannot remove ea",
-					IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4])))
+					IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_EA:V1_MARK_LEN+V1_AREC_EA+4]))
 				continue
 			}
 
 			if cli.debug["db"] {
-				ea = IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4]))
-				gw = IP32(be.Uint32(db_arec[V1_MARK_LEN+V1_AREC_GW : V1_MARK_LEN+V1_AREC_GW+4]))
+				ea = IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_EA : V1_MARK_LEN+V1_AREC_EA+4])
+				gw = IPFromSlice(db_arec[V1_MARK_LEN+V1_AREC_GW : V1_MARK_LEN+V1_AREC_GW+4])
 				ref.H = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFH : V1_MARK_LEN+V1_AREC_REFH+8])
 				ref.L = be.Uint64(db_arec[V1_MARK_LEN+V1_AREC_REFL : V1_MARK_LEN+V1_AREC_REFL+8])
 				log.debug("db remove ea(%v): %v + %v", ea, gw, &ref)
@@ -679,8 +679,8 @@ func (db *DB) remove_expired_refs(pb *PktBuf) int {
 	}
 
 	var err error
-	var ip IP32
-	var gw IP32
+	var ip IP
+	var gw IP
 	var ref rff.Ref
 
 	err = db.db.Update(func(tx *bolt.Tx) error {
@@ -697,8 +697,8 @@ func (db *DB) remove_expired_refs(pb *PktBuf) int {
 				continue
 			}
 
-			ip = IP32(be.Uint32(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4]))
-			gw = IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
+			ip = IPFromSlice(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4])
+			gw = IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
 			ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
 			ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
 

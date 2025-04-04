@@ -33,8 +33,8 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	// derived
 	debug      map[string]bool
 	ea_net     netip.Prefix
-	ea_ip      netip.Addr
-	gw_ip      netip.Addr
+	ea_ip      IP
+	gw_ip      IP
 	gw_port    int
 	rgw_port   int
 	ifc        net.Interface
@@ -102,15 +102,15 @@ func parse_cli() {
 	if cli.devmode {
 
 		cli.gw = "198.51.100.1"
-		cli.gw_ip = netip.MustParseAddr(cli.gw)
+		cli.gw_ip = MustParseIP(cli.gw)
 		cli.ifc.MTU = 1500
 
 	} else {
 
 		// parse gw addresses
 
-		gw, err := netip.ParseAddr(cli.gw)
-		if err != nil || gw.Zone() != "" {
+		gw, err := ParseIP(cli.gw)
+		if err != nil {
 			if len(cli.gw) == 0 {
 				log.fatal("missing gateway IP address")
 			} else {
@@ -118,7 +118,7 @@ func parse_cli() {
 			}
 		}
 
-		if !gw.IsGlobalUnicast() {
+		if !netip.Addr(gw).IsGlobalUnicast() {
 			log.fatal("gateway IP address is not a valid unicast address: %v", cli.gw)
 		}
 		cli.gw_ip = gw
@@ -139,7 +139,7 @@ func parse_cli() {
 						log.err("unrecognized address for interface %v: %v", ifc, addr)
 						continue
 					}
-					if net.Contains(cli.gw_ip) {
+					if net.Contains(netip.Addr(cli.gw_ip)) {
 						cli.ifc = ifc
 						break ifc_loop
 					}
@@ -179,7 +179,7 @@ func parse_cli() {
 	}
 	ea_ipb := cli.ea_net.Addr().AsSlice()
 	ea_ipb[len(ea_ipb)-1] = 1 // hard code .1 as tun ip address
-	cli.ea_ip, _ = netip.AddrFromSlice(ea_ipb)
+	cli.ea_ip = IPFromSlice(ea_ipb)
 
 	// validate file paths
 

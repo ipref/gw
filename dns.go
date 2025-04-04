@@ -9,7 +9,7 @@ import (
 	rff "github.com/ipref/ref"
 	"io"
 	"io/ioutil"
-	"net"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"time"
@@ -33,9 +33,9 @@ type DnsFunc struct {
 }
 
 // parse file formatted as /etc/hosts
-func parse_hosts_file(fname string, input io.Reader) map[IP32]AddrRec {
+func parse_hosts_file(fname string, input io.Reader) map[IP]AddrRec {
 
-	arecs := make(map[IP32]AddrRec) // use map to detect duplicate entries
+	arecs := make(map[IP]AddrRec) // use map to detect duplicate entries
 	line_scanner := bufio.NewScanner(input)
 	lno := 0
 
@@ -60,16 +60,10 @@ func parse_hosts_file(fname string, input io.Reader) map[IP32]AddrRec {
 		if len(ltoks) == 0 {
 			continue // comment line
 		}
-		addr := net.ParseIP(ltoks[0])
-		if addr == nil {
+		addr, err := ParseIP(ltoks[0])
+		if err != nil {
 			log.err("dns watcher: %v(%v): invalid IP address: %v", fname, lno, ltoks[0])
 			continue
-		}
-
-		addr = addr.To4()
-
-		if addr == nil {
-			continue // not an IPv4 address
 		}
 
 		// ref is always preceeded by a "+"
@@ -109,21 +103,16 @@ func parse_hosts_file(fname string, input io.Reader) map[IP32]AddrRec {
 		}
 
 		if len(gwtoks) == 2 {
-			gw := net.ParseIP(gwtoks[1])
-			if gw == nil {
+			gw, err := ParseIP(gwtoks[1])
+			if err != nil {
 				log.err("dns watcher: %v(%v): invalid gw address: %v", fname, lno, gwtoks[1])
 				continue
 			}
-			gw = gw.To4()
-			if gw == nil {
-				log.err("dns watcher: %v(%v): invalid IPv4 gw address: %v", fname, lno, gwtoks[1])
-				continue
-			}
-			if !gw.IsGlobalUnicast() {
+			if !netip.Addr(gw).IsGlobalUnicast() {
 				log.err("dns watcher: %v(%v): non-unicast gw: %v", fname, lno, gwtoks[1])
 				continue
 			}
-			arec.gw = IP32(be.Uint32(gw))
+			arec.gw = gw
 		}
 
 		// parse ref
@@ -165,11 +154,9 @@ func parse_hosts_file(fname string, input io.Reader) map[IP32]AddrRec {
 
 		sb.WriteString("  =  ")
 
-		if arec.gw != 0 {
-			gw := []byte{0, 0, 0, 0}
+		if !arec.gw.IsZero() {
 			len := sb.Len()
-			be.PutUint32(gw, uint32(arec.gw))
-			sb.WriteString(net.IP(gw).String())
+			sb.WriteString(arec.gw.String())
 			for ii := sb.Len(); ii < len+16; ii++ {
 				sb.WriteString(" ")
 			}
@@ -185,7 +172,7 @@ func parse_hosts_file(fname string, input io.Reader) map[IP32]AddrRec {
 
 			// for pub entries, both gw and the reference are optional
 
-			arec.ip = IP32(be.Uint32(addr))
+			arec.ip = addr
 			arecs[arec.ip] = arec
 
 			log.debug("dns watcher: %v %3d  pub  %v", fname, lno, sb.String())
@@ -194,7 +181,7 @@ func parse_hosts_file(fname string, input io.Reader) map[IP32]AddrRec {
 
 			// for ext entries, both gw and the reference are mandatory
 
-			if arec.gw == 0 {
+			if arec.gw.IsZero() {
 				log.err("dns watcher: %v(%v): missing gw address", fname, lno)
 				continue
 			}
@@ -204,7 +191,7 @@ func parse_hosts_file(fname string, input io.Reader) map[IP32]AddrRec {
 				continue
 			}
 
-			arec.ea = IP32(be.Uint32(addr))
+			arec.ea = addr
 			arecs[arec.ea] = arec
 			log.debug("dns watcher: %v %3d  ext  %v", fname, lno, sb.String())
 		}
@@ -213,7 +200,7 @@ func parse_hosts_file(fname string, input io.Reader) map[IP32]AddrRec {
 	return arecs
 }
 
-func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
+func install_hosts_records(oid O32, arecs map[IP]AddrRec) {
 
 	// get mark for new keys
 
@@ -221,7 +208,7 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 
 	// send new address records (if any, could be 0)
 
-	keys := make([]IP32, 0, len(arecs))
+	keys := make([]IP, 0, len(arecs))
 	for key, _ := range arecs {
 		keys = append(keys, key)
 	}
@@ -260,18 +247,18 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 
 			// validate
 
-			if rec.ea != 0 && rec.ip == 0 {
+			if !rec.ea.IsZero() && rec.ip.IsZero() {
 
-				if rec.gw == 0 || rec.ref.IsZero() {
+				if rec.gw.IsZero() || rec.ref.IsZero() {
 					log.err("dns watcher: invalid ea address record: %v %v %v %v, ignoring",
 						rec.ea, rec.ip, rec.gw, &rec.ref)
 					goto skip_record
 				}
 
-			} else if rec.ea == 0 && rec.ip != 0 {
+			} else if rec.ea.IsZero() && !rec.ip.IsZero() {
 
-				if rec.gw == 0 {
-					rec.gw = IP32FromAddr(cli.gw_ip)
+				if rec.gw.IsZero() {
+					rec.gw = cli.gw_ip
 				}
 
 				//if rec.ref.IsZero() {
@@ -293,7 +280,7 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 				//		rec.ea, rec.ip, rec.gw, &rec.ref)
 				//}
 
-				if rec.gw == 0 || rec.ref.IsZero() {
+				if rec.gw.IsZero() || rec.ref.IsZero() {
 					log.err("dns watcher: invalid ip address record: %v %v %v %v, ignoring",
 						rec.ea, rec.ip, rec.gw, &rec.ref)
 					goto skip_record
@@ -307,13 +294,13 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 
 			// make sure second byte rule is met
 
-			if rec.ea != 0 && ((rec.ea>>8)&0xFF) >= SECOND_BYTE {
+			if !rec.ea.IsZero() && rec.ea.ByteFromEnd(1) >= SECOND_BYTE {
 				log.err("dns watcher: address record second byte violation(ea): %v %v %v %v, ignoring",
 					rec.ea, rec.ip, rec.gw, &rec.ref)
 				goto skip_record
 			}
 
-			if rec.ip != 0 && ((rec.ref.L>>8)&0xFF) >= SECOND_BYTE {
+			if !rec.ip.IsZero() && ((rec.ref.L>>8)&0xFF) >= SECOND_BYTE {
 				log.err("dns watcher: address record second byte violation(ref): %v %v %v %v, ignoring",
 					rec.ea, rec.ip, rec.gw, &rec.ref)
 				goto skip_record
@@ -321,11 +308,21 @@ func install_hosts_records(oid O32, arecs map[IP32]AddrRec) {
 
 			// pack it up
 
-			be.PutUint32(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], uint32(rec.ea))
-			be.PutUint32(pkt[off+V1_AREC_IP:off+V1_AREC_IP+4], uint32(rec.ip))
-			be.PutUint32(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], uint32(rec.gw))
-			be.PutUint64(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], rec.ref.H)
-			be.PutUint64(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], rec.ref.L)
+			{
+				ea := rec.ea
+				if ea.IsZero() {
+					ea = IPNum(rec.ip.Len(), 0)
+				}
+				ip := rec.ip
+				if ip.IsZero() {
+					ip = IPNum(rec.ea.Len(), 0)
+				}
+				copy(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], ea.AsSlice4())
+				copy(pkt[off+V1_AREC_IP:off+V1_AREC_IP+4], ip.AsSlice4())
+				copy(pkt[off+V1_AREC_GW:off+V1_AREC_GW+4], rec.gw.AsSlice4())
+				be.PutUint64(pkt[off+V1_AREC_REFH:off+V1_AREC_REFH+8], rec.ref.H)
+				be.PutUint64(pkt[off+V1_AREC_REFL:off+V1_AREC_REFL+8], rec.ref.L)
+			}
 
 			off += V1_AREC_LEN
 

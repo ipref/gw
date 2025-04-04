@@ -79,8 +79,8 @@ host822 ip link set vhost822gw8 up
 host711 ip route add default via ${GW7EN_IP_PREFIX}192.168.97.1 dev vhost711gw7
 host822 ip route add default via ${GW8EN_IP_PREFIX}192.168.98.2 dev vhost822gw8
 
-# For testing IPv4 PMTUD failure
-host711 iptables -A INPUT -p icmp -i vhost711gw7 -j DROP
+# # For testing IPv4 PMTUD failure
+# host711 iptables -A INPUT -p icmp -i vhost711gw7 -j DROP
 
 # Create hosts files
 mkdir -p /etc/netns/{router1,gw7,gw8,host711,host822}

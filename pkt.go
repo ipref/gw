@@ -8,7 +8,6 @@ import (
 	"fmt"
 	rff "github.com/ipref/ref"
 	"net"
-	"net/netip"
 	"strings"
 )
 
@@ -296,8 +295,8 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 		if len(pkt) < IPv6_HDR_MIN_LEN || pkt[IP_VER]&0xf0 != 0x60 {
 			break
 		}
-		src_ip, _ := netip.AddrFromSlice(pkt[IPv6_SRC:IPv6_SRC+16])
-		dst_ip, _ := netip.AddrFromSlice(pkt[IPv6_DST:IPv6_DST+16])
+		src_ip := IPFromSlice(pkt[IPv6_SRC:IPv6_SRC+16])
+		dst_ip := IPFromSlice(pkt[IPv6_DST:IPv6_DST+16])
 		ss = fmt.Sprintf("IPv6(%v)  %v  %v  len(%v)  data/tail(%v/%v)",
 			ip_proto_name(pkt[IPv6_NEXT]),
 			src_ip,
@@ -528,8 +527,8 @@ func (pb *PktBuf) pp_net(pfx string) {
 			pfx,
 			ip_proto_name(pkt[IPv4_PROTO]),
 			flags,
-			IP32(be.Uint32(pkt[IPv4_SRC:IPv4_SRC+4])),
-			IP32(be.Uint32(pkt[IPv4_DST:IPv4_DST+4])),
+			IPFromSlice(pkt[IPv4_SRC:IPv4_SRC+4]),
+			IPFromSlice(pkt[IPv4_DST:IPv4_DST+4]),
 			be.Uint16(pkt[IPv4_LEN:IPv4_LEN+2]),
 			be.Uint16(pkt[IPv4_ID:IPv4_ID+2]),
 			pkt[IPv4_TTL],
@@ -542,8 +541,8 @@ func (pb *PktBuf) pp_net(pfx string) {
 			break
 		}
 
-		src_ip, _ := netip.AddrFromSlice(pkt[IPv6_SRC:IPv6_SRC+16])
-		dst_ip, _ := netip.AddrFromSlice(pkt[IPv6_DST:IPv6_DST+16])
+		src_ip := IPFromSlice(pkt[IPv6_SRC:IPv6_SRC+16])
+		dst_ip := IPFromSlice(pkt[IPv6_DST:IPv6_DST+16])
 		log.trace("%vIPv6(%v)  %v  %v  len(%v) ttl(%v)",
 			pfx,
 			ip_proto_name(pkt[IPv6_NEXT]),
@@ -788,13 +787,13 @@ func (pb *PktBuf) ipref_dref() rff.Ref {
 
 // Don't call until you've checked ipref_ok().
 func (pb *PktBuf) ipref_src() IpRef {
-	src_ip, _ := netip.AddrFromSlice(pb.ipref_sref_ip())
+	src_ip := IPFromSlice(pb.ipref_sref_ip())
 	return IpRef{src_ip, pb.ipref_sref()}
 }
 
 // Don't call until you've checked ipref_ok().
 func (pb *PktBuf) ipref_dst() IpRef {
-	dst_ip, _ := netip.AddrFromSlice(pb.ipref_dref_ip())
+	dst_ip := IPFromSlice(pb.ipref_dref_ip())
 	return IpRef{dst_ip, pb.ipref_dref()}
 }
 
@@ -828,11 +827,7 @@ func min_reflen(ref rff.Ref) int {
 			return 8
 		}
 	} else {
-		if ref.H >> 32 == 0 {
-			return 12
-		} else {
-			return 16
-		}
+		return 16
 	}
 }
 
@@ -843,9 +838,6 @@ func encode_ref(bs []byte, ref rff.Ref) {
 		be.PutUint32(bs, uint32(ref.L))
 	case 8:
 		be.PutUint64(bs, ref.L)
-	case 12:
-		be.PutUint32(bs[:4], uint32(ref.H))
-		be.PutUint64(bs[4:], ref.L)
 	case 16:
 		be.PutUint64(bs[:8], ref.H)
 		be.PutUint64(bs[8:], ref.L)
@@ -861,9 +853,6 @@ func decode_ref(bs []byte) (ref rff.Ref) {
 		ref.L = uint64(be.Uint32(bs))
 	case 8:
 		ref.L = be.Uint64(bs)
-	case 12:
-		ref.H = uint64(be.Uint32(bs[:4]))
-		ref.L = be.Uint64(bs[4:])
 	case 16:
 		ref.H = be.Uint64(bs[:8])
 		ref.L = be.Uint64(bs[8:])

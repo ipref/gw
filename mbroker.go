@@ -7,7 +7,6 @@ import (
 	"errors"
 	"math/rand"
 	"net"
-	"net/netip"
 	"os"
 	"path"
 	"strings"
@@ -102,7 +101,7 @@ func (mb *MB) get_ea(rpb *PktBuf) int {
 
 		var ipr IpRef
 
-		ipr.ip, _ = netip.AddrFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
+		ipr.ip = IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
 		ipr.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
 		ipr.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
 
@@ -112,7 +111,7 @@ func (mb *MB) get_ea(rpb *PktBuf) int {
 		iprec.oid = O32(be.Uint32(rpkt[roff+V1_OID : roff+V1_OID+4]))
 		iprec.mark = M32(be.Uint32(rpkt[roff+V1_MARK : roff+V1_MARK+4]))
 		roff += V1_MARK_LEN
-		iprec.ip = IP32(be.Uint32(rpkt[roff+V1_AREC_EA : roff+V1_AREC_EA+4]))
+		iprec.ip = IPFromSlice(rpkt[roff+V1_AREC_EA : roff+V1_AREC_EA+4])
 
 		mb.eacache[ipr] = iprec
 
@@ -154,7 +153,7 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 
 	var ipr IpRef
 
-	ipr.ip, _ = netip.AddrFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
+	ipr.ip = IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
 	ipr.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
 	ipr.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
 
@@ -173,7 +172,7 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 			wlen := V1_HDR_LEN + V1_AREC_LEN
 
 			pkt[V1_CMD] = V1_ACK | V1_MC_GET_EA
-			be.PutUint32(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], uint32(iprec.ip))
+			copy(pkt[off+V1_AREC_EA:off+V1_AREC_EA+4], iprec.ip.AsSlice4())
 			be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((wlen / 4)))
 			pb.tail = pb.data + wlen
 
@@ -410,8 +409,8 @@ func (mb *MB) mc_host_data(pb *PktBuf) int {
 
 	for ; off <= pktlen-V1_AREC_LEN; off += V1_AREC_LEN {
 
-		arec.ip = IP32(be.Uint32(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4]))
-		arec.gw = IP32(be.Uint32(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4]))
+		arec.ip = IPFromSlice(pkt[off+V1_AREC_IP : off+V1_AREC_IP+4])
+		arec.gw = IPFromSlice(pkt[off+V1_AREC_GW : off+V1_AREC_GW+4])
 		arec.ref.H = be.Uint64(pkt[off+V1_AREC_REFH : off+V1_AREC_REFH+8])
 		arec.ref.L = be.Uint64(pkt[off+V1_AREC_REFL : off+V1_AREC_REFL+8])
 
