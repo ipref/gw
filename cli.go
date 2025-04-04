@@ -33,6 +33,7 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	// derived
 	debug      map[string]bool
 	ea_net     netip.Prefix
+	ea_ip      netip.Addr
 	gw_ip      netip.Addr
 	gw_port    int
 	rgw_port   int
@@ -176,6 +177,9 @@ func parse_cli() {
 	if !cli.ea_net.Addr().IsGlobalUnicast() {
 		log.fatal("encode-net is not a valid unicast address: %v", cli.ea)
 	}
+	ea_ipb := cli.ea_net.Addr().AsSlice()
+	ea_ipb[len(ea_ipb)-1] = 1 // hard code .1 as tun ip address
+	cli.ea_ip, _ = netip.AddrFromSlice(ea_ipb)
 
 	// validate file paths
 

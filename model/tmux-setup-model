@@ -12,10 +12,12 @@ cd "$( dirname "${BASH_SOURCE[0]}" )" # Go to directory containing this script
 # cmd_left="host711 ping -c 3 -s 1300 -M want host822"
 # cmd_left="host711 traceroute -I --mtu host822"
 # cmd_left="host711 ping host822"
-cmd_left="host711 traceroute --mtu host822"
-cmd_right="host822 traceroute --mtu host711"
+# cmd_left="host711 traceroute --mtu host822"
+# cmd_right="host822 traceroute --mtu host711"
 # cmd_left="host711 wget http://host822:8000 -O /dev/null 2>&1 | head -n 5"
 # cmd_right="host822 python3 -m http.server --bind \${GW8EN_IP_PREFIX}192.168.98.22"
+cmd_left="host711 ./sendudp.py host822 4 dont"
+cmd_right="host822 ./sendudp.py host711 6 do"
 
 setup="\
 cd '$PWD';

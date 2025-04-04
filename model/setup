@@ -8,6 +8,17 @@ shopt -s expand_aliases
 # This doesn't configure NAT in the gateways, because we don't need it for the
 # test.
 
+GW7_HOST711_MTU=2000
+ROUTER1_GW7_MTU=2000
+
+# Destination-limited PMTU
+ROUTER1_GW8_MTU=1800
+GW8_HOST822_MTU=1600
+
+# # Tunnel-limited PMTU
+# ROUTER1_GW8_MTU=1600
+# GW8_HOST822_MTU=1800
+
 # Create network namespaces
 ip netns add router1
 ip netns add gw7
@@ -27,8 +38,8 @@ gw7 sysctl -w net.{ipv4.ip_forward,ipv6.conf.all.forwarding}=1
 gw8 sysctl -w net.{ipv4.ip_forward,ipv6.conf.all.forwarding}=1
 
 # Create two veth pairs to connect gwX/router1
-gw7 ip link add dev vgw7router1 mtu 1500 type veth peer name vrouter1gw7 mtu 1500
-gw8 ip link add dev vgw8router1 mtu 1400 type veth peer name vrouter1gw8 mtu 1400
+gw7 ip link add dev vgw7router1 mtu $ROUTER1_GW7_MTU type veth peer name vrouter1gw7 mtu $ROUTER1_GW7_MTU
+gw8 ip link add dev vgw8router1 mtu $ROUTER1_GW8_MTU type veth peer name vrouter1gw8 mtu $ROUTER1_GW8_MTU
 gw7 ip link set vrouter1gw7 netns router1
 gw8 ip link set vrouter1gw8 netns router1
 
@@ -48,8 +59,8 @@ gw7 ip route add default via ${GW_IP_PREFIX}192.168.11.1 dev vgw7router1
 gw8 ip route add default via ${GW_IP_PREFIX}192.168.12.1 dev vgw8router1
 
 # Create two veth pairs to connect gwX/hostXXX
-gw7 ip link add dev vgw7host711 mtu 1500 type veth peer name vhost711gw7 mtu 1500
-gw8 ip link add dev vgw8host822 mtu 1500 type veth peer name vhost822gw8 mtu 1500
+gw7 ip link add dev vgw7host711 mtu $GW7_HOST711_MTU type veth peer name vhost711gw7 mtu $GW7_HOST711_MTU
+gw8 ip link add dev vgw8host822 mtu $GW8_HOST822_MTU type veth peer name vhost822gw8 mtu $GW8_HOST822_MTU
 gw7 ip link set vhost711gw7 netns host711
 gw8 ip link set vhost822gw8 netns host822
 
@@ -67,6 +78,9 @@ host822 ip link set vhost822gw8 up
 # Configure default routes for hostXXX
 host711 ip route add default via ${GW7EN_IP_PREFIX}192.168.97.1 dev vhost711gw7
 host822 ip route add default via ${GW8EN_IP_PREFIX}192.168.98.2 dev vhost822gw8
+
+# For testing IPv4 PMTUD failure
+host711 iptables -A INPUT -p icmp -i vhost711gw7 -j DROP
 
 # Create hosts files
 mkdir -p /etc/netns/{router1,gw7,gw8,host711,host822}

@@ -4,7 +4,6 @@ package main
 
 import (
 	"golang.org/x/sys/unix"
-	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -208,9 +207,6 @@ func start_tun() {
 		// bring tun device up
 
 		ifcname := strings.Trim(string(ifreq.name[:]), "\x00")
-		ea_ipb := cli.ea_net.Addr().AsSlice()
-		ea_ipb[len(ea_ipb)-1] = 1 // hard code .1 as tun ip address
-		ea_ip, _ := netip.AddrFromSlice(ea_ipb)
 		ea_masklen := cli.ea_net.Bits()
 		mtu := cli.ifc.MTU - UDP_HDR_LEN - IPREF_HDR_MAX_LEN
 		if cli.ea_net.Addr().Is4() {
@@ -236,7 +232,7 @@ func start_tun() {
 			log.fatal("tun: cannot set %v MTU", ifcname)
 		}
 
-		cmd, out, ret = shell("ip a add %v/%v dev %v", ea_ip, ea_masklen, ifcname)
+		cmd, out, ret = shell("ip a add %v/%v dev %v", cli.ea_ip, ea_masklen, ifcname)
 		if ret != 0 {
 			log.debug("tun: %v", cmd)
 			log.debug("tun: %v", strings.TrimSpace(out))
@@ -250,7 +246,7 @@ func start_tun() {
 			log.fatal("tun: cannot bring %v up", ifcname)
 		}
 
-		log.info("tun: netifc %v %v mtu(%v)", ea_ip, ifcname, mtu)
+		log.info("tun: netifc %v %v mtu(%v)", cli.ea_ip, ifcname, mtu)
 	}
 
 	go tun_receiver(fd)
