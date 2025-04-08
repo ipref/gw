@@ -184,8 +184,9 @@ func (gen *GenEA) next_ea() IP {
 			continue // cannot get random number
 		}
 
-		creep[2] %= 256 - SECOND_BYTE
-		creep[2] += SECOND_BYTE
+		// modulo bias not a problem, it doesn't need to be uniformly distributed
+		creep[len(creep) - 2] %= 256 - SECOND_BYTE
+		creep[len(creep) - 2] += SECOND_BYTE
 		ea := IPFromSlice(creep)
 
 		ea = ea.And(gen.bcast)
@@ -405,6 +406,7 @@ func (gen *GenREF) next_ref() rff.Ref {
 			continue // cannot get random number
 		}
 
+		// modulo bias not a problem, it doesn't need to be uniformly distributed
 		creep[14] %= 256 - SECOND_BYTE
 		creep[14] += SECOND_BYTE
 		creep[7] >>= 4 // make 64 bit refs happen more often
