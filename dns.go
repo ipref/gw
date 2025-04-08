@@ -249,6 +249,16 @@ func install_hosts_records(oid O32, arecs map[IP]AddrRec) {
 
 			if !rec.ea.IsZero() && rec.ip.IsZero() {
 
+				if !netip.Addr(rec.ea).IsGlobalUnicast() {
+					log.err("dns watcher: invalid ea address record (not valid unicast): %v %v %v %v, ignoring",
+						rec.ea, rec.ip, rec.gw, &rec.ref)
+					goto skip_record
+				}
+				if !cli.ea_net.Contains(netip.Addr(rec.ea)) {
+					log.err("dns watcher: invalid ea address record (not in ea space): %v %v %v %v, ignoring",
+						rec.ea, rec.ip, rec.gw, &rec.ref)
+					goto skip_record
+				}
 				if rec.gw.IsZero() || rec.ref.IsZero() {
 					log.err("dns watcher: invalid ea address record: %v %v %v %v, ignoring",
 						rec.ea, rec.ip, rec.gw, &rec.ref)
@@ -280,6 +290,16 @@ func install_hosts_records(oid O32, arecs map[IP]AddrRec) {
 				//		rec.ea, rec.ip, rec.gw, &rec.ref)
 				//}
 
+				if !netip.Addr(rec.ip).IsGlobalUnicast() {
+					log.err("dns watcher: invalid ip address record (not valid unicast): %v %v %v %v, ignoring",
+						rec.ea, rec.ip, rec.gw, &rec.ref)
+					goto skip_record
+				}
+				if cli.ea_net.Contains(netip.Addr(rec.ip)) {
+					log.err("dns watcher: invalid ip address record (in ea space): %v %v %v %v, ignoring",
+						rec.ea, rec.ip, rec.gw, &rec.ref)
+					goto skip_record
+				}
 				if rec.gw.IsZero() || rec.ref.IsZero() {
 					log.err("dns watcher: invalid ip address record: %v %v %v %v, ignoring",
 						rec.ea, rec.ip, rec.gw, &rec.ref)

@@ -102,13 +102,29 @@ func icmp() {
 
 	for pb := range icmpreq {
 
+		unreach := ""
+		switch {
+		case pb.typ == PKT_IPv4 && pb.icmp.typ == ICMPv4_DEST_UNREACH:
+			unreach = "dest unreach"
+		case pb.typ == PKT_IPv4 && pb.icmp.typ == ICMPv4_TIME_EXCEEDED:
+			unreach = "time exceeded"
+		case pb.typ == PKT_IPv6 && pb.icmp.typ == ICMPv6_DEST_UNREACH:
+			unreach = "dest unreach"
+		case pb.typ == PKT_IPv6 && pb.icmp.typ == ICMPv6_TIME_EXCEEDED:
+			unreach = "time exceeded"
+		case pb.typ == PKT_IPREF && pb.icmp.typ == IPREF_ICMP_DEST_UNREACH:
+			unreach = "dest unreach"
+		case pb.typ == PKT_IPREF && pb.icmp.typ == IPREF_ICMP_TIME_EXCEEDED:
+			unreach = "time exceeded"
+		}
+
 		switch {
 
-		case pb.typ == PKT_IPv4 && pb.icmp.typ == ICMPv4_DEST_UNREACH && pb.icmp.ours:
+		case pb.typ == PKT_IPv4 && unreach != "" && pb.icmp.ours:
 
 			src := IPFromSlice(pb.pkt[pb.data+IPv4_SRC : pb.data+IPv4_SRC+4])
 			dst := IPFromSlice(pb.pkt[pb.data+IPv4_DST : pb.data+IPv4_DST+4])
-			log.trace("icmp:    dest unreach (IPv4, ours)  %v  %v", src, dst)
+			log.trace("icmp:    %v (IPv4, ours)  %v  %v", unreach, src, dst)
 
 			if pb.pkt[IPv4_PROTO] == ICMP {
 				icmp_hdr := pb.data + pb.ip_hdr_len()
@@ -167,13 +183,13 @@ func icmp() {
 			pb.pkt[outer_ip_hdr + IPv4_TTL] = ICMPv4_SEND_TTL
 			pb.pkt[outer_ip_hdr + IPv4_PROTO] = ICMP
 			be.PutUint16(pb.pkt[outer_ip_hdr + IPv4_CSUM : outer_ip_hdr + IPv4_CSUM + 2], 0)
-			copy(pb.pkt[outer_ip_hdr + IPv4_SRC:], dst.AsSlice4()) // swap src/dst
+			copy(pb.pkt[outer_ip_hdr + IPv4_SRC:], cli.ea_gwip.AsSlice4())
 			copy(pb.pkt[outer_ip_hdr + IPv4_DST:], src.AsSlice4())
 			ip_csum := csum_add(0, pb.pkt[outer_ip_hdr : outer_ip_hdr + IPv4_HDR_MIN_LEN])
 			be.PutUint16(pb.pkt[outer_ip_hdr + IPv4_CSUM : outer_ip_hdr + IPv4_CSUM + 2], ip_csum^0xffff)
 
 			// build ICMP header
-			pb.pkt[icmp_hdr + ICMP_TYPE] = ICMPv4_DEST_UNREACH
+			pb.pkt[icmp_hdr + ICMP_TYPE] = pb.icmp.typ
 			pb.pkt[icmp_hdr + ICMP_CODE] = pb.icmp.code
 			be.PutUint16(pb.pkt[icmp_hdr + ICMP_CSUM : icmp_hdr + ICMP_CSUM + 2], 0)
 			be.PutUint16(pb.pkt[icmp_hdr + ICMP_CSUM + 2 : icmp_hdr + ICMP_CSUM + 4], 0)
@@ -184,11 +200,11 @@ func icmp() {
 			send_tun <- pb
 			continue
 
-		case pb.typ == PKT_IPv6 && pb.icmp.typ == ICMPv6_DEST_UNREACH && pb.icmp.ours:
+		case pb.typ == PKT_IPv6 && unreach != "" && pb.icmp.ours:
 
 			src := IPFromSlice(pb.pkt[pb.data+IPv6_SRC : pb.data+IPv6_SRC+16])
 			dst := IPFromSlice(pb.pkt[pb.data+IPv6_DST : pb.data+IPv6_DST+16])
-			log.trace("icmp:    dest unreach (IPv6, ours)  %v  %v", src, dst)
+			log.trace("icmp:    %v (IPv6, ours)  %v  %v", unreach, src, dst)
 
 			if pb.ip_proto() == ICMPv6 {
 				icmp_hdr := pb.data + pb.ip_hdr_len()
@@ -249,11 +265,11 @@ func icmp() {
 				uint16(pb.tail - icmp_hdr))
 			pb.pkt[outer_ip_hdr + IPv6_NEXT] = ICMPv6
 			pb.pkt[outer_ip_hdr + IPv6_TTL] = ICMPv6_SEND_TTL
-			copy(pb.pkt[outer_ip_hdr + IPv6_SRC:], dst.AsSlice6()) // swap src/dst
+			copy(pb.pkt[outer_ip_hdr + IPv6_SRC:], cli.ea_gwip.AsSlice6())
 			copy(pb.pkt[outer_ip_hdr + IPv6_DST:], src.AsSlice6())
 
 			// build ICMP header
-			pb.pkt[icmp_hdr + ICMP_TYPE] = ICMPv6_DEST_UNREACH
+			pb.pkt[icmp_hdr + ICMP_TYPE] = pb.icmp.typ
 			pb.pkt[icmp_hdr + ICMP_CODE] = pb.icmp.code
 			be.PutUint16(pb.pkt[icmp_hdr + ICMP_CSUM : icmp_hdr + ICMP_CSUM + 2], 0)
 			be.PutUint16(pb.pkt[icmp_hdr + ICMP_CSUM + 2 : icmp_hdr + ICMP_CSUM + 4], 0)
@@ -268,7 +284,7 @@ func icmp() {
 			send_tun <- pb
 			continue
 
-		case pb.typ == PKT_IPREF && pb.icmp.typ == IPREF_ICMP_DEST_UNREACH:
+		case pb.typ == PKT_IPREF && unreach != "":
 
 			var ours_str string
 			if pb.icmp.ours {
@@ -281,7 +297,7 @@ func icmp() {
 			}
 			src := pb.ipref_src()
 			dst := pb.ipref_dst()
-			log.trace("icmp:    dest unreach (IPREF, %v)  %v  %v", ours_str, src, dst)
+			log.trace("icmp:    %v (IPREF, %v)  %v  %v", unreach, ours_str, src, dst)
 
 			if pb.ipref_proto() == ICMP {
 				icmp_hdr := pb.data + pb.ipref_hdr_len()
@@ -310,7 +326,8 @@ func icmp() {
 			}
 			iplen := pb.ipref_iplen()
 			reflen := pb.ipref_reflen()
-			new_hdrs_len := 4 + iplen * 2 + reflen * 2 + ICMP_DATA
+			new_reflen := max(min_reflen(src.ref), min_reflen(cli.gw_ref))
+			new_hdrs_len := 4 + iplen * 2 + new_reflen * 2 + ICMP_DATA
 			if space_needed := new_hdrs_len - pb.data; space_needed > 0 {
 				if len(pb.pkt) - pb.tail < space_needed {
 					log.err("icmp:    not enough space in buffer for header, dropping")
@@ -321,24 +338,29 @@ func icmp() {
 				pb.data, pb.tail = new_hdrs_len, new_hdrs_len + pb.len()
 			}
 			inner_ipref_hdr := pb.data
-			inner_ipref_srcdst := inner_ipref_hdr + 4
-			if pb.ipref_if() {
-				inner_ipref_srcdst += 8
-			}
 			outer_ipref_hdr := inner_ipref_hdr - new_hdrs_len
 			icmp_hdr := inner_ipref_hdr - ICMP_DATA
 			pb.data -= new_hdrs_len
 
 			// build outer IPREF header
-			pb.pkt[outer_ipref_hdr] = (0x1 << 4) | (ipref_encode_reflen(reflen) << 2)
+			pb.pkt[outer_ipref_hdr] = (0x1 << 4) | (ipref_encode_reflen(new_reflen) << 2)
 			pb.pkt[outer_ipref_hdr + 1] = pb.pkt[inner_ipref_hdr + 1]
 			pb.pkt[outer_ipref_hdr + 2] = IPREF_ICMP_SEND_TTL
 			pb.pkt[outer_ipref_hdr + 3] = ICMP
-			copy(pb.pkt[outer_ipref_hdr + 4 : icmp_hdr], pb.pkt[inner_ipref_srcdst:]) // copy in src/dst
-			pb.ipref_swap_srcdst()
+			i := outer_ipref_hdr + 4
+			if cli.gw_ip.Len() != iplen {
+				panic("unexpected")
+			}
+			copy(pb.pkt[i:], cli.gw_ip.AsSlice())
+			i += iplen
+			copy(pb.pkt[i:], src.ip.AsSlice())
+			i += iplen
+			ipref_encode_ref(pb.pkt[i : i + reflen], cli.gw_ref)
+			i += reflen
+			ipref_encode_ref(pb.pkt[i : i + reflen], src.ref)
 
 			// build ICMP header
-			pb.pkt[icmp_hdr + ICMP_TYPE] = IPREF_ICMP_DEST_UNREACH
+			pb.pkt[icmp_hdr + ICMP_TYPE] = pb.icmp.typ
 			pb.pkt[icmp_hdr + ICMP_CODE] = pb.icmp.code
 			be.PutUint16(pb.pkt[icmp_hdr + ICMP_CSUM : icmp_hdr + ICMP_CSUM + 2], 0)
 			be.PutUint16(pb.pkt[icmp_hdr + ICMP_CSUM + 2 : icmp_hdr + ICMP_CSUM + 4], 0)

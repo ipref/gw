@@ -736,7 +736,7 @@ func (pb *PktBuf) ipref_ok() bool {
 	return true
 }
 
-// Don't call until you've checked ipref_ok().
+// Don't call until you've checked ipref_ok(). Slice refers to pb.pkt.
 func (pb *PktBuf) ipref_sref_ip() []byte {
 
 	i := pb.data + 4
@@ -746,7 +746,7 @@ func (pb *PktBuf) ipref_sref_ip() []byte {
 	return pb.pkt[i : i + pb.ipref_iplen()]
 }
 
-// Don't call until you've checked ipref_ok().
+// Don't call until you've checked ipref_ok(). Slice refers to pb.pkt.
 func (pb *PktBuf) ipref_dref_ip() []byte {
 
 	i := pb.data + 4
@@ -837,7 +837,7 @@ func ipref_encode_ref(bs []byte, ref rff.Ref) {
 		be.PutUint64(bs[:8], ref.H)
 		be.PutUint64(bs[8:], ref.L)
 	default:
-		log.fatal("invalid %v", len(bs))
+		panic("invalid")
 	}
 }
 
@@ -852,7 +852,7 @@ func ipref_decode_ref(bs []byte) (ref rff.Ref) {
 		ref.H = be.Uint64(bs[:8])
 		ref.L = be.Uint64(bs[8:])
 	default:
-		log.fatal("invalid %v", len(bs))
+		panic("invalid")
 	}
 	return ref
 }

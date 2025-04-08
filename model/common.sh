@@ -30,6 +30,7 @@ done
 export GW{,7EN,8EN}_{IPv,IP_PREFIX,SUBNET_BITS}
 
 gw_args=(
+    # -dec-ttl
     -debug gw,pkt,tun,mapper
     # -time-stamps
     -trace

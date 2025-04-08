@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	rff "github.com/ipref/ref"
 	"net"
 	"net/netip"
 	"os"
@@ -33,9 +34,13 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	debug      map[string]bool
 	ea_net     netip.Prefix
 	ea_ip      IP
+	ea_gwip    IP
 	gw_ip      IP
 	gw_port    int
 	rgw_port   int
+	gw_refstr  string
+	dec_ttl    bool
+	gw_ref     rff.Ref
 	ifc        net.Interface
 	pktbuflen  int
 	log_level  uint
@@ -71,6 +76,8 @@ func parse_cli() {
 	flag.StringVar(&cli.gw, "gateway", "", "ip address of the public network interface")
 	flag.IntVar(&cli.gw_port, "gateway-port", 0, "port to listen on for the gateway")
 	flag.IntVar(&cli.rgw_port, "remote-gateway-port", 0, "default destination port when sending to remote gateways")
+	flag.StringVar(&cli.gw_refstr, "gateway-ref", "1", "ref to use for the gateway's own ipref address")
+	flag.BoolVar(&cli.dec_ttl, "dec-ttl", false, "decrement ttl when forwarding packets")
 	flag.StringVar(&cli.sockname, "mapper-socket", "/run/ipref/mapper.sock", "path to mapper unix socket")
 	flag.StringVar(&cli.ea, "encode-net", "10.240.0.0/12", "private network for encoding external ipref addresses")
 	flag.StringVar(&cli.hosts_path, "hosts", "/etc/hosts", "host name lookup file")
@@ -176,6 +183,11 @@ func parse_cli() {
 	if cli.rgw_port <= 0 || cli.rgw_port > 0xffff {
 		cli.rgw_port = IPREF_PORT
 	}
+	var err error
+	cli.gw_ref, err = rff.Parse(cli.gw_refstr)
+	if err != nil {
+		log.fatal("invalid gateway reference \"%v\": %v", cli.gw_refstr, err)
+	}
 
 	cli.pktbuflen = TUN_HDR_LEN + TUN_RECV_OFF + cli.ifc.MTU + 8
 	cli.pktbuflen += 7
@@ -183,7 +195,6 @@ func parse_cli() {
 
 	// parse ea net
 
-	var err error
 	cli.ea_net, err = netip.ParsePrefix(cli.ea)
 	if err != nil {
 		log.fatal("invalid encode-net: %v", cli.ea)
@@ -195,10 +206,11 @@ func parse_cli() {
 	if !cli.ea_net.Addr().IsGlobalUnicast() {
 		log.fatal("encode-net is not a valid unicast address: %v", cli.ea)
 	}
-	ea_ipb := cli.ea_net.Addr().AsSlice()
-	ea_ipb[len(ea_ipb)-1] = 1 // hard code .1 as tun ip address
-	cli.ea_ip = IPFromSlice(ea_ipb)
+	cli.ea_ip = IP(cli.ea_net.Addr())
 	ea_iplen = cli.ea_ip.Len()
+	ea_gwipb := cli.ea_ip.AsSlice()
+	ea_gwipb[len(ea_gwipb)-1] = 1 // hard code .1 as gw address on ea network
+	cli.ea_gwip = IPFromSlice(ea_gwipb)
 
 	v1_arec_len = ea_iplen * 2 + gw_iplen + 16 // ea + ip + gw + ref.h + ref.l
 

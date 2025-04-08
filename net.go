@@ -31,7 +31,7 @@ func (ip IP) IsZeroAddr() bool {
 func (ip IP) String() string {
 
 	if ip.IsZero() {
-		panic("uninitialized")
+		return "(uninitialized)"
 	}
 	return netip.Addr(ip).String()
 }
@@ -117,6 +117,11 @@ func (ip IP) Is4() bool {
 
 func (ip IP) Is6() bool {
 	return !ip.Is4()
+}
+
+func (ip IP) IsLinkLocal() bool {
+	return netip.Addr(ip).IsLinkLocalUnicast() ||
+		netip.Addr(ip).IsLinkLocalMulticast()
 }
 
 func (ip IP) Len() int {

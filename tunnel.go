@@ -4,6 +4,7 @@ package main
 
 import (
 	"crypto/rand"
+	"net/netip"
 	rff "github.com/ipref/ref"
 	"strings"
 )
@@ -193,17 +194,40 @@ func MustParseIpRef(str string) (ipref IpRef) {
 
 func (mgw *MapGw) get_src_ipref(ip IP) (IpRef, bool) {
 
+	if ip == cli.ea_gwip || ip == cli.ea_ip {
+		return IpRef{cli.gw_ip, cli.gw_ref}, true
+	}
+	if ip.IsLinkLocal() {
+		return IpRef{}, false // drop silently
+	}
+	if cli.ea_net.Contains(netip.Addr(ip)) {
+		log.err("encap:   source (%v) IP is in encoded address space, dropping", ip)
+		return IpRef{}, false
+	}
+	if !netip.Addr(ip).IsGlobalUnicast() {
+		log.err("encap:   source (%v) IP isn't valid unicast, dropping", ip)
+		return IpRef{}, false
+	}
 	if rec, found := mgw.get_src_iprec(ip); found {
 		return rec.IpRef, true
 	}
+	log.err("encap:   unknown src address: %v, dropping", ip)
 	return IpRef{}, false
 }
 
 func (mgw *MapGw) get_dst_ipref(ip IP) (IpRef, bool) {
 
+	if ip == cli.ea_gwip || ip == cli.ea_ip {
+		return IpRef{cli.gw_ip, cli.gw_ref}, true
+	}
+	if !cli.ea_net.Contains(netip.Addr(ip)) {
+		log.err("encap:   destination (%v) IP isn't in encoded address space, dropping", ip)
+		return IpRef{}, false
+	}
 	if rec, found := mgw.get_dst_iprec(ip); found {
 		return rec.IpRef, true
 	}
+	log.err("encap:   unknown dst address: %v, dropping", ip)
 	return IpRef{}, false
 }
 
@@ -239,7 +263,7 @@ fail:
 // Returns ACCEPT (on success), DROP (on error), or STOLEN (unless steal is
 // false). If steal is true, then an ICMP response may be returned to the sender
 // if the destination is unreachable.
-func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
+func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, dec_ttl, steal bool) int {
 
 	pkt_typ := pb.typ
 	pkt := pb.pkt
@@ -373,17 +397,40 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 		return DROP
 	}
 
+	// decrement ttl
+
+	if dec_ttl {
+		if ttl > 0 {
+			ttl -= 1
+		}
+		if ttl <= 0 {
+			log.trace("encap:   ttl reached zero:  %v  %v", local_src, local_dst)
+			if steal {
+				if pkt_typ == PKT_IPv4 {
+					pb.icmp.typ = ICMPv4_TIME_EXCEEDED
+					pb.icmp.code = ICMPv4_EXC_TTL
+				} else {
+					pb.icmp.typ = ICMPv6_TIME_EXCEEDED
+					pb.icmp.code = ICMPv6_EXC_TTL
+				}
+				pb.icmp.mtu = 0
+				pb.icmp.ours = true
+				icmpreq <- pb
+				return STOLEN
+			}
+			return DROP
+		}
+	}
+
 	// map addresses
 
 	iprefsrc, iprefdst, map_status := map_gw.get_srcdst_ipref_rev(local_src, local_dst, rev_srcdst)
 	switch {
 	case map_status == ENCAP_MAP_SUCCESS:
 	case map_status == ENCAP_MAP_UNKNOWN_SRC:
-		log.err("encap:   unknown src address: %v %v, dropping", local_src, local_dst)
 		return DROP
 	case map_status == ENCAP_MAP_UNKNOWN_DST:
 		if steal {
-			log.err("encap:   unknown dst address: %v %v, sending icmp", local_src, local_dst)
 			if pkt_typ == PKT_IPv4 {
 				pb.icmp.typ = ICMPv4_DEST_UNREACH
 				pb.icmp.code = ICMPv4_NET_UNREACH
@@ -396,7 +443,6 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
 			icmpreq <- pb
 			return STOLEN
 		}
-		log.err("encap:   unknown dst address: %v %v, dropping", local_src, local_dst)
 		return DROP
 	default:
 		panic("unexpected")
@@ -613,7 +659,7 @@ func ipref_encap_l4(pb *PktBuf,
 				typ: pb.typ,
 				data: 0,
 				tail: min(pb.len() - ICMP_DATA, ICMP_ENCAP_MAX_LEN)}
-			if ipref_encap(&inner_pb, true, icmp_depth - 1, false) != ACCEPT {
+			if ipref_encap(&inner_pb, true, icmp_depth - 1, false, false) != ACCEPT {
 				log.err("encap:   dropping icmp due to invalid inner packet")
 				return false
 			}
@@ -669,17 +715,33 @@ func ipref_encap_l4(pb *PktBuf,
 
 func (mtun *MapTun) get_src_addr(src IpRef) (IP, bool) {
 
+	if src.ip == cli.gw_ip && src.ref == cli.gw_ref {
+		return cli.ea_gwip, true // TODO TEMP
+	}
+	if !netip.Addr(src.ip).IsGlobalUnicast() {
+		log.err("deencap: source (%v) IP isn't valid unicast, dropping", src)
+		return IP{}, false
+	}
 	if rec, found := mtun.get_src_iprec(src.ip, src.ref); found {
 		return rec.ip, true
 	}
+	log.err("deencap: unknown src ipref address  %v, dropping", src)
 	return IP{}, false
 }
 
 func (mtun *MapTun) get_dst_addr(dst IpRef) (IP, bool) {
 
+	if dst.ip == cli.gw_ip && dst.ref == cli.gw_ref {
+		return cli.ea_gwip, true
+	}
+	if !netip.Addr(dst.ip).IsGlobalUnicast() {
+		log.err("deencap: destination (%v) IP isn't valid unicast, dropping", dst)
+		return IP{}, false
+	}
 	if rec, found := mtun.get_dst_ip(dst.ip, dst.ref); found {
 		return rec, true
 	}
+	log.err("deencap: unknown local destination  %v, dropping", dst)
 	return IP{}, false
 }
 
@@ -715,7 +777,7 @@ fail:
 // Returns ACCEPT (on success), DROP (on error), or STOLEN (unless steal is
 // false). If steal is true, then an ICMP response may be returned to the sender
 // if the destination is unreachable.
-func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int {
+func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, dec_ttl, steal bool) int {
 
 	if pb.typ != PKT_IPREF {
 		log.fatal("deencap: not an ipref packet")
@@ -757,17 +819,35 @@ func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int 
 	// 	return DROP
 	// }
 
+	// decrement ttl
+
+	if dec_ttl {
+		if ttl > 0 {
+			ttl -= 1
+		}
+		if ttl <= 0 {
+			log.trace("encap:   ttl reached zero:  %v  %v", src, dst)
+			if steal {
+				pb.icmp.typ = IPREF_ICMP_TIME_EXCEEDED
+				pb.icmp.code = IPREF_ICMP_EXC_TTL
+				pb.icmp.mtu = 0
+				pb.icmp.ours = false
+				icmpreq <- pb
+				return STOLEN
+			}
+			return DROP
+		}
+	}
+
 	// map addresses
 
 	src_ea, dst_ip, map_status := map_tun.get_srcdst_ip_rev(src, dst, rev_srcdst)
 	switch {
 	case map_status == ENCAP_MAP_SUCCESS:
 	case map_status == ENCAP_MAP_UNKNOWN_SRC:
-		log.err("deencap: unknown src ipref address  %v, dropping", src)
 		return DROP
 	case map_status == ENCAP_MAP_UNKNOWN_DST:
 		if steal {
-			log.err("deencap: unknown local destination  %v, sending icmp", dst)
 			pb.icmp.typ = IPREF_ICMP_DEST_UNREACH
 			pb.icmp.code = IPREF_ICMP_NET_UNREACH
 			pb.icmp.mtu = 0
@@ -775,7 +855,6 @@ func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, steal bool) int 
 			icmpreq <- pb
 			return STOLEN
 		}
-		log.err("deencap: unknown local destination  %v, dropping", dst)
 		return DROP
 	default:
 		panic("unexpected")
@@ -1026,7 +1105,7 @@ func ipref_deencap_l4(pb *PktBuf,
 				typ: PKT_IPREF,
 				data: 0,
 				tail: min(pb.len() - ICMP_DATA, ICMP_ENCAP_MAX_LEN)}
-			if ipref_deencap(&inner_pb, true, icmp_depth - 1, false) != ACCEPT {
+			if ipref_deencap(&inner_pb, true, icmp_depth - 1, false, false) != ACCEPT {
 				log.err("deencap: dropping icmp due to invalid inner packet")
 				return false
 			}
