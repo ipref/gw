@@ -306,7 +306,7 @@ func install_hosts_records(oid O32, arecs map[IP]AddrRec) {
 				goto skip_record
 			}
 
-			// pack it up
+			// make sure addresses are initialized
 
 			if rec.ea.IsZero() {
 				rec.ea = IPNum(ea_iplen, 0)
@@ -314,6 +314,26 @@ func install_hosts_records(oid O32, arecs map[IP]AddrRec) {
 			if rec.ip.IsZero() {
 				rec.ip = IPNum(ea_iplen, 0)
 			}
+
+			// make sure the addresses are for the right IP version
+
+			if rec.ea.Len() != ea_iplen {
+				log.err("dns watcher: address has ip version mismatch with encoded address space (ea): %v, ignoring",
+					rec.ea)
+				goto skip_record
+			}
+			if rec.ip.Len() != ea_iplen {
+				log.err("dns watcher: address has ip version mismatch with encoded address space (ip): %v, ignoring",
+					rec.ip)
+				goto skip_record
+			}
+			if rec.gw.Len() != gw_iplen {
+				log.err("dns watcher: address has ip version mismatch with gateway address: %v, ignoring", rec.gw)
+				goto skip_record
+			}
+
+			// pack it up
+
 			v1_arec_encode(pkt[off:], rec)
 
 			off += v1_arec_len
