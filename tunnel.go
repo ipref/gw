@@ -44,6 +44,8 @@ func icmp_encap(pkt_typ int, typ byte, code byte) (byte, byte, int) {
 				return IPREF_ICMP_DEST_UNREACH, IPREF_ICMP_PORT_UNREACH, ICMP_ENCAP
 			case ICMPv4_FRAG_NEEDED:
 				return IPREF_ICMP_DEST_UNREACH, IPREF_ICMP_FRAG_NEEDED, ICMP_ENCAP
+			case ICMPv4_ADMIN_PROHIB:
+				return IPREF_ICMP_DEST_UNREACH, IPREF_ICMP_ADMIN_PROHIB, ICMP_ENCAP
 			}
 		case ICMPv4_ECHO_REQUEST:
 			if code == 0 {
@@ -64,6 +66,8 @@ func icmp_encap(pkt_typ int, typ byte, code byte) (byte, byte, int) {
 			switch code {
 			case ICMPv6_NET_UNREACH:
 				return IPREF_ICMP_DEST_UNREACH, IPREF_ICMP_NET_UNREACH, ICMP_ENCAP
+			case ICMPv6_ADMIN_PROHIB:
+				return IPREF_ICMP_DEST_UNREACH, IPREF_ICMP_ADMIN_PROHIB, ICMP_ENCAP
 			case ICMPv6_HOST_UNREACH:
 				return IPREF_ICMP_DEST_UNREACH, IPREF_ICMP_HOST_UNREACH, ICMP_ENCAP
 			case ICMPv6_PORT_UNREACH:
@@ -115,6 +119,8 @@ func icmp_deencap(pkt_typ int, typ byte, code byte) (byte, byte, int) {
 				return ICMPv4_DEST_UNREACH, ICMPv4_PORT_UNREACH, ICMP_ENCAP
 			case IPREF_ICMP_FRAG_NEEDED:
 				return ICMPv4_DEST_UNREACH, ICMPv4_FRAG_NEEDED, ICMP_ENCAP
+			case IPREF_ICMP_ADMIN_PROHIB:
+				return ICMPv4_DEST_UNREACH, ICMPv4_ADMIN_PROHIB, ICMP_ENCAP
 			}
 		case IPREF_ICMP_ECHO_REQUEST:
 			if code == 0 {
@@ -145,6 +151,8 @@ func icmp_deencap(pkt_typ int, typ byte, code byte) (byte, byte, int) {
 				return ICMPv6_DEST_UNREACH, ICMPv6_PORT_UNREACH, ICMP_ENCAP
 			case IPREF_ICMP_FRAG_NEEDED:
 				return ICMPv6_PACKET_TOO_BIG, 0, ICMP_ENCAP
+			case IPREF_ICMP_ADMIN_PROHIB:
+				return ICMPv6_DEST_UNREACH, ICMPv6_ADMIN_PROHIB, ICMP_ENCAP
 			}
 		case IPREF_ICMP_ECHO_REQUEST:
 			if code == 0 {
