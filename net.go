@@ -133,6 +133,15 @@ func (ip IP) Len() int {
 	}
 }
 
+func (ip IP) Ver() int {
+
+	if ip.Is4() {
+		return 4
+	} else {
+		return 6
+	}
+}
+
 func (ip IP) ByteFromEnd(i int) byte {
 
 	bs := ip.AsSlice()

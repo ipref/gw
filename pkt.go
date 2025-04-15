@@ -17,10 +17,11 @@ const ( // v1 constants
 	V1_HDR_LEN  = 8
 	V1_MARK_LEN = 4 + 4 // oid + mark
 	// v1 header offsets
-	V1_VER      = 0
+	V1_VER      = 0 // must be 0x11
 	V1_CMD      = 1
 	V1_PKTID    = 2
-	V1_RESERVED = 4
+	V1_IPVER    = 4 // high nibble is the ea IP ver, low nibble is gw IP ver
+	V1_RESERVED = 5
 	V1_PKTLEN   = 6
 	// v1 mark offsets
 	V1_OID  = 0
@@ -1015,7 +1016,8 @@ func (pb *PktBuf) write_v1_header(cmd byte, pktid uint16) {
 	pkt[V1_VER] = V1_SIG
 	pkt[V1_CMD] = cmd
 	be.PutUint16(pkt[V1_PKTID:V1_PKTID+2], pktid)
-	copy(pkt[V1_RESERVED:V1_RESERVED+2], []byte{0, 0})
+	pkt[V1_IPVER] = (byte(cli.ea_ip.Ver()) << 4) | byte(cli.gw_ip.Ver())
+	pkt[V1_RESERVED] = 0
 	copy(pkt[V1_PKTLEN:V1_PKTLEN+2], []byte{0, 2})
 }
 
@@ -1038,7 +1040,11 @@ func (pb *PktBuf) validate_v1_header(rlen int) error {
 			len(pkt), lenfield*4)
 	}
 
-	if pkt[V1_RESERVED] != 0 || pkt[V1_RESERVED+1] != 0 {
+	if pkt[V1_IPVER] != (byte(cli.ea_ip.Ver()) << 4) | byte(cli.gw_ip.Ver()) {
+		return fmt.Errorf("ip version mismatch: 0x%02x", pkt[V1_IPVER])
+	}
+
+	if pkt[V1_RESERVED] != 0 {
 		return fmt.Errorf("non-zero reserved field")
 	}
 
