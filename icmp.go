@@ -3,6 +3,7 @@
 package main
 
 import (
+	. "github.com/ipref/common"
 	"crypto/rand"
 )
 

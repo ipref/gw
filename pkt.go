@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	. "github.com/ipref/common"
 	rff "github.com/ipref/ref"
 	"net"
 	"strings"

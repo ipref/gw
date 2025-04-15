@@ -3,6 +3,7 @@
 package main
 
 import (
+	. "github.com/ipref/common"
 	"golang.org/x/sys/unix"
 	"os"
 	"crypto/rand"

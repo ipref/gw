@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	. "github.com/ipref/common"
 	rff "github.com/ipref/ref"
 	"net"
 	"net/netip"

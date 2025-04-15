@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"github.com/fsnotify/fsnotify"
+	. "github.com/ipref/common"
 	rff "github.com/ipref/ref"
 	"io"
 	"io/ioutil"

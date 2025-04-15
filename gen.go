@@ -4,6 +4,7 @@ package main
 
 import (
 	"crypto/rand"
+	. "github.com/ipref/common"
 	rff "github.com/ipref/ref"
 	prng "math/rand" // where crypto/rand would be an overkill
 )

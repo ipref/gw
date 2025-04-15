@@ -5,6 +5,7 @@ package main
 import (
 	"crypto/rand"
 	"net/netip"
+	. "github.com/ipref/common"
 	rff "github.com/ipref/ref"
 	"strings"
 )
