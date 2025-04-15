@@ -76,7 +76,7 @@ ff02::2 ip6-allrouters
 		}
 		if rec != val {
 			t.Errorf("mismatched values: key: %08x   val: {%x %x %x {%x, %x}}",
-				key, val.ea, val.ip, val.gw, val.ref.h, val.ref.l)
+				key, val.EA, val.IP, val.GW, val.Ref.h, val.Ref.l)
 		}
 	}
 	if len(res) != len(arecs) {

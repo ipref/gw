@@ -188,8 +188,8 @@ func MustParseIpRef(str string) (ipref IpRef) {
 	if !found {
 		log.fatal("invalid ipref: %v", str)
 	}
-	ipref.ip = MustParseIP(strings.TrimSpace(ip))
-	ipref.ref = MustParseRef(strings.TrimSpace(ref))
+	ipref.IP = MustParseIP(strings.TrimSpace(ip))
+	ipref.Ref = MustParseRef(strings.TrimSpace(ref))
 	return
 }
 
@@ -450,10 +450,10 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, dec_ttl, steal boo
 	}
 	var ipver, iplen int
 	switch {
-	case iprefsrc.ip.Is4() && iprefdst.ip.Is4():
+	case iprefsrc.IP.Is4() && iprefdst.IP.Is4():
 		ipver = 4
 		iplen = 4
-	case iprefsrc.ip.Is6() && iprefdst.ip.Is6():
+	case iprefsrc.IP.Is6() && iprefdst.IP.Is6():
 		ipver = 6
 		iplen = 16
 	default:
@@ -474,7 +474,7 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, dec_ttl, steal boo
 
 	// replace IP header with IPREF header
 
-	reflen := max(min_reflen(iprefsrc.ref), min_reflen(iprefdst.ref))
+	reflen := max(min_reflen(iprefsrc.Ref), min_reflen(iprefdst.Ref))
 	ipref_hdr_len := 4 + iplen * 2 + reflen * 2
 	if frag_if {
 		ipref_hdr_len += 8
@@ -514,13 +514,13 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, dec_ttl, steal boo
 		i += 8
 	}
 
-	copy(pkt[i:i+iplen], iprefsrc.ip.AsSlice())
+	copy(pkt[i:i+iplen], iprefsrc.IP.AsSlice())
 	i += iplen
-	copy(pkt[i:i+iplen], iprefdst.ip.AsSlice())
+	copy(pkt[i:i+iplen], iprefdst.IP.AsSlice())
 	i += iplen
-	ipref_encode_ref(pkt[i:i+reflen], iprefsrc.ref)
+	ipref_encode_ref(pkt[i:i+reflen], iprefsrc.Ref)
 	i += reflen
-	ipref_encode_ref(pkt[i:i+reflen], iprefdst.ref)
+	ipref_encode_ref(pkt[i:i+reflen], iprefdst.Ref)
 	i += reflen
 
 	return ACCEPT
@@ -716,14 +716,14 @@ func ipref_encap_l4(pb *PktBuf,
 
 func (mtun *MapTun) get_src_addr(src IpRef) (IP, bool) {
 
-	if src.ip == cli.gw_ip && src.ref == cli.gw_ref {
+	if src.IP == cli.gw_ip && src.Ref == cli.gw_ref {
 		return cli.ea_gwip, true // TODO TEMP
 	}
-	if !netip.Addr(src.ip).IsGlobalUnicast() {
+	if !netip.Addr(src.IP).IsGlobalUnicast() {
 		log.err("deencap: source (%v) IP isn't valid unicast, dropping", src)
 		return IP{}, false
 	}
-	if rec, found := mtun.get_src_iprec(src.ip, src.ref); found {
+	if rec, found := mtun.get_src_iprec(src.IP, src.Ref); found {
 		return rec.ip, true
 	}
 	log.err("deencap: unknown src ipref address  %v, dropping", src)
@@ -732,14 +732,14 @@ func (mtun *MapTun) get_src_addr(src IpRef) (IP, bool) {
 
 func (mtun *MapTun) get_dst_addr(dst IpRef) (IP, bool) {
 
-	if dst.ip == cli.gw_ip && dst.ref == cli.gw_ref {
+	if dst.IP == cli.gw_ip && dst.Ref == cli.gw_ref {
 		return cli.ea_gwip, true
 	}
-	if !netip.Addr(dst.ip).IsGlobalUnicast() {
+	if !netip.Addr(dst.IP).IsGlobalUnicast() {
 		log.err("deencap: destination (%v) IP isn't valid unicast, dropping", dst)
 		return IP{}, false
 	}
-	if rec, found := mtun.get_dst_ip(dst.ip, dst.ref); found {
+	if rec, found := mtun.get_dst_ip(dst.IP, dst.Ref); found {
 		return rec, true
 	}
 	log.err("deencap: unknown local destination  %v, dropping", dst)

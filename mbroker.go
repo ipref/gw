@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	. "github.com/ipref/common"
 	"math/rand"
 	"net"
 	"os"
@@ -92,9 +93,9 @@ func (mb *MB) get_ea(rpb *PktBuf) int {
 		off := V1_HDR_LEN                // offset to arec in originator's packet
 		roff := V1_HDR_LEN + V1_MARK_LEN // offset to arec in response
 
-		arec := v1_arec_decode(pkt[off:])
-		rarec := v1_arec_decode(rpkt[roff:])
-		arec.ea = rarec.ea
+		arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
+		rarec := AddrRecDecode(ea_iplen, gw_iplen, rpkt[roff:])
+		arec.EA = rarec.EA
 
 		if arec != rarec {
 			log.err("mb: get ea response pkt pktid[%04x]: request/response mismatch, dropping", pktid)
@@ -102,13 +103,13 @@ func (mb *MB) get_ea(rpb *PktBuf) int {
 			return DROP // rpb
 		}
 
-		mb.eacache[IpRef{arec.gw, arec.ref}] = IpRec{
-			ip: rarec.ea,
+		mb.eacache[IpRef{arec.GW, arec.Ref}] = IpRec{
+			ip: rarec.EA,
 			oid: O32(be.Uint32(rpkt[roff-V1_MARK_LEN+V1_OID:])),
 			mark: M32(be.Uint32(rpkt[roff-V1_MARK_LEN+V1_MARK:])),
 		}
 
-		v1_arec_encode(pkt[off:], arec)
+		arec.Encode(pkt[off:])
 		pkt[V1_CMD] = V1_ACK | V1_MC_GET_EA
 		pb.tail = pb.data + V1_HDR_LEN + v1_arec_len
 
@@ -144,9 +145,9 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 
 	off := V1_HDR_LEN
 
-	arec := v1_arec_decode(pkt[off:])
+	arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
 
-	ipr := IpRef{arec.gw, arec.ref}
+	ipr := IpRef{arec.GW, arec.Ref}
 
 	// return the ea if found in cache...
 
@@ -163,8 +164,8 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 			wlen := V1_HDR_LEN + v1_arec_len
 
 			pkt[V1_CMD] = V1_ACK | V1_MC_GET_EA
-			arec.ea = iprec.ip
-			v1_arec_encode(pkt[off:], arec)
+			arec.EA = iprec.ip
+			arec.Encode(pkt[off:])
 			be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((wlen / 4)))
 			pb.tail = pb.data + wlen
 
@@ -399,9 +400,9 @@ func (mb *MB) mc_host_data(pb *PktBuf) int {
 
 	for ; off <= pktlen-v1_arec_len; off += v1_arec_len {
 
-		arec := v1_arec_decode(pkt[off:])
+		arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
 
-		log.info("   host:  %v + %v -> %v", arec.gw, &arec.ref, arec.ip)
+		log.info("   host:  %v + %v -> %v", arec.GW, &arec.Ref, arec.IP)
 
 		copy(pkta[offa:], pkt[off:off+v1_arec_len])
 		dnssrc.recs[arec] = true

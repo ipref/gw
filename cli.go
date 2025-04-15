@@ -215,7 +215,7 @@ func parse_cli() {
 	ea_gwipb[len(ea_gwipb)-1] = 1 // hard code .1 as gw address on ea network
 	cli.ea_gwip = IPFromSlice(ea_gwipb)
 
-	v1_arec_len = ea_iplen * 2 + gw_iplen + 16 // ea + ip + gw + ref.h + ref.l
+	v1_arec_len = AddrRecEncodedLen(ea_iplen, gw_iplen)
 
 	// validate file paths
 

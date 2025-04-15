@@ -2,6 +2,8 @@
 
 package main
 
+import . "github.com/ipref/common"
+
 /* Packet flow
 
                ╭──────────╮     ┏━━━━━━━━━━━━┓     ╭──────────╮

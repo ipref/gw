@@ -77,9 +77,9 @@ func (gen *GenEA) recover_expired_eas() {
 
 		off += V1_MARK_LEN
 
-		arec := v1_arec_decode(pkt[off:])
-		arec.ea = search_ea
-		v1_arec_encode(pkt[off:], arec)
+		arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
+		arec.EA = search_ea
+		arec.Encode(pkt[off:])
 
 		off += v1_arec_len
 
@@ -122,8 +122,8 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 
 		// trigger next batch
 
-		arec := v1_arec_decode(pkt[last_off:])
-		gen.rcvy <- arec.ea.Add(IPNum(ea_iplen, 1))
+		arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[last_off:])
+		gen.rcvy <- arec.EA.Add(IPNum(ea_iplen, 1))
 
 		// pass the list to fwd_to_tun
 
@@ -154,12 +154,12 @@ func (gen *GenEA) receive(pb *PktBuf) int {
 
 		for ; off < pktlen; off += v1_arec_len {
 
-			arec := v1_arec_decode(pkt[off:])
+			arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
 
-			if !arec.ea.IsZeroAddr() {
-				delete(gen.allocated, arec.ea)
+			if !arec.EA.IsZeroAddr() {
+				delete(gen.allocated, arec.EA)
 				if cli.debug["gen"] {
-					log.debug("gen ea:  deleted allocated ea(%v): %v + %v", arec.ea, arec.gw, &arec.ref)
+					log.debug("gen ea:  deleted allocated ea(%v): %v + %v", arec.EA, arec.GW, &arec.Ref)
 				}
 			}
 		}
@@ -284,9 +284,9 @@ func (gen *GenREF) recover_expired_refs() {
 
 		off += V1_MARK_LEN
 
-		arec := v1_arec_decode(pkt[off:])
-		arec.ref = search_ref
-		v1_arec_encode(pkt[off:], arec)
+		arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
+		arec.Ref = search_ref
+		arec.Encode(pkt[off:])
 
 		off += v1_arec_len
 
@@ -335,13 +335,13 @@ func (gen *GenREF) receive(pb *PktBuf) int {
 
 		// trigger next batch
 
-		arec := v1_arec_decode(pkt[last_off:])
+		arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[last_off:])
 
-		if ^arec.ref.L == 0 {
-			arec.ref.H++
-			arec.ref.L = 0
+		if ^arec.Ref.L == 0 {
+			arec.Ref.H++
+			arec.Ref.L = 0
 		} else {
-			arec.ref.L++
+			arec.Ref.L++
 		}
 
 		gen.rcvy <- ref
@@ -375,13 +375,13 @@ func (gen *GenREF) receive(pb *PktBuf) int {
 
 		for ; off < pktlen; off += v1_arec_len {
 
-			arec := v1_arec_decode(pkt[off:])
+			arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
 
-			if !arec.ref.IsZero() {
-				delete(gen.allocated, arec.ref)
+			if !arec.Ref.IsZero() {
+				delete(gen.allocated, arec.Ref)
 				if cli.debug["gen"] {
 					log.debug("gen ref:  deleted allocated gw+ref(%v + %v) -> %v",
-						arec.gw, &arec.ref, arec.ip)
+						arec.GW, &arec.Ref, arec.IP)
 				}
 			}
 		}

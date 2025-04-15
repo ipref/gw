@@ -3,6 +3,7 @@
 package main
 
 import (
+	. "github.com/ipref/common"
 	bolt "go.etcd.io/bbolt"
 	"os"
 	"path"
@@ -179,20 +180,20 @@ func (mgw *MapGw) restore_eas() {
 
 			oid := O32(be.Uint32(val[:4]))
 			mark := M32(be.Uint32(val[4:8]))
-			arec := v1_arec_decode(val[V1_MARK_LEN:])
+			arec := AddrRecDecode(ea_iplen, gw_iplen, val[V1_MARK_LEN:])
 
 			if oid == 0 || mark == 0 {
 				log.err("mgw:  restore ea: %v invalid oid mark: %v(%v): %v, discarding",
-					arec.ea, owners.name(oid), oid, mark)
+					arec.EA, owners.name(oid), oid, mark)
 			} else if oid == mgw.oid && mark < mgw.cur_mark[oid] {
-				log.debug("mgw:  restore ea: %v expired, discarding", arec.ea)
+				log.debug("mgw:  restore ea: %v expired, discarding", arec.EA)
 			} else {
 
 				mgw.insert_record(oid, mark, val[V1_MARK_LEN:])
 				map_tun.insert_record(oid, mark, val[V1_MARK_LEN:])
 				db.insert_record(val)
 				if oid == mapper_oid {
-					gen_ea.allocated[arec.ea] = true
+					gen_ea.allocated[arec.EA] = true
 				}
 			}
 			return nil
@@ -219,20 +220,20 @@ func (mtun *MapTun) restore_refs() {
 
 			oid := O32(be.Uint32(val[:4]))
 			mark := M32(be.Uint32(val[4:8]))
-			arec := v1_arec_decode(val[V1_MARK_LEN:])
+			arec := AddrRecDecode(ea_iplen, gw_iplen, val[V1_MARK_LEN:])
 
 			if oid == 0 || mark == 0 {
 				log.err("mtun: restore ref: %v invalid oid(mark): %v(%v), discarding",
-					&arec.ref, owners.name(oid), mark)
+					&arec.Ref, owners.name(oid), mark)
 			} else if oid == mtun.oid && mark < mtun.cur_mark[oid] {
-				log.debug("mtun: restore ref: %v expired, discarding", &arec.ref)
+				log.debug("mtun: restore ref: %v expired, discarding", &arec.Ref)
 			} else {
 
 				mtun.insert_record(oid, mark, val[V1_MARK_LEN:])
 				map_gw.insert_record(oid, mark, val[V1_MARK_LEN:])
 				db.insert_record(val)
 				if oid == mapper_oid {
-					gen_ref.allocated[arec.ref] = true
+					gen_ref.allocated[arec.Ref] = true
 				}
 			}
 			return nil
@@ -352,9 +353,9 @@ func (db *DB) insert_record(db_arec []byte) {
 
 	// db_arec is a slice containing: oid + mark + ea + ip + gw + ref
 
-	arec := v1_arec_decode(db_arec[V1_MARK_LEN:])
+	arec := AddrRecDecode(ea_iplen, gw_iplen, db_arec[V1_MARK_LEN:])
 
-	if arec.gw.IsZeroAddr() || arec.ref.IsZero()  {
+	if arec.GW.IsZeroAddr() || arec.Ref.IsZero()  {
 		log.err("db insert arec: null gw + ref, ignoring")
 		return
 	}
@@ -362,11 +363,11 @@ func (db *DB) insert_record(db_arec []byte) {
 	var err error
 	var mark M32
 
-	if !arec.ea.IsZeroAddr() && arec.ip.IsZeroAddr() {
+	if !arec.EA.IsZeroAddr() && arec.IP.IsZeroAddr() {
 
 		if cli.debug["db"] {
 			mark = M32(be.Uint32(db_arec[V1_MARK : V1_MARK+4]))
-			log.debug("db save: mark(%v) %v -> %v + %v", mark, arec.ea, arec.gw, &arec.ref)
+			log.debug("db save: mark(%v) %v -> %v + %v", mark, arec.EA, arec.GW, &arec.Ref)
 		}
 
 		err = db.db.Update(func(tx *bolt.Tx) error {
@@ -379,18 +380,18 @@ func (db *DB) insert_record(db_arec []byte) {
 
 		err = db.db.Update(func(tx *bolt.Tx) error {
 			bkt := tx.Bucket([]byte(ea_bkt))
-			err := bkt.Put(arec.ea.AsSlice(), db_arec)
+			err := bkt.Put(arec.EA.AsSlice(), db_arec)
 			return err
 		})
 		if err != nil {
 			log.err("db insert arec: failed to save arec: %v", err)
 		}
 
-	} else if arec.ea.IsZeroAddr() && !arec.ip.IsZeroAddr() {
+	} else if arec.EA.IsZeroAddr() && !arec.IP.IsZeroAddr() {
 
 		if cli.debug["db"] {
 			mark = M32(be.Uint32(db_arec[V1_MARK : V1_MARK+4]))
-			log.debug("db save: mark(%v) %v -> %v", mark, &arec.ref, arec.ip)
+			log.debug("db save: mark(%v) %v -> %v", mark, &arec.Ref, arec.IP)
 		}
 
 		err = db.db.Update(func(tx *bolt.Tx) error {
@@ -403,7 +404,7 @@ func (db *DB) insert_record(db_arec []byte) {
 
 		err = db.db.Update(func(tx *bolt.Tx) error {
 			bkt := tx.Bucket([]byte(ref_bkt))
-			err := bkt.Put(ref_asslice(arec.ref), db_arec)
+			err := bkt.Put(ref_asslice(arec.Ref), db_arec)
 			return err
 		})
 		if err != nil {
@@ -486,35 +487,35 @@ func (db *DB) remove_expired_eas(pb *PktBuf) int {
 
 		for ; off < pktlen; off += v1_arec_len {
 
-			arec := v1_arec_decode(pkt[off:])
+			arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
 
-			if arec.ea.IsZeroAddr() {
+			if arec.EA.IsZeroAddr() {
 				continue
 			}
 
 			// db_arecb is a slice containing: oid + mark + ea + ip + gw + ref
 
-			db_arecb := bkt.Get(arec.ea.AsSlice())
-			db_arec := v1_arec_decode(db_arecb[V1_MARK_LEN:])
+			db_arecb := bkt.Get(arec.EA.AsSlice())
+			db_arec := AddrRecDecode(ea_iplen, gw_iplen, db_arecb[V1_MARK_LEN:])
 
-			if arec.ea != db_arec.ea {
-				log.err("db remove ea(%v): ea mismatch, cannot remove ea", db_arec.ea)
+			if arec.EA != db_arec.EA {
+				log.err("db remove ea(%v): ea mismatch, cannot remove ea", db_arec.EA)
 				continue
 			}
-			if arec.gw != db_arec.gw {
-				log.err("db remove ea(%v): gw mismatch, cannot remove ea", db_arec.ea)
+			if arec.GW != db_arec.GW {
+				log.err("db remove ea(%v): gw mismatch, cannot remove ea", db_arec.EA)
 				continue
 			}
-			if arec.ref != db_arec.ref {
-				log.err("db remove ea(%v): ref mismatch, cannot remove ea", db_arec.ea)
+			if arec.Ref != db_arec.Ref {
+				log.err("db remove ea(%v): ref mismatch, cannot remove ea", db_arec.EA)
 				continue
 			}
 
 			if cli.debug["db"] {
-				log.debug("db remove ea(%v): %v + %v", db_arec.ea, db_arec.gw, &db_arec.ref)
+				log.debug("db remove ea(%v): %v + %v", db_arec.EA, db_arec.GW, &db_arec.Ref)
 			}
 
-			err = bkt.Delete(arec.ea.AsSlice())
+			err = bkt.Delete(arec.EA.AsSlice())
 
 			if err != nil {
 				break
@@ -559,7 +560,7 @@ func (db *DB) find_expired_eas(pb *PktBuf) int {
 		return DROP
 	}
 
-	seek_ea := v1_arec_decode(pkt[off:]).ea.AsSlice()
+	seek_ea := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:]).EA.AsSlice()
 
 	// assume NACK
 
@@ -671,35 +672,35 @@ func (db *DB) remove_expired_refs(pb *PktBuf) int {
 
 		for ; off < pktlen; off += v1_arec_len {
 
-			arec := v1_arec_decode(pkt[off:])
+			arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
 
-			if arec.ref.IsZero() {
+			if arec.Ref.IsZero() {
 				continue
 			}
 
 			// db_arecb is a slice containing: oid + mark + ea + ip + gw + ref
 
-			db_arecb := bkt.Get(ref_asslice(arec.ref))
-			db_arec := v1_arec_decode(db_arecb[V1_MARK_LEN:])
+			db_arecb := bkt.Get(ref_asslice(arec.Ref))
+			db_arec := AddrRecDecode(ea_iplen, gw_iplen, db_arecb[V1_MARK_LEN:])
 
-			if arec.gw != db_arec.gw {
-				log.err("db remove gw+ref(%v + %v): gw mismatch, cannot remove ref", arec.gw, &arec.ref)
+			if arec.GW != db_arec.GW {
+				log.err("db remove gw+ref(%v + %v): gw mismatch, cannot remove ref", arec.GW, &arec.Ref)
 				continue
 			}
-			if arec.ref != db_arec.ref {
-				log.err("db remove gw+ref(%v + %v): ref mismatch, cannot remove ref", arec.gw, &arec.ref)
+			if arec.Ref != db_arec.Ref {
+				log.err("db remove gw+ref(%v + %v): ref mismatch, cannot remove ref", arec.GW, &arec.Ref)
 				continue
 			}
-			if arec.ip != db_arec.ip {
-				log.err("db remove gw+ref(%v + %v): ip mismatch, cannot remove ref", arec.gw, &arec.ref)
+			if arec.IP != db_arec.IP {
+				log.err("db remove gw+ref(%v + %v): ip mismatch, cannot remove ref", arec.GW, &arec.Ref)
 				continue
 			}
 
 			if cli.debug["db"] {
-				log.debug("db remove gw+ref(%v + %v -> %v)", arec.gw, &arec.ref, arec.ip)
+				log.debug("db remove gw+ref(%v + %v -> %v)", arec.GW, &arec.Ref, arec.IP)
 			}
 
-			err = bkt.Delete(ref_asslice(arec.ref))
+			err = bkt.Delete(ref_asslice(arec.Ref))
 
 			if err != nil {
 				break
@@ -744,7 +745,7 @@ func (db *DB) find_expired_refs(pb *PktBuf) int {
 		return DROP
 	}
 
-	seek_ref := ref_asslice(v1_arec_decode(pkt[off:]).ref)
+	seek_ref := ref_asslice(AddrRecDecode(ea_iplen, gw_iplen, pkt[off:]).Ref)
 
 	// assume NACK
 

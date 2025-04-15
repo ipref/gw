@@ -25,9 +25,9 @@ func allocate_eas(gw []IP, ref rff.Ref, from, to uint64) {
 	log.info("inducing ea allocation")
 
 	var arec AddrRec
-	arec.ea = IPNum(ea_iplen, 0)
-	arec.ip = IPNum(ea_iplen, 0)
-	arec.ref = ref
+	arec.EA = IPNum(ea_iplen, 0)
+	arec.IP = IPNum(ea_iplen, 0)
+	arec.Ref = ref
 
 	for lword := from; lword < to+1; lword++ {
 
@@ -47,9 +47,9 @@ func allocate_eas(gw []IP, ref rff.Ref, from, to uint64) {
 
 		off += V1_MARK_LEN
 
-		arec.gw = gw[int(lword)%len(gw)]
-		arec.ref.L++
-		v1_arec_encode(pkt[off:], arec)
+		arec.GW = gw[int(lword)%len(gw)]
+		arec.Ref.L++
+		arec.Encode(pkt[off:])
 
 		// send to fwd_to_tun and forget it
 
@@ -109,8 +109,8 @@ func allocate_refs(base, from, to IP) {
 	one := IPNum(from.Len(), 1)
 
 	var arec AddrRec
-	arec.ea = IPNum(ea_iplen, 0)
-	arec.gw = cli.gw_ip
+	arec.EA = IPNum(ea_iplen, 0)
+	arec.GW = cli.gw_ip
 
 	for ip := from;; {
 
@@ -129,8 +129,8 @@ func allocate_refs(base, from, to IP) {
 
 		off += V1_MARK_LEN
 
-		arec.ip = base.Add(ip)
-		v1_arec_encode(pkt[off:], arec)
+		arec.IP = base.Add(ip)
+		arec.Encode(pkt[off:])
 
 		// send to fwd_to_gw and forget it
 

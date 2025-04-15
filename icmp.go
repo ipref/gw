@@ -328,7 +328,7 @@ func icmp() {
 			}
 			iplen := pb.ipref_iplen()
 			reflen := pb.ipref_reflen()
-			new_reflen := max(min_reflen(src.ref), min_reflen(cli.gw_ref))
+			new_reflen := max(min_reflen(src.Ref), min_reflen(cli.gw_ref))
 			new_hdrs_len := 4 + iplen * 2 + new_reflen * 2 + ICMP_DATA
 			if space_needed := new_hdrs_len - pb.data; space_needed > 0 {
 				if len(pb.pkt) - pb.tail < space_needed {
@@ -355,11 +355,11 @@ func icmp() {
 			}
 			copy(pb.pkt[i:], cli.gw_ip.AsSlice())
 			i += iplen
-			copy(pb.pkt[i:], src.ip.AsSlice())
+			copy(pb.pkt[i:], src.IP.AsSlice())
 			i += iplen
 			ipref_encode_ref(pb.pkt[i : i + reflen], cli.gw_ref)
 			i += reflen
-			ipref_encode_ref(pb.pkt[i : i + reflen], src.ref)
+			ipref_encode_ref(pb.pkt[i : i + reflen], src.Ref)
 
 			// build ICMP header
 			pb.pkt[icmp_hdr + ICMP_TYPE] = pb.icmp.typ

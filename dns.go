@@ -113,7 +113,7 @@ func parse_hosts_file(fname string, input io.Reader) map[IP]AddrRec {
 				log.err("dns watcher: %v(%v): non-unicast gw: %v", fname, lno, gwtoks[1])
 				continue
 			}
-			arec.gw = gw
+			arec.GW = gw
 		}
 
 		// parse ref
@@ -140,8 +140,8 @@ func parse_hosts_file(fname string, input io.Reader) map[IP]AddrRec {
 				continue
 			}
 
-			arec.ref.H = ref.H
-			arec.ref.L = ref.L
+			arec.Ref.H = ref.H
+			arec.Ref.L = ref.L
 		}
 
 		// build string showing gw + ref
@@ -155,16 +155,16 @@ func parse_hosts_file(fname string, input io.Reader) map[IP]AddrRec {
 
 		sb.WriteString("  =  ")
 
-		if !arec.gw.IsZero() {
+		if !arec.GW.IsZero() {
 			len := sb.Len()
-			sb.WriteString(arec.gw.String())
+			sb.WriteString(arec.GW.String())
 			for ii := sb.Len(); ii < len+16; ii++ {
 				sb.WriteString(" ")
 			}
 		}
-		if !arec.ref.IsZero() {
+		if !arec.Ref.IsZero() {
 			sb.WriteString("+ ")
-			sb.WriteString(arec.ref.String())
+			sb.WriteString(arec.Ref.String())
 		}
 
 		// add records to arec
@@ -173,8 +173,8 @@ func parse_hosts_file(fname string, input io.Reader) map[IP]AddrRec {
 
 			// for pub entries, both gw and the reference are optional
 
-			arec.ip = addr
-			arecs[arec.ip] = arec
+			arec.IP = addr
+			arecs[arec.IP] = arec
 
 			log.debug("dns watcher: %v %3d  pub  %v", fname, lno, sb.String())
 
@@ -182,18 +182,18 @@ func parse_hosts_file(fname string, input io.Reader) map[IP]AddrRec {
 
 			// for ext entries, both gw and the reference are mandatory
 
-			if arec.gw.IsZero() {
+			if arec.GW.IsZero() {
 				log.err("dns watcher: %v(%v): missing gw address", fname, lno)
 				continue
 			}
 
-			if arec.ref.IsZero() {
+			if arec.Ref.IsZero() {
 				log.err("dns watcher: %v(%v): missing reference", fname, lno)
 				continue
 			}
 
-			arec.ea = addr
-			arecs[arec.ea] = arec
+			arec.EA = addr
+			arecs[arec.EA] = arec
 			log.debug("dns watcher: %v %3d  ext  %v", fname, lno, sb.String())
 		}
 	}
@@ -248,31 +248,31 @@ func install_hosts_records(oid O32, arecs map[IP]AddrRec) {
 
 			// validate
 
-			if !rec.ea.IsZero() && rec.ip.IsZero() {
+			if !rec.EA.IsZero() && rec.IP.IsZero() {
 
-				if !netip.Addr(rec.ea).IsGlobalUnicast() {
+				if !netip.Addr(rec.EA).IsGlobalUnicast() {
 					log.err("dns watcher: invalid ea address record (not valid unicast): %v %v %v %v, ignoring",
-						rec.ea, rec.ip, rec.gw, &rec.ref)
+						rec.EA, rec.IP, rec.GW, &rec.Ref)
 					goto skip_record
 				}
-				if !cli.ea_net.Contains(netip.Addr(rec.ea)) {
+				if !cli.ea_net.Contains(netip.Addr(rec.EA)) {
 					log.err("dns watcher: invalid ea address record (not in ea space): %v %v %v %v, ignoring",
-						rec.ea, rec.ip, rec.gw, &rec.ref)
+						rec.EA, rec.IP, rec.GW, &rec.Ref)
 					goto skip_record
 				}
-				if rec.gw.IsZero() || rec.ref.IsZero() {
+				if rec.GW.IsZero() || rec.Ref.IsZero() {
 					log.err("dns watcher: invalid ea address record: %v %v %v %v, ignoring",
-						rec.ea, rec.ip, rec.gw, &rec.ref)
+						rec.EA, rec.IP, rec.GW, &rec.Ref)
 					goto skip_record
 				}
 
-			} else if rec.ea.IsZero() && !rec.ip.IsZero() {
+			} else if rec.EA.IsZero() && !rec.IP.IsZero() {
 
-				if rec.gw.IsZero() {
-					rec.gw = cli.gw_ip
+				if rec.GW.IsZero() {
+					rec.GW = cli.gw_ip
 				}
 
-				//if rec.ref.IsZero() {
+				//if rec.Ref.IsZero() {
 				//
 				//	// TODO: this is no good, it should check if a record already exists, as
 				//	//       it stands, it will keep re-allocating on any change to the file
@@ -283,79 +283,79 @@ func install_hosts_records(oid O32, arecs map[IP]AddrRec) {
 				//	ref := <-random_dns_ref
 				//	if ref.IsZero() {
 				//		log.err("dns watcher: cannot get generated reference: %v %v %v %v, ignoring",
-				//			rec.ea, rec.ip, rec.gw, &rec.ref)
+				//			rec.EA, rec.IP, rec.GW, &rec.Ref)
 				//		goto skip_record
 				//	}
-				//	rec.ref = ref
+				//	rec.Ref = ref
 				//	log.info("dns watcher: allocated dns ref: %v %v %v %v",
-				//		rec.ea, rec.ip, rec.gw, &rec.ref)
+				//		rec.EA, rec.IP, rec.GW, &rec.Ref)
 				//}
 
-				if !netip.Addr(rec.ip).IsGlobalUnicast() {
+				if !netip.Addr(rec.IP).IsGlobalUnicast() {
 					log.err("dns watcher: invalid ip address record (not valid unicast): %v %v %v %v, ignoring",
-						rec.ea, rec.ip, rec.gw, &rec.ref)
+						rec.EA, rec.IP, rec.GW, &rec.Ref)
 					goto skip_record
 				}
-				if cli.ea_net.Contains(netip.Addr(rec.ip)) {
+				if cli.ea_net.Contains(netip.Addr(rec.IP)) {
 					log.err("dns watcher: invalid ip address record (in ea space): %v %v %v %v, ignoring",
-						rec.ea, rec.ip, rec.gw, &rec.ref)
+						rec.EA, rec.IP, rec.GW, &rec.Ref)
 					goto skip_record
 				}
-				if rec.gw.IsZero() || rec.ref.IsZero() {
+				if rec.GW.IsZero() || rec.Ref.IsZero() {
 					log.err("dns watcher: invalid ip address record: %v %v %v %v, ignoring",
-						rec.ea, rec.ip, rec.gw, &rec.ref)
+						rec.EA, rec.IP, rec.GW, &rec.Ref)
 					goto skip_record
 				}
 
 			} else {
 				log.err("dns watcher: invalid address record: %v %v %v %v, ignoring",
-					rec.ea, rec.ip, rec.gw, &rec.ref)
+					rec.EA, rec.IP, rec.GW, &rec.Ref)
 				goto skip_record
 			}
 
 			// make sure second byte rule is met
 
-			if !rec.ea.IsZero() && rec.ea.ByteFromEnd(1) >= SECOND_BYTE {
+			if !rec.EA.IsZero() && rec.EA.ByteFromEnd(1) >= SECOND_BYTE {
 				log.err("dns watcher: address record second byte violation(ea): %v %v %v %v, ignoring",
-					rec.ea, rec.ip, rec.gw, &rec.ref)
+					rec.EA, rec.IP, rec.GW, &rec.Ref)
 				goto skip_record
 			}
 
-			if !rec.ip.IsZero() && ((rec.ref.L>>8)&0xFF) >= SECOND_BYTE {
+			if !rec.IP.IsZero() && ((rec.Ref.L>>8)&0xFF) >= SECOND_BYTE {
 				log.err("dns watcher: address record second byte violation(ref): %v %v %v %v, ignoring",
-					rec.ea, rec.ip, rec.gw, &rec.ref)
+					rec.EA, rec.IP, rec.GW, &rec.Ref)
 				goto skip_record
 			}
 
 			// make sure addresses are initialized
 
-			if rec.ea.IsZero() {
-				rec.ea = IPNum(ea_iplen, 0)
+			if rec.EA.IsZero() {
+				rec.EA = IPNum(ea_iplen, 0)
 			}
-			if rec.ip.IsZero() {
-				rec.ip = IPNum(ea_iplen, 0)
+			if rec.IP.IsZero() {
+				rec.IP = IPNum(ea_iplen, 0)
 			}
 
 			// make sure the addresses are for the right IP version
 
-			if rec.ea.Len() != ea_iplen {
+			if rec.EA.Len() != ea_iplen {
 				log.err("dns watcher: address has ip version mismatch with encoded address space (ea): %v, ignoring",
-					rec.ea)
+					rec.EA)
 				goto skip_record
 			}
-			if rec.ip.Len() != ea_iplen {
+			if rec.IP.Len() != ea_iplen {
 				log.err("dns watcher: address has ip version mismatch with encoded address space (ip): %v, ignoring",
-					rec.ip)
+					rec.IP)
 				goto skip_record
 			}
-			if rec.gw.Len() != gw_iplen {
-				log.err("dns watcher: address has ip version mismatch with gateway address: %v, ignoring", rec.gw)
+			if rec.GW.Len() != gw_iplen {
+				log.err("dns watcher: address has ip version mismatch with gateway address: %v, ignoring", rec.GW)
 				goto skip_record
 			}
 
 			// pack it up
 
-			v1_arec_encode(pkt[off:], rec)
+			rec.Encode(pkt[off:])
 
 			off += v1_arec_len
 

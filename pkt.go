@@ -12,67 +12,6 @@ import (
 	"strings"
 )
 
-const ( // v1 constants
-
-	V1_SIG      = 0x11 // v1 signature
-	V1_HDR_LEN  = 8
-	V1_MARK_LEN = 4 + 4 // oid + mark
-	// v1 header offsets
-	V1_VER      = 0 // must be 0x11
-	V1_CMD      = 1
-	V1_PKTID    = 2
-	V1_IPVER    = 4 // high nibble is the ea IP ver, low nibble is gw IP ver
-	V1_RESERVED = 5
-	V1_PKTLEN   = 6
-	// v1 mark offsets
-	V1_OID  = 0
-	V1_MARK = 4
-	// v1 host data offsets
-	V1_HOST_DATA_BATCHID = 0
-	V1_HOST_DATA_COUNT   = 0
-	V1_HOST_DATA_HASH    = 4
-	V1_HOST_DATA_SOURCE  = 12
-	// v1 save dnssource offsets
-	V1_DNSSOURCE_MARK   = 4
-	V1_DNSSOURCE_XMARK  = 4
-	V1_DNSSOURCE_HASH   = 8
-	V1_DNSSOURCE_SOURCE = 16
-)
-
-const ( // v1 item types
-
-	//V1_TYPE_NONE   = 0
-	//V1_TYPE_AREC   = 1
-	//V1_TYPE_IPV4   = 3
-	V1_TYPE_STRING = 4
-)
-
-const ( // v1 commands
-
-	V1_NOOP           = 0
-	V1_SET_AREC       = 1
-	V1_SET_MARK       = 2
-	V1_GET_REF        = 4
-	V1_GET_EA         = 6
-	V1_MC_GET_EA      = 7
-	V1_SAVE_OID       = 8
-	V1_SAVE_TIME_BASE = 9
-	V1_RECOVER_EA     = 10
-	V1_RECOVER_REF    = 11
-
-	V1_MC_HOST_DATA      = 14
-	V1_MC_HOST_DATA_HASH = 15
-	V1_SAVE_DNSSOURCE    = 16
-)
-
-const ( // v1 command mode, top two bits
-
-	V1_DATA = 0x00
-	V1_REQ  = 0x40
-	V1_ACK  = 0x80
-	V1_NACK = 0xC0
-)
-
 const ( // packet handling verdicts
 
 	ACCEPT = iota + 1
@@ -342,8 +281,8 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 			if pktlen-off < v1_arec_len {
 				ss += fmt.Sprintf(" too short")
 			} else {
-				arec := v1_arec_decode(pkt[off:])
-				ss += fmt.Sprintf(" %v + %v", arec.gw, &arec.ref)
+				arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
+				ss += fmt.Sprintf(" %v + %v", arec.GW, &arec.Ref)
 			}
 
 		case V1_ACK | V1_GET_EA:
@@ -360,8 +299,8 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 			if pktlen-off < v1_arec_len {
 				ss += fmt.Sprintf(" too short")
 			} else {
-				arec := v1_arec_decode(pkt[off:])
-				ss += fmt.Sprintf(" %v + %v = %v", arec.gw, &arec.ref, arec.ea)
+				arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
+				ss += fmt.Sprintf(" %v + %v = %v", arec.GW, &arec.Ref, arec.EA)
 			}
 
 		case V1_NACK | V1_GET_EA:
@@ -385,8 +324,8 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 			if pktlen-off < v1_arec_len {
 				ss += fmt.Sprintf(" too short")
 			} else {
-				arec := v1_arec_decode(pkt[off:])
-				ss += fmt.Sprintf(" %v + %v", arec.gw, &arec.ref)
+				arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
+				ss += fmt.Sprintf(" %v + %v", arec.GW, &arec.Ref)
 
 				off += v1_arec_len
 				if pktlen-off > 4 && pkt[off] == V1_TYPE_STRING && int(pkt[off+1]) <= pktlen-off-2 {
@@ -403,8 +342,8 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 			if pktlen-off < v1_arec_len {
 				ss += fmt.Sprintf(" too short")
 			} else {
-				arec := v1_arec_decode(pkt[off:])
-				ss += fmt.Sprintf(" %v + %v = %v", arec.gw, &arec.ref, arec.ea)
+				arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
+				ss += fmt.Sprintf(" %v + %v = %v", arec.GW, &arec.Ref, arec.EA)
 			}
 
 		case V1_NACK | V1_MC_GET_EA:
