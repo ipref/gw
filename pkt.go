@@ -159,6 +159,7 @@ type PktBuf struct {
 	// the ICMP type/code should be for the ICMP version that matches the packet
 	// type (eg. PKT_IPv6 -> ICMPv6)
 	icmp  IcmpReq
+	df    bool // only used for PKT_IPv6 on send_tun
 }
 
 func (pb *PktBuf) len() int {

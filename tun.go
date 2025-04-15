@@ -5,7 +5,9 @@ package main
 import (
 	"golang.org/x/sys/unix"
 	"os"
+	"crypto/rand"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 )
@@ -34,13 +36,257 @@ const (
 var recv_tun chan (*PktBuf)
 var send_tun chan (*PktBuf)
 
+var local_soft LocalSoftTable
+
+// Soft state (cached info) about an IP on the local network
+type LocalSoftInfo struct {
+	lock sync.Mutex
+	ip IP
+	mtu int // 0 if unknown
+	removed bool
+	prev *LocalSoftInfo // the previous most recently used (less recent)
+	next *LocalSoftInfo // the next most recently used (more recent)
+
+}
+
+type LocalSoftTable struct {
+	lock sync.Mutex
+	ips map[IP]*LocalSoftInfo
+	nips int
+	least_recent *LocalSoftInfo
+	most_recent *LocalSoftInfo
+}
+
+func (lsoft *LocalSoftTable) init() {
+	*lsoft = LocalSoftTable{
+		ips: make(map[IP]*LocalSoftInfo),
+	}
+}
+
+// Will still lock the individual soft info regardless.
+func (lsoft *LocalSoftTable) gc(lock bool) {
+
+	if cli.maxlips < 1 {
+		return
+	}
+	if lock {
+		lsoft.lock.Lock()
+		defer lsoft.lock.Unlock()
+	}
+	for lsoft.nips > cli.maxlips {
+		linfo := lsoft.least_recent
+		linfo.lock.Lock()
+		linfo.next.lock.Lock()
+		linfo.next.prev = nil
+		linfo.next.lock.Unlock()
+		lsoft.least_recent = linfo.next
+		if linfo.prev != nil {
+			panic("unexpected")
+		}
+		linfo.next = nil
+		if !linfo.removed {
+			linfo.removed = true
+			lsoft.nips--
+		}
+		linfo.lock.Unlock()
+		delete(lsoft.ips, linfo.ip)
+	}
+}
+
+func (lsoft *LocalSoftTable) active_ip(linfo *LocalSoftInfo, lock bool) {
+
+	if lock {
+		linfo.lock.Lock()
+		defer linfo.lock.Unlock()
+	}
+	if linfo.removed || linfo.next == nil {
+		return
+	}
+	if lock {
+		lsoft.lock.Lock()
+		defer lsoft.lock.Unlock()
+	}
+
+	// remove from list
+	if linfo.prev == nil {
+		lsoft.least_recent = linfo.next
+	} else {
+		linfo.prev.lock.Lock()
+		linfo.prev.next = linfo.next
+		linfo.prev.lock.Unlock()
+	}
+	linfo.next.lock.Lock()
+	linfo.next.prev = linfo.prev
+	linfo.next.lock.Unlock()
+
+	// add to end of list
+	linfo.prev = lsoft.most_recent
+	linfo.next = nil
+	lsoft.most_recent = linfo
+	linfo.prev.lock.Lock()
+	linfo.prev.next = linfo
+	linfo.prev.lock.Unlock()
+}
+
+func (lsoft *LocalSoftTable) remove_ip(linfo *LocalSoftInfo, lock bool) {
+
+	if lock {
+		linfo.lock.Lock()
+		defer linfo.lock.Unlock()
+	}
+	if linfo.removed {
+		return
+	}
+	linfo.removed = true
+	if lock {
+		lsoft.lock.Lock()
+		defer lsoft.lock.Unlock()
+	}
+	lsoft.nips--
+	if linfo.prev == nil {
+		lsoft.least_recent = linfo.next
+	} else {
+		linfo.prev.lock.Lock()
+		linfo.prev.next = linfo.next
+		linfo.prev.lock.Unlock()
+	}
+	if linfo.next == nil {
+		lsoft.most_recent = linfo.prev
+	} else {
+		linfo.next.lock.Lock()
+		linfo.next.prev = linfo.prev
+		linfo.next.lock.Unlock()
+	}
+	linfo.prev = nil
+	linfo.next = nil
+	delete(lsoft.ips, linfo.ip)
+}
+
+func (lsoft *LocalSoftTable) get_info(ip IP, create, lock bool) *LocalSoftInfo {
+
+	// look for existing info
+	if lock {
+		lsoft.lock.Lock()
+		defer lsoft.lock.Unlock()
+	}
+	linfo, exists := lsoft.ips[ip]
+	if exists {
+		linfo.lock.Lock()
+		if linfo.removed {
+			panic("unexpected")
+		}
+		lsoft.active_ip(linfo, false)
+		linfo.lock.Unlock()
+		return linfo
+	}
+	if !create {
+		return nil
+	}
+
+	// create linfo
+	linfo = &LocalSoftInfo{}
+	linfo.ip = ip
+	linfo.mtu = 0
+	linfo.removed = false
+	linfo.prev = lsoft.most_recent
+	linfo.next = nil
+	lsoft.most_recent = linfo
+	if linfo.prev == nil {
+		lsoft.least_recent = linfo
+	} else {
+		linfo.prev.lock.Lock()
+		linfo.prev.next = linfo
+		linfo.prev.lock.Unlock()
+	}
+	lsoft.ips[ip] = linfo
+	lsoft.nips++
+
+	lsoft.gc(false)
+	return linfo
+}
+
+func (linfo *LocalSoftInfo) update_mtu(mtu int) {
+
+	linfo.lock.Lock()
+	if linfo.mtu != mtu {
+		log.trace("tun:     update local mtu (%v) %v -> %v", linfo.ip, linfo.mtu, mtu)
+		linfo.mtu = mtu
+	}
+	linfo.lock.Unlock()
+}
+
+func (linfo *LocalSoftInfo) get_mtu() int {
+
+	linfo.lock.Lock()
+	defer linfo.lock.Unlock()
+	return linfo.mtu
+}
+
+// Packet inspection (eg. for detecting PMTU from ICMP messages).
+func inspect_from_tun(pb *PktBuf) {
+
+	pkt := pb.pkt
+
+	if pb.typ == PKT_IPv6 {
+
+		if pb.len() < IPv6_HDR_MIN_LEN {
+			return
+		}
+		if (pkt[pb.data+IP_VER] & 0xf0 != 0x60) {
+			return
+		}
+		ip_pld_len := int(be.Uint16(pkt[pb.data+IPv6_PLD_LEN:pb.data+IPv6_PLD_LEN+2]))
+		if ip_pld_len == 0 { // jumbogram
+			return
+		}
+		if IPv6_HDR_MIN_LEN + ip_pld_len < pb.len() {
+			return
+		}
+		proto := pkt[pb.data+IPv6_NEXT]
+		// ttl := pkt[pb.data+IPv6_TTL]
+		// src := IPFromSlice(pkt[pb.data+IPv6_SRC : pb.data+IPv6_SRC+16])
+		// dst := IPFromSlice(pkt[pb.data+IPv6_DST : pb.data+IPv6_DST+16])
+		l4 := pb.data + IPv6_HDR_MIN_LEN
+		l4_pkt_len := pb.tail - l4
+
+		switch proto {
+
+		case ICMPv6:
+
+			if l4_pkt_len < ICMP_DATA {
+				return
+			}
+			typ := pkt[l4+ICMP_TYPE]
+			code := pkt[l4+ICMP_CODE]
+
+			switch {
+
+			case typ == ICMPv6_PACKET_TOO_BIG && code == 0:
+
+				mtu := be.Uint32(pkt[l4+ICMP_BODY:])
+				if mtu >> 16 != 0 || mtu < 1280 {
+					return
+				}
+				inner_ip_hdr := l4 + ICMP_DATA
+				if pb.tail - inner_ip_hdr < IPv6_HDR_MIN_LEN {
+					return
+				}
+				orig_dst := IPFromSlice(pkt[inner_ip_hdr+IPv6_DST : inner_ip_hdr+IPv6_DST+16])
+				local_soft.get_info(orig_dst, true, true).update_mtu(int(mtu))
+			}
+		}
+	}
+}
+
 func tun_sender(fd *os.File) {
 
 	if cli.devmode {
 		return
 	}
 
+	// uses pb.df if pb.typ == PKT_IPv6
 	for pb := range send_tun {
+	next_fragment:
 
 		if cli.debug["tun"] {
 			log.debug("tun out: %v", pb.pp_pkt())
@@ -53,12 +299,40 @@ func tun_sender(fd *os.File) {
 		}
 
 		var proto uint16
+		var sent, trimmed int
+		var orig_mf bool
 		switch pb.typ {
+
 		case PKT_IPv4:
+
 			proto = ETHER_IPv4
+
 		case PKT_IPv6:
+
 			proto = ETHER_IPv6
+			if !pb.df {
+				dst := IPFromSlice(pb.pkt[pb.data+IPv6_DST : pb.data+IPv6_DST+16])
+				if linfo := local_soft.get_info(dst, false, true); linfo != nil {
+					if mtu := linfo.get_mtu(); mtu > 0 {
+						var status IPv6FragInPlaceStatus
+						sent, trimmed, orig_mf, status = ipv6_frag_in_place(pb, mtu)
+						switch status {
+						case IPv6_FRAG_IN_PLACE_NOT_NEEDED:
+						case IPv6_FRAG_IN_PLACE_SUCCESS:
+							log.trace("tun out: fragmenting (%v + %v)", sent, trimmed)
+						case IPv6_FRAG_IN_PLACE_SPACE:
+							log.err("tun out: not enough space in buffer to fragment, dropping")
+							retbuf <- pb
+							continue
+						default:
+							panic("unexpected")
+						}
+					}
+				}
+			}
+
 		default:
+
 			log.fatal("tun out: not an IPv4/6 packet (%v)", pb.typ)
 		}
 
@@ -78,6 +352,13 @@ func tun_sender(fd *os.File) {
 		} else if wlen != pb.tail-pb.data {
 			log.err("tun out: send to tun interface truncated: wlen(%v) data/tail(%v/%v)",
 				wlen, pb.data, pb.tail)
+		} else {
+			pb.data += TUN_HDR_LEN
+			if trimmed != 0 {
+				frag_off := ipv6_next_frag_in_place(pb, trimmed, orig_mf)
+				log.trace("tun out: moving on to next fragment (%v)", frag_off)
+				goto next_fragment
+			}
 		}
 
 		retbuf <- pb
@@ -157,6 +438,8 @@ func tun_receiver(fd *os.File) {
 			pb.pp_tran("tun in:  ")
 			// pb.pp_raw("tun in:  ")
 		}
+
+		inspect_from_tun(pb)
 
 		recv_tun <- pb
 	}
@@ -249,6 +532,108 @@ func start_tun() {
 		log.info("tun: netifc %v %v mtu(%v)", cli.ea_ip, ifcname, mtu)
 	}
 
+	local_soft.init()
+
 	go tun_receiver(fd)
 	go tun_sender(fd)
+}
+
+type IPv6FragInPlaceStatus int
+
+const (
+	IPv6_FRAG_IN_PLACE_NOT_NEEDED = IPv6FragInPlaceStatus(iota)
+	IPv6_FRAG_IN_PLACE_SUCCESS    = IPv6FragInPlaceStatus(iota) // fragmented
+	IPv6_FRAG_IN_PLACE_SPACE      = IPv6FragInPlaceStatus(iota) // not enough space
+)
+
+func ipv6_frag_in_place(pb *PktBuf, mtu int) (
+	sent, trimmed int, orig_mf bool, status IPv6FragInPlaceStatus) {
+
+	if pb.len() <= mtu {
+		status = IPv6_FRAG_IN_PLACE_NOT_NEEDED
+		return
+	}
+
+	// Calculate sizes
+	ipv6_hdr_len := IPv6_HDR_MIN_LEN
+	frag_if := false
+	if pb.pkt[pb.data + IPv6_NEXT] == IPv6_FRAG_EXT {
+		ipv6_hdr_len += IPv6_FRAG_HDR_LEN
+		frag_if = true
+	}
+	l4_size := pb.len() - ipv6_hdr_len
+	sent = ((l4_size + 1) / 2 + 7) / 8 * 8
+	if !frag_if {
+		// We're going to need that space to add the Fragment extension header.
+		ipv6_hdr_len += IPv6_FRAG_HDR_LEN
+	}
+	if sent + ipv6_hdr_len > mtu {
+		sent = (mtu - ipv6_hdr_len) / 8 * 8
+	}
+	trimmed = l4_size - sent
+	if sent <= 0 || trimmed <= 0 {
+		status = IPv6_FRAG_IN_PLACE_SPACE
+		return
+	}
+	pb.tail -= trimmed
+	be.PutUint16(pb.pkt[pb.data+IPv6_PLD_LEN:], uint16(IPv6_FRAG_HDR_LEN + sent))
+
+	if frag_if {
+		frag_ext := pb.pkt[pb.data+IPv6_HDR_MIN_LEN:]
+		frag_field := be.Uint16(frag_ext[IPv6_FRAG_OFF:])
+		orig_mf = frag_field & 1 != 0
+		frag_field |= 1
+		be.PutUint16(frag_ext[IPv6_FRAG_OFF:], frag_field)
+	} else {
+		// Add Fragment extension header.
+		if pb.data < IPv6_FRAG_HDR_LEN {
+			status = IPv6_FRAG_IN_PLACE_SPACE
+			return
+		}
+		pb.data -= IPv6_FRAG_HDR_LEN
+		copy(pb.pkt[pb.data:pb.data+IPv6_HDR_MIN_LEN], pb.pkt[pb.data+IPv6_FRAG_HDR_LEN:])
+		frag_ext := pb.pkt[pb.data+IPv6_HDR_MIN_LEN:]
+		pb.pkt[pb.data+IPv6_NEXT], frag_ext[IPv6_FRAG_NEXT] = IPv6_FRAG_EXT, pb.pkt[pb.data+IPv6_NEXT]
+		frag_ext[1] = 0
+		be.PutUint16(frag_ext[IPv6_FRAG_OFF:], 1)
+		rand.Read(frag_ext[IPv6_FRAG_IDENT:IPv6_FRAG_IDENT+4])
+	}
+
+	status = IPv6_FRAG_IN_PLACE_SUCCESS
+	return
+}
+
+func ipv6_next_frag_in_place(pb *PktBuf, trimmed int, orig_mf bool) int {
+
+	if pb.pkt[pb.data + IPv6_NEXT] != IPv6_FRAG_EXT {
+		panic("unexpected")
+	}
+	ipv6_hdr_len := IPv6_HDR_MIN_LEN + IPv6_FRAG_HDR_LEN
+	sent := pb.len() - ipv6_hdr_len
+	if sent <= 0 || sent & 7 != 0 {
+		panic("unexpected")
+	}
+
+	// Move the header to just before the data that was trimmed/not yet sent.
+	copy(pb.pkt[pb.tail-ipv6_hdr_len:], pb.pkt[pb.data:pb.data+ipv6_hdr_len])
+	pb.data = pb.tail - ipv6_hdr_len
+	pb.tail += trimmed
+
+	// Set new payload length
+	be.PutUint16(pb.pkt[pb.data+IPv6_PLD_LEN:], uint16(IPv6_FRAG_HDR_LEN + trimmed))
+
+	// Adjust Fragment extension header.
+	frag_ext := pb.pkt[pb.data+IPv6_HDR_MIN_LEN:]
+	frag_off := int(be.Uint16(frag_ext[IPv6_FRAG_OFF:]) &^ 7)
+	frag_off += sent
+	if frag_off >> 16 != 0 {
+		panic("unexpected")
+	}
+	frag_field := uint16(frag_off)
+	if orig_mf {
+		frag_field |= 1
+	}
+	be.PutUint16(frag_ext[IPv6_FRAG_OFF:], frag_field)
+
+	return frag_off
 }

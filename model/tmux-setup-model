@@ -48,12 +48,12 @@ tmux select-pane -L
 tmux select-pane -U
 tmux send-keys -l "sleep 2"
 tmux send-keys Enter
-tmux send-keys -l "run-gw7"
+tmux send-keys -l "run-gw7 | tee model/log-gw7.txt"
 tmux send-keys Enter
 tmux select-pane -R
 tmux send-keys -l "sleep 2"
 tmux send-keys Enter
-tmux send-keys -l "run-gw8"
+tmux send-keys -l "run-gw8 | tee model/log-gw8.txt"
 tmux send-keys Enter
 tmux select-pane -D
 tmux select-pane -L

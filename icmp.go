@@ -281,6 +281,7 @@ func icmp() {
 			icmp_csum = csum_add(icmp_csum, pseudo[:])
 			be.PutUint16(pb.pkt[icmp_hdr + ICMP_CSUM : icmp_hdr + ICMP_CSUM + 2], icmp_csum^0xffff)
 
+			pb.df = false
 			send_tun <- pb
 			continue
 

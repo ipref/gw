@@ -64,7 +64,9 @@ func (rgws *RemoteGwTable) gc(lock bool) {
 	for rgws.nrcons > cli.maxrgws {
 		rcon := rgws.least_recent
 		rcon.lock.Lock()
+		rcon.next.lock.Lock()
 		rcon.next.prev = nil
+		rcon.next.lock.Unlock()
 		rgws.least_recent = rcon.next
 		if rcon.prev != nil {
 			panic("unexpected")
@@ -98,15 +100,21 @@ func (rgws *RemoteGwTable) active_rcon(rcon *RemoteGwConn, lock bool) {
 	if rcon.prev == nil {
 		rgws.least_recent = rcon.next
 	} else {
+		rcon.prev.lock.Lock()
 		rcon.prev.next = rcon.next
+		rcon.prev.lock.Unlock()
 	}
+	rcon.next.lock.Lock()
 	rcon.next.prev = rcon.prev
+	rcon.next.lock.Unlock()
 
 	// add to end of list
 	rcon.prev = rgws.most_recent
 	rcon.next = nil
 	rgws.most_recent = rcon
+	rcon.prev.lock.Lock()
 	rcon.prev.next = rcon
+	rcon.prev.lock.Unlock()
 }
 
 func (rgws *RemoteGwTable) remove_rcon(rcon *RemoteGwConn, lock bool) {
@@ -128,12 +136,16 @@ func (rgws *RemoteGwTable) remove_rcon(rcon *RemoteGwConn, lock bool) {
 	if rcon.prev == nil {
 		rgws.least_recent = rcon.next
 	} else {
+		rcon.prev.lock.Lock()
 		rcon.prev.next = rcon.next
+		rcon.prev.lock.Unlock()
 	}
 	if rcon.next == nil {
 		rgws.most_recent = rcon.prev
 	} else {
+		rcon.next.lock.Lock()
 		rcon.next.prev = rcon.prev
+		rcon.next.lock.Unlock()
 	}
 	rcon.prev = nil
 	rcon.next = nil
@@ -205,7 +217,9 @@ func (rgws *RemoteGwTable) get_rcon(daddr IP, dport uint16,
 	if rcon.prev == nil {
 		rgws.least_recent = rcon
 	} else {
+		rcon.prev.lock.Lock()
 		rcon.prev.next = rcon
+		rcon.prev.lock.Unlock()
 	}
 	rgws.rcons[key] = rcon
 	rgws.nrcons++

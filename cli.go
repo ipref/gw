@@ -30,6 +30,7 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	sockname   string
 	maxbuf     int
 	maxrgws    int
+	maxlips    int
 	// derived
 	debug      map[string]bool
 	ea_net     netip.Prefix
@@ -83,6 +84,7 @@ func parse_cli() {
 	flag.StringVar(&cli.hosts_path, "hosts", "/etc/hosts", "host name lookup file")
 	flag.IntVar(&cli.maxbuf, "max-buffers", 64, "max number of packet buffers")
 	flag.IntVar(&cli.maxrgws, "max-remote-gateways", 1024, "maximum number of remote gateways to track at a time")
+	flag.IntVar(&cli.maxlips, "max-local-ips", 1024, "maximum number of local IPs to track at a time")
 	flag.Usage = func() {
 		toks := strings.Split(os.Args[0], "/")
 		prog := toks[len(toks)-1]
