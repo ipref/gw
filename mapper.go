@@ -365,8 +365,8 @@ func (mgw *MapGw) get_ref(pb *PktBuf) int {
 		// ACK
 		pkt[V1_CMD] = V1_ACK | V1_GET_REF
 		off = V1_HDR_LEN
-		be.PutUint32(pkt[off+V1_OID:off+V1_OID+32], uint32(rec.oid))
-		be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+32], uint32(rec.mark))
+		be.PutUint32(pkt[off+V1_OID:], uint32(rec.oid))
+		be.PutUint32(pkt[off+V1_MARK:], uint32(rec.mark))
 		off += V1_MARK_LEN
 		arec.GW = rec.IP
 		arec.Ref = rec.Ref
@@ -818,8 +818,8 @@ func (mtun *MapTun) get_ea(pb *PktBuf) int {
 		// ACK
 		pkt[V1_CMD] = V1_ACK | V1_GET_EA
 		off = V1_HDR_LEN
-		be.PutUint32(pkt[off+V1_OID:off+V1_OID+32], uint32(iprec.oid))
-		be.PutUint32(pkt[off+V1_MARK:off+V1_MARK+32], uint32(iprec.mark))
+		be.PutUint32(pkt[off+V1_OID:], uint32(iprec.oid))
+		be.PutUint32(pkt[off+V1_MARK:], uint32(iprec.mark))
 		off += V1_MARK_LEN
 		arec.EA = iprec.ip
 		arec.Encode(pkt[off:])

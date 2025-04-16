@@ -980,8 +980,13 @@ func (pb *PktBuf) validate_v1_header(rlen int) error {
 			len(pkt), lenfield*4)
 	}
 
-	if pkt[V1_IPVER] != (byte(cli.ea_ip.Ver()) << 4) | byte(cli.gw_ip.Ver()) {
-		return fmt.Errorf("ip version mismatch: 0x%02x", pkt[V1_IPVER])
+	if pkt[V1_IPVER] >> 4 != byte(cli.ea_ip.Ver()) {
+		return fmt.Errorf("ea ip version mismatch: sent(%v) != expected(%v)",
+			pkt[V1_IPVER] >> 4, cli.ea_ip.Ver())
+	}
+	if pkt[V1_IPVER] & 0xf != byte(cli.gw_ip.Ver()) {
+		return fmt.Errorf("gw ip version mismatch: sent(%v) != expected(%v)",
+			pkt[V1_IPVER] & 0xf, cli.gw_ip.Ver())
 	}
 
 	if pkt[V1_RESERVED] != 0 {
