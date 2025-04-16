@@ -3,12 +3,12 @@
 package main
 
 import (
+	lru "github.com/hashicorp/golang-lru/v2/expirable"
 	. "github.com/ipref/common"
 	"golang.org/x/sys/unix"
 	"os"
 	"crypto/rand"
 	"strings"
-	"sync"
 	"time"
 	"unsafe"
 )
@@ -37,190 +37,11 @@ const (
 var recv_tun chan (*PktBuf)
 var send_tun chan (*PktBuf)
 
-var local_soft LocalSoftTable
+var tun_mtucache *lru.LRU[IP, int]
 
-// Soft state (cached info) about an IP on the local network
-type LocalSoftInfo struct {
-	lock sync.Mutex
-	ip IP
-	mtu int // 0 if unknown
-	removed bool
-	prev *LocalSoftInfo // the previous most recently used (less recent)
-	next *LocalSoftInfo // the next most recently used (more recent)
-
-}
-
-type LocalSoftTable struct {
-	lock sync.Mutex
-	ips map[IP]*LocalSoftInfo
-	nips int
-	least_recent *LocalSoftInfo
-	most_recent *LocalSoftInfo
-}
-
-func (lsoft *LocalSoftTable) init() {
-	*lsoft = LocalSoftTable{
-		ips: make(map[IP]*LocalSoftInfo),
-	}
-}
-
-// Will still lock the individual soft info regardless.
-func (lsoft *LocalSoftTable) gc(lock bool) {
-
-	if cli.maxlips < 1 {
-		return
-	}
-	if lock {
-		lsoft.lock.Lock()
-		defer lsoft.lock.Unlock()
-	}
-	for lsoft.nips > cli.maxlips {
-		linfo := lsoft.least_recent
-		linfo.lock.Lock()
-		linfo.next.lock.Lock()
-		linfo.next.prev = nil
-		linfo.next.lock.Unlock()
-		lsoft.least_recent = linfo.next
-		if linfo.prev != nil {
-			panic("unexpected")
-		}
-		linfo.next = nil
-		if !linfo.removed {
-			linfo.removed = true
-			lsoft.nips--
-		}
-		linfo.lock.Unlock()
-		delete(lsoft.ips, linfo.ip)
-	}
-}
-
-func (lsoft *LocalSoftTable) active_ip(linfo *LocalSoftInfo, lock bool) {
-
-	if lock {
-		linfo.lock.Lock()
-		defer linfo.lock.Unlock()
-	}
-	if linfo.removed || linfo.next == nil {
-		return
-	}
-	if lock {
-		lsoft.lock.Lock()
-		defer lsoft.lock.Unlock()
-	}
-
-	// remove from list
-	if linfo.prev == nil {
-		lsoft.least_recent = linfo.next
-	} else {
-		linfo.prev.lock.Lock()
-		linfo.prev.next = linfo.next
-		linfo.prev.lock.Unlock()
-	}
-	linfo.next.lock.Lock()
-	linfo.next.prev = linfo.prev
-	linfo.next.lock.Unlock()
-
-	// add to end of list
-	linfo.prev = lsoft.most_recent
-	linfo.next = nil
-	lsoft.most_recent = linfo
-	linfo.prev.lock.Lock()
-	linfo.prev.next = linfo
-	linfo.prev.lock.Unlock()
-}
-
-func (lsoft *LocalSoftTable) remove_ip(linfo *LocalSoftInfo, lock bool) {
-
-	if lock {
-		linfo.lock.Lock()
-		defer linfo.lock.Unlock()
-	}
-	if linfo.removed {
-		return
-	}
-	linfo.removed = true
-	if lock {
-		lsoft.lock.Lock()
-		defer lsoft.lock.Unlock()
-	}
-	lsoft.nips--
-	if linfo.prev == nil {
-		lsoft.least_recent = linfo.next
-	} else {
-		linfo.prev.lock.Lock()
-		linfo.prev.next = linfo.next
-		linfo.prev.lock.Unlock()
-	}
-	if linfo.next == nil {
-		lsoft.most_recent = linfo.prev
-	} else {
-		linfo.next.lock.Lock()
-		linfo.next.prev = linfo.prev
-		linfo.next.lock.Unlock()
-	}
-	linfo.prev = nil
-	linfo.next = nil
-	delete(lsoft.ips, linfo.ip)
-}
-
-func (lsoft *LocalSoftTable) get_info(ip IP, create, lock bool) *LocalSoftInfo {
-
-	// look for existing info
-	if lock {
-		lsoft.lock.Lock()
-		defer lsoft.lock.Unlock()
-	}
-	linfo, exists := lsoft.ips[ip]
-	if exists {
-		linfo.lock.Lock()
-		if linfo.removed {
-			panic("unexpected")
-		}
-		lsoft.active_ip(linfo, false)
-		linfo.lock.Unlock()
-		return linfo
-	}
-	if !create {
-		return nil
-	}
-
-	// create linfo
-	linfo = &LocalSoftInfo{}
-	linfo.ip = ip
-	linfo.mtu = 0
-	linfo.removed = false
-	linfo.prev = lsoft.most_recent
-	linfo.next = nil
-	lsoft.most_recent = linfo
-	if linfo.prev == nil {
-		lsoft.least_recent = linfo
-	} else {
-		linfo.prev.lock.Lock()
-		linfo.prev.next = linfo
-		linfo.prev.lock.Unlock()
-	}
-	lsoft.ips[ip] = linfo
-	lsoft.nips++
-
-	lsoft.gc(false)
-	return linfo
-}
-
-func (linfo *LocalSoftInfo) update_mtu(mtu int) {
-
-	linfo.lock.Lock()
-	if linfo.mtu != mtu {
-		log.trace("tun:     update local mtu (%v) %v -> %v", linfo.ip, linfo.mtu, mtu)
-		linfo.mtu = mtu
-	}
-	linfo.lock.Unlock()
-}
-
-func (linfo *LocalSoftInfo) get_mtu() int {
-
-	linfo.lock.Lock()
-	defer linfo.lock.Unlock()
-	return linfo.mtu
+func tun_update_mtu(ip IP, mtu int) {
+	log.trace("tun:     update local mtu(%v)  %v", mtu, ip)
+	tun_mtucache.Add(ip, mtu)
 }
 
 // Packet inspection (eg. for detecting PMTU from ICMP messages).
@@ -228,7 +49,9 @@ func inspect_from_tun(pb *PktBuf) {
 
 	pkt := pb.pkt
 
-	if pb.typ == PKT_IPv6 {
+	switch pb.typ {
+
+	case PKT_IPv6:
 
 		if pb.len() < IPv6_HDR_MIN_LEN {
 			return
@@ -237,18 +60,21 @@ func inspect_from_tun(pb *PktBuf) {
 			return
 		}
 		ip_pld_len := int(be.Uint16(pkt[pb.data+IPv6_PLD_LEN:pb.data+IPv6_PLD_LEN+2]))
-		if ip_pld_len == 0 { // jumbogram
-			return
-		}
-		if IPv6_HDR_MIN_LEN + ip_pld_len < pb.len() {
+		if IPv6_HDR_MIN_LEN + ip_pld_len != pb.len() {
 			return
 		}
 		proto := pkt[pb.data+IPv6_NEXT]
 		// ttl := pkt[pb.data+IPv6_TTL]
-		// src := IPFromSlice(pkt[pb.data+IPv6_SRC : pb.data+IPv6_SRC+16])
+		src := IPFromSlice(pkt[pb.data+IPv6_SRC : pb.data+IPv6_SRC+16])
 		// dst := IPFromSlice(pkt[pb.data+IPv6_DST : pb.data+IPv6_DST+16])
 		l4 := pb.data + IPv6_HDR_MIN_LEN
 		l4_pkt_len := pb.tail - l4
+
+		// Update the mtu if packet is bigger, and mark the IP as recent in the
+		// cache.
+		if mtu, exists := tun_mtucache.Get(src); exists && pb.len() > mtu {
+			tun_update_mtu(src, pb.len())
+		}
 
 		switch proto {
 
@@ -273,7 +99,7 @@ func inspect_from_tun(pb *PktBuf) {
 					return
 				}
 				orig_dst := IPFromSlice(pkt[inner_ip_hdr+IPv6_DST : inner_ip_hdr+IPv6_DST+16])
-				local_soft.get_info(orig_dst, true, true).update_mtu(int(mtu))
+				tun_update_mtu(orig_dst, int(mtu))
 			}
 		}
 	}
@@ -313,21 +139,19 @@ func tun_sender(fd *os.File) {
 			proto = ETHER_IPv6
 			if !pb.df {
 				dst := IPFromSlice(pb.pkt[pb.data+IPv6_DST : pb.data+IPv6_DST+16])
-				if linfo := local_soft.get_info(dst, false, true); linfo != nil {
-					if mtu := linfo.get_mtu(); mtu > 0 {
-						var status IPv6FragInPlaceStatus
-						sent, trimmed, orig_mf, status = ipv6_frag_in_place(pb, mtu)
-						switch status {
-						case IPv6_FRAG_IN_PLACE_NOT_NEEDED:
-						case IPv6_FRAG_IN_PLACE_SUCCESS:
-							log.trace("tun out: fragmenting (%v + %v)", sent, trimmed)
-						case IPv6_FRAG_IN_PLACE_SPACE:
-							log.err("tun out: not enough space in buffer to fragment, dropping")
-							retbuf <- pb
-							continue
-						default:
-							panic("unexpected")
-						}
+				if mtu, exists := tun_mtucache.Get(dst); exists && mtu > 0 {
+					var status IPv6FragInPlaceStatus
+					sent, trimmed, orig_mf, status = ipv6_frag_in_place(pb, mtu)
+					switch status {
+					case IPv6_FRAG_IN_PLACE_NOT_NEEDED:
+					case IPv6_FRAG_IN_PLACE_SUCCESS:
+						log.trace("tun out: fragmenting (%v + %v)", sent, trimmed)
+					case IPv6_FRAG_IN_PLACE_SPACE:
+						log.err("tun out: not enough space in buffer to fragment, dropping")
+						retbuf <- pb
+						continue
+					default:
+						panic("unexpected")
 					}
 				}
 			}
@@ -533,7 +357,7 @@ func start_tun() {
 		log.info("tun: netifc %v %v mtu(%v)", cli.ea_ip, ifcname, mtu)
 	}
 
-	local_soft.init()
+	tun_mtucache = lru.NewLRU[IP, int](max(cli.maxlips, 1), nil, 0)
 
 	go tun_receiver(fd)
 	go tun_sender(fd)
