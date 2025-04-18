@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2021 Waldemar Augustyn */
+/* Copyright (c) 2018-2021, 2025 Waldemar Augustyn */
 
 package main
 
@@ -8,6 +8,7 @@ import (
 	. "github.com/ipref/common"
 	rff "github.com/ipref/ref"
 	"strings"
+	"time"
 )
 
 /* IPREF Tunnel Protocol */
@@ -23,7 +24,57 @@ const (
 	ENCAP_MAP_SUCCESS = 0
 	ENCAP_MAP_UNKNOWN_SRC = 2 // You can swap src/dst with ^1
 	ENCAP_MAP_UNKNOWN_DST = 3
+
+	IPv6_FRAG_REASSEMBLY_TIME = 60 // in seconds
 )
+
+type ICMPv6FragInfoKey struct {
+	src IP
+	dst IP
+	ident uint32
+}
+
+// ICMPv6 includes the datagram length in the checksum, but ICMPv4 does not. To
+// (de)encap fragmented ICMPv6, we need to know the full length so we can
+// recompute the checksum. We don't actually need to fully reassemble the
+// datagram, we just need to hold onto the first fragment until we see the last
+// fragment go by.
+//
+// If we see the first fragment before the last one (most likely), then 'first
+// != nil' and 'length' should be ignored. If we see the last fragment before
+// the first one, then 'first == nil' and length contains the total datagram
+// length.
+//
+// For ease of implementation, when this information is completed (the first and
+// length are known), an entry to the cache is added with 'first == nil' and
+// 'length' set accordingly and then the PktBuf is re-routed to
+// ipref_(de)encap().
+type ICMPv6FragInfo struct {
+	// first == nil, or else first.typ is PKT_IPREF (for deencap) or PKT_IPv6
+	// (for encap)
+	first *PktBuf
+	length int
+}
+
+var icmpv6_frag_info *LRU[ICMPv6FragInfoKey, ICMPv6FragInfo]
+
+func tunnel_init() {
+	max_frags := max(min(cli.maxbuf / 16, cli.maxlips), 1)
+	reassembly_time, _ := time.ParseDuration("1s")
+	reassembly_time *= IPv6_FRAG_REASSEMBLY_TIME
+	on_evict := func(key ICMPv6FragInfoKey, info ICMPv6FragInfo) {
+		log.err("tunnel:  ICMPv6 fragment reassembly time reached or cache full ident(0x%08x) (%v -> %v), dropping",
+			key.ident, key.src, key.dst)
+		if info.first != nil {
+			retbuf <- info.first
+		}
+	}
+	icmpv6_frag_info = NewLRU[ICMPv6FragInfoKey, ICMPv6FragInfo](
+		max_frags,
+		reassembly_time,
+		LRUEvictCallback[ICMPv6FragInfoKey, ICMPv6FragInfo](on_evict))
+	go icmpv6_frag_info.ExpireLoop(true, 100)
+}
 
 // Convert an ICMPv4/ICMPv6 message into an IPREF_ICMP message.
 func icmp_encap(pkt_typ int, typ byte, code byte) (byte, byte, int) {
@@ -267,15 +318,21 @@ fail:
 
 // Encapsulate an IP packet, replacing the IP header with an IPREF header.
 // Returns ACCEPT (on success), DROP (on error), or STOLEN (unless steal is
-// false). If steal is true, then an ICMP response may be returned to the sender
-// if the destination is unreachable.
-func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, dec_ttl, steal bool) int {
+// false).
+//
+// If steal is true, then an ICMP response may be returned to the sender if the
+// destination is unreachable.
+//
+// If 'strict' is false, then certain errors are ignored and checksums might not
+// be recalculated (useful for attempting to encapsulate inner packets inside
+// ICMP which don't need to be perfect).
+func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, strict, dec_ttl, steal bool) int {
 
 	pkt_typ := pb.typ
 	pkt := pb.pkt
 
 	if (ea_iplen == 4 && pkt_typ != PKT_IPv4) || (ea_iplen == 16 && pkt_typ != PKT_IPv6) {
-		log.debug("encap:   packet IP version doesn't match local network, dropping")
+		log.trace("encap:   packet IP version doesn't match local network, dropping")
 		return DROP
 	}
 
@@ -308,9 +365,7 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, dec_ttl, steal boo
 			return DROP
 		}
 		ip_pkt_len := int(be.Uint16(pkt[pb.data+IPv4_LEN:pb.data+IPv4_LEN+2]))
-		// We will still encapsulate packets which have been truncated, because that
-		// can happen with packets inside ICMP.
-		if ip_pkt_len < pb.len() {
+		if (strict && ip_pkt_len != pb.len()) || ip_pkt_len < pb.len() {
 			log.err("encap:   invalid packet (bad length field), dropping")
 			return DROP
 		}
@@ -467,13 +522,45 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, dec_ttl, steal boo
 
 	// translate layer 4 packet
 
+	orig_data, orig_tail := pb.data, pb.tail
 	pb.data, pb.tail = l4, l4 + l4_pkt_len
-	if !ipref_encap_l4(pb, local_srcdst, &proto,
-		frag_if, frag_df, frag_mf,
-		frag_off, frag_end,
-		icmp_depth) {
-
+	switch ipref_encap_l4(pb, local_srcdst, &proto,
+		frag_if, frag_df, frag_mf, frag_off, frag_end, ident,
+		icmp_depth, strict) {
+	case ACCEPT:
+	case DROP:
 		return DROP
+	case ENCAP_ICMPv6_FIRST: // icmpv6_frag_info.Lock is acquired.
+		// The packet was the first fragment of an ICMPv6 datagram, and it
+		// couldn't be encapsulated because we don't yet know the length of the
+		// full datagram (and so couldn't update the checksum).
+		if strict && steal {
+			key := ICMPv6FragInfoKey{local_src, local_dst, ident}
+			if info, exists := icmpv6_frag_info.Remove(key, false, false); exists {
+				if info.first == nil {
+					panic("unexpected")
+				}
+				log.err("encap:   identical first ICMPv6 fragments ident(0x%08x) (%v -> %v), dropping",
+					key.ident, key.src, key.dst)
+				retbuf <- info.first
+			}
+			pb.typ = PKT_IPv6
+			pb.data, pb.tail = orig_data, orig_tail
+			if cli.debug["tunnel"] {
+				log.debug("encap:   keeping ICMPv6 first fragment ident(0x%08x) (%v -> %v) until last fragment seen",
+					key.ident, local_src, local_dst)
+			}
+			icmpv6_frag_info.Add(key, ICMPv6FragInfo{pb, 0}, true, false)
+			icmpv6_frag_info.Lock.Unlock()
+			return STOLEN
+		}
+		icmpv6_frag_info.Lock.Unlock()
+		if cli.debug["tunnel"] {
+			log.debug("encap:   cannot steal ICMPv6 first fragment, dropping")
+		}
+		return DROP
+	default:
+		panic("unexpected")
 	}
 	l4, l4_pkt_len = pb.data, pb.len()
 
@@ -532,14 +619,16 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, dec_ttl, steal boo
 }
 
 // pb contains a layer 4 datagram (or a fragment thereof). pb.typ is the
-// original layer 3 protocol: PKT_IPv4 or PKT_IPv6. Returns false (to drop) or
-// true (on success).
+// original layer 3 protocol: PKT_IPv4 or PKT_IPv6. Returns ACCEPT, DROP, or
+// ENCAP_ICMPv6_FIRST.
 func ipref_encap_l4(pb *PktBuf,
 	local_srcdst []byte, // Not modified; used for adjusting checksum
 	proto *byte,
 	frag_if, frag_df, frag_mf bool,
 	frag_off, frag_end int,
-	icmp_depth int) bool {
+	ident uint32,
+	icmp_depth int,
+	strict bool) int {
 
 	pkt := pb.pkt
 
@@ -562,7 +651,7 @@ func ipref_encap_l4(pb *PktBuf,
 		}
 		if frag_end < TCP_CSUM+2 {
 			log.err("encap:   invalid tcp packet, dropping")
-			return false
+			return DROP
 		}
 
 		tcp_csum := be.Uint16(pkt[pb.data+TCP_CSUM-frag_off : pb.data+TCP_CSUM-frag_off+2])
@@ -579,7 +668,7 @@ func ipref_encap_l4(pb *PktBuf,
 		}
 		if frag_end < UDP_HDR_LEN {
 			log.err("encap:   invalid udp packet, dropping")
-			return false
+			return DROP
 		}
 
 		udp_csum := be.Uint16(pkt[pb.data+UDP_CSUM : pb.data+UDP_CSUM+2])
@@ -601,21 +690,37 @@ func ipref_encap_l4(pb *PktBuf,
 		if (pb.typ == PKT_IPv4) != (*proto == ICMP) {
 			log.err("encap:   icmp version (%v) does not match IP version (IPv%v), dropping",
 				ip_proto_name(*proto), ipver)
-			return false
+			return DROP
 		}
 		*proto = ICMP
 
 		if icmp_depth <= 0 {
 			log.err("encap:   icmp depth limit reached, dropping")
-			return false
+			return DROP
 		}
 		if frag_off != 0 {
-			// TODO This will let non-initial fragments of ICMP_ENCAP packets through.
+			if strict && pb.typ == PKT_IPv6 && !frag_mf {
+				src := IPFromSlice(local_srcdst[:16])
+				dst := IPFromSlice(local_srcdst[16:])
+				key := ICMPv6FragInfoKey{src, dst, ident}
+				if cli.debug["tunnel"] {
+					log.debug("encap:   recording ICMPv6 datagram size ident(0x%08x) (%v -> %v)", ident, src, dst)
+				}
+				if info, found, _ := icmpv6_frag_info.Add(key, ICMPv6FragInfo{nil, frag_end}, false, true); found {
+					if info.first != nil {
+						recv_tun <- info.first
+					} else {
+						log.err("encap:   identical last ICMPv6 fragments ident(0x%08x) (%v -> %v)", ident, src, dst)
+					}
+				}
+			}
+			// TODO This will let through non-initial fragments of packets that
+			// are supposed to be dropped.
 			break
 		}
 		if pb.len() < ICMP_DATA {
 			log.err("encap:   invalid icmp packet, dropping")
-			return false
+			return DROP
 		}
 
 		typ, code, action := icmp_encap(pb.typ, pkt[pb.data+ICMP_TYPE], pkt[pb.data+ICMP_CODE])
@@ -627,47 +732,55 @@ func ipref_encap_l4(pb *PktBuf,
 				pb.typ,
 				pkt[pb.data+ICMP_TYPE],
 				pkt[pb.data+ICMP_CODE])
-			return false
+			return DROP
 
 		case ICMP_NO_ENCAP:
 
 			icmp_csum := be.Uint16(pkt[pb.data+ICMP_CSUM:pb.data+ICMP_CSUM+2]) ^ 0xffff
 			icmp_csum = csum_subtract(icmp_csum, pkt[pb.data+ICMP_TYPE:pb.data+ICMP_CODE+1])
-			pkt[pb.data+ICMP_TYPE] = typ
-			pkt[pb.data+ICMP_CODE] = code
-			icmp_csum = csum_add(icmp_csum, pkt[pb.data+ICMP_TYPE:pb.data+ICMP_CODE+1])
 			if pb.typ == PKT_IPv6 {
-				if frag_if {
-					log.err("encap:   can't calculate checksum for ICMPv6 packet (fragment), dropping")
-					return false
+				datagram_len := frag_end
+				if strict && frag_if { // TODO Checksum might be wrong if !strict.
+					key := ICMPv6FragInfoKey{IPFromSlice(local_srcdst[:16]), IPFromSlice(local_srcdst[16:]), ident}
+					icmpv6_frag_info.Lock.Lock()
+					if info, exists := icmpv6_frag_info.Peek(key, false); exists && info.first == nil {
+						icmpv6_frag_info.Remove(key, false, false)
+						datagram_len = info.length
+					} else {
+						return ENCAP_ICMPv6_FIRST // We deliberately do not release the lock.
+					}
+					icmpv6_frag_info.Lock.Unlock()
 				}
-				if pb.len() >> 16 != 0  {
+				if datagram_len >> 16 != 0 {
 					log.err("encap:   can't calculate checksum for ICMPv6 packet (too big), dropping")
-					return false
+					return DROP
 				}
 				icmp_csum = csum_subtract(icmp_csum, local_srcdst)
 				var pseudo [4]byte
-				be.PutUint16(pseudo[:2], uint16(pb.len()))
+				be.PutUint16(pseudo[:2], uint16(datagram_len))
 				pseudo[3] = ICMPv6
 				icmp_csum = csum_subtract(icmp_csum, pseudo[:])
 			}
+			pkt[pb.data+ICMP_TYPE] = typ
+			pkt[pb.data+ICMP_CODE] = code
+			icmp_csum = csum_add(icmp_csum, pkt[pb.data+ICMP_TYPE:pb.data+ICMP_CODE+1])
 			be.PutUint16(pkt[pb.data+ICMP_CSUM:pb.data+ICMP_CSUM+2], icmp_csum^0xffff)
 
 		case ICMP_ENCAP:
 
 			// encap inner packet
 			if frag_if {
-				log.err("encap:   fragmented icmp packet that needs inner encap, dropping")
-				return false
+				log.err("encap:   fragmented icmp packet that needs inner encap, dropping") // TODO
+				return DROP
 			}
 			inner_pb := PktBuf{
 				pkt: pkt[pb.data+ICMP_DATA:],
 				typ: pb.typ,
 				data: 0,
 				tail: min(pb.len() - ICMP_DATA, ICMP_ENCAP_MAX_LEN)}
-			if ipref_encap(&inner_pb, true, icmp_depth - 1, false, false) != ACCEPT {
+			if ipref_encap(&inner_pb, true, icmp_depth - 1, false, false, false) != ACCEPT {
 				log.err("encap:   dropping icmp due to invalid inner packet")
-				return false
+				return DROP
 			}
 			if inner_pb.data != 0 {
 				copy(pkt[pb.data+ICMP_DATA:], inner_pb.pkt[inner_pb.data:inner_pb.tail])
@@ -681,7 +794,7 @@ func ipref_encap_l4(pb *PktBuf,
 					if upper_mtu != 0 {
 						// The standard does actually allow 32-bit mtu, but we don't support it.
 						log.err("encap:   bad MTU in ICMPv6 Packet Too Big, dropping")
-						return false
+						return DROP
 					}
 				}
 				mtu := int(be.Uint16(pkt[pb.data+ICMP_MTU:pb.data+ICMP_MTU+2]))
@@ -693,7 +806,7 @@ func ipref_encap_l4(pb *PktBuf,
 				mtu += IPREF_HDR_MIN_LEN
 				if mtu <= 0 || mtu >> 16 != 0 {
 					log.err("encap:   bad mtu in icmp dest unreach, dropping")
-					return false
+					return DROP
 				}
 				be.PutUint16(pkt[pb.data+ICMP_MTU:pb.data+ICMP_MTU+2], uint16(mtu))
 			}
@@ -716,7 +829,7 @@ func ipref_encap_l4(pb *PktBuf,
 			ip_proto_name(*proto), ipver)
 	}
 
-	return true
+	return ACCEPT
 }
 
 func (mtun *MapTun) get_src_addr(src IpRef) (IP, bool) {
@@ -781,9 +894,15 @@ fail:
 
 // De-encapsulate an IPREF packet, replacing the IPREF header with an IP header.
 // Returns ACCEPT (on success), DROP (on error), or STOLEN (unless steal is
-// false). If steal is true, then an ICMP response may be returned to the sender
-// if the destination is unreachable.
-func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, dec_ttl, steal bool) int {
+// false).
+//
+// If steal is true, then an ICMP response may be returned to the sender if the
+// destination is unreachable.
+//
+// If 'strict' is false, then certain errors are ignored and checksums might not
+// be recalculated (useful for attempting to de-encapsulate inner packets inside
+// ICMP which don't need to be perfect).
+func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, strict, dec_ttl, steal bool) int {
 
 	if pb.typ != PKT_IPREF {
 		log.fatal("deencap: not an ipref packet")
@@ -818,12 +937,10 @@ func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, dec_ttl, steal b
 	l4 := pb.data + pb.ipref_hdr_len()
 	l4_pkt_len := pb.tail - l4
 	frag_end := frag_off + l4_pkt_len // the position of the end of the packet in the l4 datagram
-	// We don't enforce this, because we still want to de-encapsulate packets
-	// which have been truncated, which might happen with packets inside ICMP.
-	// if frag_if && (l4_pkt_len & 0x7 != 0 && frag_mf) {
-	// 	log.err("deencap: invalid packet (fragmentation), dropping")
-	// 	return DROP
-	// }
+	if strict && frag_if && (l4_pkt_len & 0x7 != 0 && frag_mf) {
+		log.err("deencap: invalid packet (fragmentation), dropping")
+		return DROP
+	}
 
 	// decrement ttl
 
@@ -880,14 +997,52 @@ func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, dec_ttl, steal b
 	copy(local_srcdst[:iplen], src_ea.AsSlice())
 	copy(local_srcdst[iplen:], dst_ip.AsSlice())
 
+	// set pb.df, for use in tun_sender
+
+	pb.df = frag_df
+
 	// translate layer 4 packet
 
+	orig_data, orig_tail := pb.data, pb.tail
 	pb.data, pb.tail = l4, l4 + l4_pkt_len
-	if !ipref_deencap_l4(pb, local_srcdst, &proto,
-		frag_if, frag_df, frag_mf, frag_off, frag_end,
-		icmp_depth) {
-
+	switch ipref_deencap_l4(pb, local_srcdst, &proto,
+		frag_if, frag_df, frag_mf, frag_off, frag_end, ident,
+		icmp_depth, strict) {
+	case ACCEPT:
+	case DROP:
 		return DROP
+	case ENCAP_ICMPv6_FIRST: // icmpv6_frag_info.Lock is acquired.
+		// The packet was the first fragment of an ICMPv6 datagram, and it
+		// couldn't be de-encapsulated because we don't yet know the length of
+		// the full datagram (and so couldn't update the checksum).
+		if strict && steal {
+			key := ICMPv6FragInfoKey{src_ea, dst_ip, ident}
+			if info, exists := icmpv6_frag_info.Peek(key, false); exists {
+				if info.first == nil {
+					panic("unexpected")
+				}
+				log.err("deencap: identical first ICMPv6 fragments ident(0x%08x) (%v -> %v), dropping",
+					key.ident, key.src, key.dst)
+				retbuf <- info.first
+				icmpv6_frag_info.Remove(key, false, false)
+			}
+			pb.typ = PKT_IPREF
+			pb.data, pb.tail = orig_data, orig_tail
+			if cli.debug["tunnel"] {
+				log.debug("deencap: keeping ICMPv6 first fragment ident(0x%08x) (%v -> %v) until last fragment seen",
+					key.ident, src_ea, dst_ip)
+			}
+			icmpv6_frag_info.Add(key, ICMPv6FragInfo{pb, 0}, true, false)
+			icmpv6_frag_info.Lock.Unlock()
+			return STOLEN
+		}
+		icmpv6_frag_info.Lock.Unlock()
+		if cli.debug["tunnel"] {
+			log.debug("deencap: cannot steal ICMPv6 first fragment, dropping")
+		}
+		return DROP
+	default:
+		panic("unexpected")
 	}
 	l4, l4_pkt_len = pb.data, pb.len()
 
@@ -992,14 +1147,16 @@ func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, dec_ttl, steal b
 }
 
 // pb contains a layer 4 datagram (or a fragment thereof). pb.typ is the target
-// layer 3 protocol: PKT_IPv4 or PKT_IPv6. Returns false (to drop) or true (on
-// success).
+// layer 3 protocol: PKT_IPv4 or PKT_IPv6. Returns ACCEPT, DROP, or
+// ENCAP_ICMPv6_FIRST.
 func ipref_deencap_l4(pb *PktBuf,
 	local_srcdst []byte, // Not modified; used for adjusting checksum
 	proto *byte,
 	frag_if, frag_df, frag_mf bool,
 	frag_off, frag_end int,
-	icmp_depth int) bool {
+	ident uint32,
+	icmp_depth int,
+	strict bool) int {
 
 	pkt := pb.pkt
 
@@ -1012,7 +1169,7 @@ func ipref_deencap_l4(pb *PktBuf,
 		}
 		if frag_end < TCP_CSUM {
 			log.err("deencap: invalid tcp packet, dropping")
-			return false
+			return DROP
 		}
 
 		tcp_csum := be.Uint16(pkt[pb.data+TCP_CSUM-frag_off : pb.data+TCP_CSUM-frag_off+2])
@@ -1029,7 +1186,7 @@ func ipref_deencap_l4(pb *PktBuf,
 		}
 		if frag_end < UDP_HDR_LEN {
 			log.err("deencap: invalid udp packet, dropping")
-			return false
+			return DROP
 		}
 
 		udp_csum := be.Uint16(pkt[pb.data+UDP_CSUM : pb.data+UDP_CSUM+2])
@@ -1053,15 +1210,31 @@ func ipref_deencap_l4(pb *PktBuf,
 		}
 		if icmp_depth <= 0 {
 			log.err("deencap: icmp depth limit reached, dropping")
-			return false
+			return DROP
 		}
 		if frag_off != 0 {
-			// TODO This will let non-initial fragments of ICMP_ENCAP packets through.
+			if strict && pb.typ == PKT_IPv6 && !frag_mf {
+				src := IPFromSlice(local_srcdst[:16])
+				dst := IPFromSlice(local_srcdst[16:])
+				key := ICMPv6FragInfoKey{src, dst, ident}
+				if cli.debug["tunnel"] {
+					log.debug("deencap: recording ICMPv6 datagram size ident(0x%08x) (%v -> %v)", ident, src, dst)
+				}
+				if info, found, _ := icmpv6_frag_info.Add(key, ICMPv6FragInfo{nil, frag_end}, false, true); found {
+					if info.first != nil {
+						recv_gw <- info.first
+					} else {
+						log.err("deencap: identical last ICMPv6 fragments ident(0x%08x) (%v -> %v)", ident, src, dst)
+					}
+				}
+			}
+			// TODO This will let through non-initial fragments of packets that
+			// are supposed to be dropped.
 			break
 		}
 		if pb.len() < ICMP_DATA {
 			log.err("deencap: invalid icmp packet, dropping")
-			return false
+			return DROP
 		}
 
 		typ, code, action := icmp_deencap(pb.typ, pkt[pb.data+ICMP_TYPE], pkt[pb.data+ICMP_CODE])
@@ -1073,47 +1246,55 @@ func ipref_deencap_l4(pb *PktBuf,
 				pb.typ,
 				pkt[pb.data+ICMP_TYPE],
 				pkt[pb.data+ICMP_CODE])
-			return false
+			return DROP
 
 		case ICMP_NO_ENCAP:
 
 			icmp_csum := be.Uint16(pkt[pb.data+ICMP_CSUM:pb.data+ICMP_CSUM+2]) ^ 0xffff
 			icmp_csum = csum_subtract(icmp_csum, pkt[pb.data+ICMP_TYPE:pb.data+ICMP_CODE+1])
-			pkt[pb.data+ICMP_TYPE] = typ
-			pkt[pb.data+ICMP_CODE] = code
-			icmp_csum = csum_add(icmp_csum, pkt[pb.data+ICMP_TYPE:pb.data+ICMP_CODE+1])
 			if pb.typ == PKT_IPv6 {
-				if frag_if  {
-					log.err("deencap: can't calculate checksum for ICMPv6 packet (fragment), dropping")
-					return false
+				datagram_len := frag_end
+				if strict && frag_if { // TODO Checksum might be wrong if !strict.
+					key := ICMPv6FragInfoKey{IPFromSlice(local_srcdst[:16]), IPFromSlice(local_srcdst[16:]), ident}
+					icmpv6_frag_info.Lock.Lock()
+					if info, exists := icmpv6_frag_info.Peek(key, false); exists && info.first == nil {
+						icmpv6_frag_info.Remove(key, false, false)
+						datagram_len = info.length
+					} else {
+						return ENCAP_ICMPv6_FIRST // We deliberately do not release the lock.
+					}
+					icmpv6_frag_info.Lock.Unlock()
 				}
-				if pb.len() >> 16 != 0  {
+				if datagram_len >> 16 != 0 {
 					log.err("deencap: can't calculate checksum for ICMPv6 packet (too big), dropping")
-					return false
+					return DROP
 				}
 				icmp_csum = csum_add(icmp_csum, local_srcdst)
 				var pseudo [4]byte
-				be.PutUint16(pseudo[:2], uint16(pb.len()))
+				be.PutUint16(pseudo[:2], uint16(datagram_len))
 				pseudo[3] = ICMPv6
 				icmp_csum = csum_add(icmp_csum, pseudo[:])
 			}
+			pkt[pb.data+ICMP_TYPE] = typ
+			pkt[pb.data+ICMP_CODE] = code
+			icmp_csum = csum_add(icmp_csum, pkt[pb.data+ICMP_TYPE:pb.data+ICMP_CODE+1])
 			be.PutUint16(pkt[pb.data+ICMP_CSUM:pb.data+ICMP_CSUM+2], icmp_csum^0xffff)
 
 		case ICMP_ENCAP:
 
 			// deencap inner packet
 			if frag_if {
-				log.err("deencap: fragmented icmp packet that needs inner deencap, dropping")
-				return false
+				log.err("deencap: fragmented icmp packet that needs inner deencap, dropping") // TODO
+				return DROP
 			}
 			inner_pb := PktBuf{
 				pkt: pkt[pb.data+ICMP_DATA:],
 				typ: PKT_IPREF,
 				data: 0,
 				tail: min(pb.len() - ICMP_DATA, ICMP_ENCAP_MAX_LEN)}
-			if ipref_deencap(&inner_pb, true, icmp_depth - 1, false, false) != ACCEPT {
+			if ipref_deencap(&inner_pb, true, icmp_depth - 1, false, false, false) != ACCEPT {
 				log.err("deencap: dropping icmp due to invalid inner packet")
-				return false
+				return DROP
 			}
 			if inner_pb.data != 0 {
 				copy(pkt[pb.data+ICMP_DATA:], inner_pb.pkt[inner_pb.data:inner_pb.tail])
@@ -1131,7 +1312,7 @@ func ipref_deencap_l4(pb *PktBuf,
 				}
 				if mtu <= 0 || mtu >> 16 != 0 {
 					log.err("deencap: bad mtu in icmp dest unreach, dropping")
-					return false
+					return DROP
 				}
 				be.PutUint16(pkt[pb.data+ICMP_MTU:pb.data+ICMP_MTU+2], uint16(mtu))
 			}
@@ -1149,7 +1330,7 @@ func ipref_deencap_l4(pb *PktBuf,
 				var pseudo [4]byte
 				if pb.len() >> 16 != 0 {
 					log.err("deencap: can't calculate checksum for IPv6 packet (too big), dropping")
-					return false
+					return DROP
 				}
 				be.PutUint16(pseudo[:2], uint16(pb.len()))
 				pseudo[3] = ICMPv6
@@ -1168,10 +1349,10 @@ func ipref_deencap_l4(pb *PktBuf,
 	default:
 
 		log.err("deencap: unsupported IPREF layer 4 protocol (%v), dropping", ip_proto_name(*proto))
-		return false
+		return DROP
 	}
 
-	return true
+	return ACCEPT
 }
 
 type IPREFFragInPlaceStatus int

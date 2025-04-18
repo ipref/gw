@@ -17,6 +17,7 @@ const ( // packet handling verdicts
 	ACCEPT = iota + 1
 	DROP
 	STOLEN
+	ENCAP_ICMPv6_FIRST
 )
 
 const (

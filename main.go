@@ -63,6 +63,8 @@ func main() {
 	retbuf = make(chan *PktBuf, cli.maxbuf)
 	go pkt_buffers()
 
+	tunnel_init()
+
 	recv_tun = make(chan *PktBuf, PKTQLEN)
 	send_tun = make(chan *PktBuf, PKTQLEN)
 	recv_gw = make(chan *PktBuf, PKTQLEN)
