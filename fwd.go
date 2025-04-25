@@ -28,7 +28,7 @@ func fwd_to_gw() {
 
 		case PKT_IPv4, PKT_IPv6:
 
-			verdict = ipref_encap(pb, false, ICMP_ENCAP_MAX_DEPTH, true, cli.dec_ttl, true)
+			verdict = ipref_encap(pb, true, false, ICMP_ENCAP_MAX_DEPTH, true, cli.dec_ttl, true)
 			if verdict == ACCEPT {
 				send_gw <- pb
 			}
@@ -69,6 +69,7 @@ func fwd_to_gw() {
 
 func fwd_to_tun() {
 
+	// If pb.typ == PKT_IPREF, then this uses pb.gw_hint and pb.rgw_hint
 	for pb := range recv_gw {
 
 		verdict := DROP
@@ -77,7 +78,7 @@ func fwd_to_tun() {
 
 		case PKT_IPREF:
 
-			verdict = ipref_deencap(pb, false, ICMP_ENCAP_MAX_DEPTH, true, cli.dec_ttl, true)
+			verdict = ipref_deencap(pb, false, true, ICMP_ENCAP_MAX_DEPTH, true, cli.dec_ttl, true)
 			if verdict == ACCEPT {
 				send_tun <- pb
 			}

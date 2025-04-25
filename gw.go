@@ -334,6 +334,8 @@ func gw_sender(rgws *RemoteGwTable) {
 				log.trace("gw out:  fragmenting (%v + %v)", sent, trimmed)
 			case IPREF_FRAG_IN_PLACE_DF:
 				log.trace("gw out:  needs fragmentation but DF set, sending icmp")
+				pb.gw_hint = IP{}
+				pb.rgw_hint = IP{}
 				pb.icmp.typ = IPREF_ICMP_DEST_UNREACH
 				pb.icmp.code = IPREF_ICMP_FRAG_NEEDED
 				pb.icmp.mtu = uint16(l5_mtu)
@@ -439,6 +441,11 @@ func gw_receiver(con *net.UDPConn,
 				sref_ip, src_ip)
 			retbuf <- pb
 			continue
+		}
+		pb.rgw_hint = sref_ip
+		pb.gw_hint = dref_ip
+		if pb.gw_hint.IsZeroAddr() {
+			pb.gw_hint = IP{}
 		}
 		if cli.gw_pub_ip.IsZeroAddr() || dref_ip.IsZeroAddr() {
 			copy(pb.ipref_dref_ip(), cli.gw_pub_ip.AsSlice())

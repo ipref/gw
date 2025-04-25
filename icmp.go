@@ -101,6 +101,8 @@ func icmp_respond_icmp(pkt_typ int, typ byte, code byte) bool {
 
 func icmp() {
 
+	// If pb.typ == PKT_IPREF && pb.icmp.ours, then this uses pb.gw_hint and
+	// pb.rgw_hint.
 	for pb := range icmpreq {
 
 		unreach := ""
@@ -371,7 +373,12 @@ func icmp() {
 			be.PutUint16(pb.pkt[icmp_hdr + ICMP_CSUM : icmp_hdr + ICMP_CSUM + 2], icmp_csum^0xffff)
 
 			if pb.icmp.ours {
-				recv_gw <- pb
+				verdict := ipref_deencap(pb, true, true, ICMP_ENCAP_MAX_DEPTH, true, false, true)
+				if verdict == ACCEPT {
+					send_tun <- pb
+				} else {
+					retbuf <- pb
+				}
 			} else {
 				send_gw <- pb
 			}

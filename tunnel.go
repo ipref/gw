@@ -21,10 +21,6 @@ const (
 	ICMP_ENCAP_MAX_LEN = 576 // must be at least IPREF_HDR_MAX_LEN
 	ICMP_ENCAP_MAX_DEPTH = 3
 
-	ENCAP_MAP_SUCCESS = 0
-	ENCAP_MAP_UNKNOWN_SRC = 2 // You can swap src/dst with ^1
-	ENCAP_MAP_UNKNOWN_DST = 3
-
 	IPv6_FRAG_REASSEMBLY_TIME = 60 // in seconds
 )
 
@@ -50,8 +46,8 @@ type ICMPv6FragInfoKey struct {
 // 'length' set accordingly and then the PktBuf is re-routed to
 // ipref_(de)encap().
 type ICMPv6FragInfo struct {
-	// first == nil, or else first.typ is PKT_IPREF (for deencap) or PKT_IPv6
-	// (for encap)
+	// first == nil, or else first.typ is PKT_IPREF (for deencap, in which case
+	// pb.gw_hint and pb.rgw_hint are used) or PKT_IPv6 (for encap)
 	first *PktBuf
 	length int
 }
@@ -288,32 +284,13 @@ func (mgw *MapGw) get_dst_ipref(ip IP) (IpRef, bool) {
 	return IpRef{}, false
 }
 
-func (mgw *MapGw) get_srcdst_ipref_rev(src, dst IP, rev bool) (
-	iprefsrc, iprefdst IpRef, status int) {
+func (mgw *MapGw) get_srcdst_ipref(ip IP, ours bool) (IpRef, bool) {
 
-	if rev {
-		src, dst = dst, src
+	if ours {
+		return mgw.get_src_ipref(ip)
+	} else {
+		return mgw.get_dst_ipref(ip)
 	}
-	var ok bool
-	if iprefsrc, ok = mgw.get_src_ipref(src); !ok {
-		status = ENCAP_MAP_UNKNOWN_SRC
-		goto fail
-	}
-	if iprefdst, ok = mgw.get_dst_ipref(dst); !ok {
-		status = ENCAP_MAP_UNKNOWN_DST
-		goto fail
-	}
-	if rev {
-		iprefsrc, iprefdst = iprefdst, iprefsrc
-	}
-	status = ENCAP_MAP_SUCCESS
-	return
-fail:
-	iprefsrc, iprefdst = IpRef{}, IpRef{}
-	if rev {
-		status ^= 1 // swap src/dst
-	}
-	return
 }
 
 // Encapsulate an IP packet, replacing the IP header with an IPREF header.
@@ -326,7 +303,7 @@ fail:
 // If 'strict' is false, then certain errors are ignored and checksums might not
 // be recalculated (useful for attempting to encapsulate inner packets inside
 // ICMP which don't need to be perfect).
-func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, strict, dec_ttl, steal bool) int {
+func ipref_encap(pb *PktBuf, our_src, our_dst bool, icmp_depth int, strict, dec_ttl, steal bool) int {
 
 	pkt_typ := pb.typ
 	pkt := pb.pkt
@@ -460,13 +437,13 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, strict, dec_ttl, s
 
 	// map addresses
 
-	iprefsrc, iprefdst, map_status := map_gw.get_srcdst_ipref_rev(local_src, local_dst, rev_srcdst)
-	switch {
-	case map_status == ENCAP_MAP_SUCCESS:
-	case map_status == ENCAP_MAP_UNKNOWN_SRC:
+	var ok bool
+	var iprefsrc, iprefdst IpRef
+	if iprefsrc, ok = map_gw.get_srcdst_ipref(local_src, our_src); !ok {
 		return DROP
-	case map_status == ENCAP_MAP_UNKNOWN_DST:
-		if steal {
+	}
+	if iprefdst, ok = map_gw.get_srcdst_ipref(local_dst, our_dst); !ok {
+		if steal && our_src != our_dst {
 			if pkt_typ == PKT_IPv4 {
 				pb.icmp.typ = ICMPv4_DEST_UNREACH
 				pb.icmp.code = ICMPv4_NET_UNREACH
@@ -480,8 +457,6 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, strict, dec_ttl, s
 			return STOLEN
 		}
 		return DROP
-	default:
-		panic("unexpected")
 	}
 	var ipver, iplen int
 	switch {
@@ -524,7 +499,7 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, strict, dec_ttl, s
 
 	orig_data, orig_tail := pb.data, pb.tail
 	pb.data, pb.tail = l4, l4 + l4_pkt_len
-	switch ipref_encap_l4(pb, local_srcdst, &proto,
+	switch ipref_encap_l4(pb, our_src, our_dst, local_srcdst, &proto,
 		frag_if, frag_df, frag_mf, frag_off, frag_end, ident,
 		icmp_depth, strict) {
 	case ACCEPT:
@@ -622,6 +597,7 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, strict, dec_ttl, s
 // original layer 3 protocol: PKT_IPv4 or PKT_IPv6. Returns ACCEPT, DROP, or
 // ENCAP_ICMPv6_FIRST.
 func ipref_encap_l4(pb *PktBuf,
+	our_src, our_dst bool,
 	local_srcdst []byte, // Not modified; used for adjusting checksum
 	proto *byte,
 	frag_if, frag_df, frag_mf bool,
@@ -778,7 +754,11 @@ func ipref_encap_l4(pb *PktBuf,
 				typ: pb.typ,
 				data: 0,
 				tail: min(pb.len() - ICMP_DATA, ICMP_ENCAP_MAX_LEN)}
-			if ipref_encap(&inner_pb, true, icmp_depth - 1, false, false, false) != ACCEPT {
+			our_src2, our_dst2 := !our_src, !our_dst
+			if our_src2 == our_dst2 {
+				our_src2 = !our_src2
+			}
+			if ipref_encap(&inner_pb, our_src2, our_dst2, icmp_depth - 1, false, false, false) != ACCEPT {
 				log.err("encap:   dropping icmp due to invalid inner packet")
 				return DROP
 			}
@@ -832,12 +812,16 @@ func ipref_encap_l4(pb *PktBuf,
 	return ACCEPT
 }
 
-func (mtun *MapTun) get_src_addr(src IpRef) (IP, bool) {
+func (mtun *MapTun) get_src_addr(src IpRef, rgw_hint IP) (IP, bool) {
 
-	if src.IP == cli.gw_pub_ip && src.Ref == cli.gw_ref {
-		return cli.ea_gwip, true
+	if src.IP.IsZeroAddr() {
+		if rgw_hint.IsZero() {
+			log.err("deencap: zero source IP (%v) without remote gateway hint, dropping", src)
+			return IP{}, false
+		}
+		src.IP = rgw_hint
 	}
-	if !src.IP.IsZeroAddr() && !netip.Addr(src.IP).IsGlobalUnicast() {
+	if !netip.Addr(src.IP).IsGlobalUnicast() {
 		log.err("deencap: source (%v) IP isn't valid unicast, dropping", src)
 		return IP{}, false
 	}
@@ -848,8 +832,11 @@ func (mtun *MapTun) get_src_addr(src IpRef) (IP, bool) {
 	return IP{}, false
 }
 
-func (mtun *MapTun) get_dst_addr(dst IpRef) (IP, bool) {
+func (mtun *MapTun) get_dst_addr(dst IpRef, gw_hint IP) (IP, bool) {
 
+	if dst.IP.IsZeroAddr() || (cli.gw_pub_ip.IsZeroAddr() && dst.IP == gw_hint) {
+		dst.IP = cli.gw_pub_ip
+	}
 	if dst.IP == cli.gw_pub_ip && dst.Ref == cli.gw_ref {
 		return cli.ea_gwip, true
 	}
@@ -864,37 +851,21 @@ func (mtun *MapTun) get_dst_addr(dst IpRef) (IP, bool) {
 	return IP{}, false
 }
 
-func (mtun *MapTun) get_srcdst_ip_rev(src, dst IpRef, rev bool) (
-	src_ea, dst_ip IP, status int) {
+func (mtun *MapTun) get_srcdst_ip(ipref IpRef, gw_hint, rgw_hint IP, ours bool) (IP, bool) {
 
-	if rev {
-		src, dst = dst, src
+	if ours {
+		return mtun.get_dst_addr(ipref, gw_hint)
+	} else {
+		return mtun.get_src_addr(ipref, rgw_hint)
 	}
-	var ok bool
-	if src_ea, ok = mtun.get_src_addr(src); !ok {
-		status = ENCAP_MAP_UNKNOWN_SRC
-		goto fail
-	}
-	if dst_ip, ok = mtun.get_dst_addr(dst); !ok {
-		status = ENCAP_MAP_UNKNOWN_DST
-		goto fail
-	}
-	if rev {
-		src_ea, dst_ip = dst_ip, src_ea
-	}
-	status = ENCAP_MAP_SUCCESS
-	return
-fail:
-	src_ea, dst_ip = IP{}, IP{}
-	if rev {
-		status ^= 1 // swap src/dst
-	}
-	return
 }
 
 // De-encapsulate an IPREF packet, replacing the IPREF header with an IP header.
 // Returns ACCEPT (on success), DROP (on error), or STOLEN (unless steal is
 // false).
+//
+// Uses pb.gw_hint and pb.rgw_hint (both of which may be IP{}, to provide no
+// hint).
 //
 // If steal is true, then an ICMP response may be returned to the sender if the
 // destination is unreachable.
@@ -902,7 +873,7 @@ fail:
 // If 'strict' is false, then certain errors are ignored and checksums might not
 // be recalculated (useful for attempting to de-encapsulate inner packets inside
 // ICMP which don't need to be perfect).
-func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, strict, dec_ttl, steal bool) int {
+func ipref_deencap(pb *PktBuf, our_src, our_dst bool, icmp_depth int, strict, dec_ttl, steal bool) int {
 
 	if pb.typ != PKT_IPREF {
 		log.fatal("deencap: not an ipref packet")
@@ -944,23 +915,21 @@ func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, strict, dec_ttl,
 
 	// map addresses
 
-	src_ea, dst_ip, map_status := map_tun.get_srcdst_ip_rev(src, dst, rev_srcdst)
-	switch {
-	case map_status == ENCAP_MAP_SUCCESS:
-	case map_status == ENCAP_MAP_UNKNOWN_SRC:
+	var ok bool
+	var src_ea, dst_ip IP
+	if src_ea, ok = map_tun.get_srcdst_ip(src, pb.gw_hint, pb.rgw_hint, our_src); !ok {
 		return DROP
-	case map_status == ENCAP_MAP_UNKNOWN_DST:
-		if steal {
+	}
+	if dst_ip, ok = map_tun.get_srcdst_ip(dst, pb.gw_hint, pb.rgw_hint, our_dst); !ok {
+		if steal && our_src != our_dst {
 			pb.icmp.typ = IPREF_ICMP_DEST_UNREACH
 			pb.icmp.code = IPREF_ICMP_NET_UNREACH
 			pb.icmp.mtu = 0
-			pb.icmp.ours = false
+			pb.icmp.ours = our_src
 			icmpreq <- pb
 			return STOLEN
 		}
 		return DROP
-	default:
-		panic("unexpected")
 	}
 	var iplen int
 	switch {
@@ -1006,7 +975,7 @@ func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, strict, dec_ttl,
 
 	orig_data, orig_tail := pb.data, pb.tail
 	pb.data, pb.tail = l4, l4 + l4_pkt_len
-	switch ipref_deencap_l4(pb, local_srcdst, &proto,
+	switch ipref_deencap_l4(pb, our_src, our_dst, local_srcdst, &proto,
 		frag_if, frag_df, frag_mf, frag_off, frag_end, ident,
 		icmp_depth, strict) {
 	case ACCEPT:
@@ -1150,7 +1119,11 @@ func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, strict, dec_ttl,
 // pb contains a layer 4 datagram (or a fragment thereof). pb.typ is the target
 // layer 3 protocol: PKT_IPv4 or PKT_IPv6. Returns ACCEPT, DROP, or
 // ENCAP_ICMPv6_FIRST.
+//
+// Uses pb.gw_hint and pb.rgw_hint (both of which may be IP{}, to provide no
+// hint).
 func ipref_deencap_l4(pb *PktBuf,
+	our_src, our_dst bool,
 	local_srcdst []byte, // Not modified; used for adjusting checksum
 	proto *byte,
 	frag_if, frag_df, frag_mf bool,
@@ -1292,8 +1265,14 @@ func ipref_deencap_l4(pb *PktBuf,
 				pkt: pkt[pb.data+ICMP_DATA:],
 				typ: PKT_IPREF,
 				data: 0,
-				tail: min(pb.len() - ICMP_DATA, ICMP_ENCAP_MAX_LEN)}
-			if ipref_deencap(&inner_pb, true, icmp_depth - 1, false, false, false) != ACCEPT {
+				tail: min(pb.len() - ICMP_DATA, ICMP_ENCAP_MAX_LEN),
+				gw_hint: pb.gw_hint,
+				rgw_hint: pb.rgw_hint}
+			our_src2, our_dst2 := !our_src, !our_dst
+			if our_src2 == our_dst2 {
+				our_src2 = !our_src2
+			}
+			if ipref_deencap(&inner_pb, our_src2, our_dst2, icmp_depth - 1, false, false, false) != ACCEPT {
 				log.err("deencap: dropping icmp due to invalid inner packet")
 				return DROP
 			}

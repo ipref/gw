@@ -102,6 +102,16 @@ type PktBuf struct {
 	// type (eg. PKT_IPv6 -> ICMPv6)
 	icmp  IcmpReq
 	df    bool // only used for PKT_IPv6 on send_tun
+	// In some cases, we may not know the gateway's public IP in general, and
+	// the gateway may in fact have multiple public IPs (eg. if it is connected
+	// to multiple networks). However, the destination context IP in packets
+	// received over the tunnel provides a hint about the gateway's public IP
+	// which we can use for mapping. We pass it as part of the packet buffer to
+	// avoid making this mechanism stateful - we only use this hint when mapping
+	// addresses for this packet.
+	gw_hint  IP
+	// Same as gw_hint, but for the remote gateway.
+	rgw_hint IP
 }
 
 func (pb *PktBuf) len() int {
@@ -109,13 +119,7 @@ func (pb *PktBuf) len() int {
 }
 
 func (pb *PktBuf) clear() {
-
-	pb.typ = 0
-	pb.data = 0
-	pb.tail = 0
-	pb.peer = ""
-	pb.schan = nil
-	pb.icmp = IcmpReq{}
+	*pb = PktBuf{pkt: pb.pkt}
 }
 
 func (pb *PktBuf) copy_from(pbo *PktBuf) {
@@ -1021,7 +1025,7 @@ func pkt_buffers() {
 		if allocated < cli.maxbuf {
 			select {
 			case pb = <-retbuf:
-				pb.pkt[pb.data] = 0xbd // corrupt IP header to detect reuse of freed pkt
+				pb.clear()
 			default:
 				pb = &PktBuf{pkt: make([]byte, cli.pktbuflen, cli.pktbuflen)}
 				allocated += 1
@@ -1034,7 +1038,7 @@ func pkt_buffers() {
 			log.fatal("pkt: out of buffers, max buffers allocated: %v of %v", allocated, cli.maxbuf)
 		}
 
-		pb.clear()
+		pb.pkt[pb.data] = 0xbd // corrupt IP header to detect reuse of freed pkt
 		getbuf <- pb
 	}
 }
