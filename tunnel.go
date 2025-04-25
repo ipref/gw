@@ -458,31 +458,6 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, strict, dec_ttl, s
 		return DROP
 	}
 
-	// decrement ttl
-
-	if dec_ttl {
-		if ttl > 0 {
-			ttl -= 1
-		}
-		if ttl <= 0 {
-			log.trace("encap:   ttl reached zero:  %v  %v", local_src, local_dst)
-			if steal {
-				if pkt_typ == PKT_IPv4 {
-					pb.icmp.typ = ICMPv4_TIME_EXCEEDED
-					pb.icmp.code = ICMPv4_EXC_TTL
-				} else {
-					pb.icmp.typ = ICMPv6_TIME_EXCEEDED
-					pb.icmp.code = ICMPv6_EXC_TTL
-				}
-				pb.icmp.mtu = 0
-				pb.icmp.ours = true
-				icmpreq <- pb
-				return STOLEN
-			}
-			return DROP
-		}
-	}
-
 	// map addresses
 
 	iprefsrc, iprefdst, map_status := map_gw.get_srcdst_ipref_rev(local_src, local_dst, rev_srcdst)
@@ -518,6 +493,31 @@ func ipref_encap(pb *PktBuf, rev_srcdst bool, icmp_depth int, strict, dec_ttl, s
 		iplen = 16
 	default:
 		panic("unexpected")
+	}
+
+	// decrement ttl
+
+	if dec_ttl {
+		if ttl > 0 {
+			ttl -= 1
+		}
+		if ttl <= 0 {
+			log.trace("encap:   ttl reached zero:  %v  %v", local_src, local_dst)
+			if steal {
+				if pkt_typ == PKT_IPv4 {
+					pb.icmp.typ = ICMPv4_TIME_EXCEEDED
+					pb.icmp.code = ICMPv4_EXC_TTL
+				} else {
+					pb.icmp.typ = ICMPv6_TIME_EXCEEDED
+					pb.icmp.code = ICMPv6_EXC_TTL
+				}
+				pb.icmp.mtu = 0
+				pb.icmp.ours = true
+				icmpreq <- pb
+				return STOLEN
+			}
+			return DROP
+		}
 	}
 
 	// translate layer 4 packet
@@ -942,26 +942,6 @@ func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, strict, dec_ttl,
 		return DROP
 	}
 
-	// decrement ttl
-
-	if dec_ttl {
-		if ttl > 0 {
-			ttl -= 1
-		}
-		if ttl <= 0 {
-			log.trace("encap:   ttl reached zero:  %v  %v", src, dst)
-			if steal {
-				pb.icmp.typ = IPREF_ICMP_TIME_EXCEEDED
-				pb.icmp.code = IPREF_ICMP_EXC_TTL
-				pb.icmp.mtu = 0
-				pb.icmp.ours = false
-				icmpreq <- pb
-				return STOLEN
-			}
-			return DROP
-		}
-	}
-
 	// map addresses
 
 	src_ea, dst_ip, map_status := map_tun.get_srcdst_ip_rev(src, dst, rev_srcdst)
@@ -996,6 +976,27 @@ func ipref_deencap(pb *PktBuf, rev_srcdst bool, icmp_depth int, strict, dec_ttl,
 	local_srcdst := make([]byte, iplen * 2)
 	copy(local_srcdst[:iplen], src_ea.AsSlice())
 	copy(local_srcdst[iplen:], dst_ip.AsSlice())
+
+	// decrement ttl
+
+	if dec_ttl {
+		if ttl > 0 {
+			ttl -= 1
+		}
+		if ttl <= 0 {
+			log.trace("encap:   ttl reached zero:  %v  %v", src, dst)
+			if steal {
+				pb.typ = PKT_IPREF
+				pb.icmp.typ = IPREF_ICMP_TIME_EXCEEDED
+				pb.icmp.code = IPREF_ICMP_EXC_TTL
+				pb.icmp.mtu = 0
+				pb.icmp.ours = false
+				icmpreq <- pb
+				return STOLEN
+			}
+			return DROP
+		}
+	}
 
 	// set pb.df, for use in tun_sender
 
