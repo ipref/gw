@@ -765,7 +765,7 @@ func ipref_encap_l4(pb *PktBuf,
 			if inner_pb.data != 0 {
 				copy(pkt[pb.data+ICMP_DATA:], inner_pb.pkt[inner_pb.data:inner_pb.tail])
 			}
-			pb.tail = inner_pb.tail - inner_pb.data + pb.data + ICMP_DATA
+			pb.tail = pb.data + ICMP_DATA + inner_pb.len()
 
 			// adjust mtu
 			if code == IPREF_ICMP_FRAG_NEEDED {
@@ -1023,13 +1023,13 @@ func ipref_deencap(pb *PktBuf, our_src, our_dst bool, icmp_depth int, strict, de
 	case PKT_IPv4:
 
 		if pb.data < IPv4_HDR_MIN_LEN {
-			if len(pkt) < IPv4_HDR_MIN_LEN + pb.len() {
+			if len(pkt) < IPv4_HDR_MIN_LEN + l4_pkt_len {
 				log.err("deencap: not enough space in buffer for ip header, dropping")
 				return DROP
 			}
 			// This should only happen for packets inside ICMP, which should be pretty small.
 			copy(pb.pkt[IPv4_HDR_MIN_LEN:], pb.pkt[pb.data:pb.tail])
-			pb.data, pb.tail = IPv4_HDR_MIN_LEN, pb.len()
+			pb.data, pb.tail = IPv4_HDR_MIN_LEN, IPv4_HDR_MIN_LEN + l4_pkt_len
 		}
 		pb.data -= IPv4_HDR_MIN_LEN
 
@@ -1067,14 +1067,14 @@ func ipref_deencap(pb *PktBuf, our_src, our_dst bool, icmp_depth int, strict, de
 			ip_hdr_len += IPv6_FRAG_HDR_LEN
 		}
 		if pb.data < ip_hdr_len {
-			if len(pkt) < ip_hdr_len + pb.len() {
+			if len(pkt) < ip_hdr_len + l4_pkt_len {
 				log.err("deencap: not enough space in buffer for ip header, dropping",
 					pb.data, ip_hdr_len)
 				return DROP
 			}
 			// This should only happen for packets inside ICMP, which should be pretty small.
 			copy(pb.pkt[ip_hdr_len:], pb.pkt[pb.data:pb.tail])
-			pb.data, pb.tail = ip_hdr_len, pb.len()
+			pb.data, pb.tail = ip_hdr_len, ip_hdr_len + l4_pkt_len
 		}
 		pb.data -= ip_hdr_len
 
@@ -1279,7 +1279,7 @@ func ipref_deencap_l4(pb *PktBuf,
 			if inner_pb.data != 0 {
 				copy(pkt[pb.data+ICMP_DATA:], inner_pb.pkt[inner_pb.data:inner_pb.tail])
 			}
-			pb.tail = inner_pb.tail - inner_pb.data + pb.data + ICMP_DATA
+			pb.tail = pb.data + ICMP_DATA + inner_pb.len()
 
 			// adjust mtu
 			if pkt[pb.data+ICMP_CODE] == IPREF_ICMP_FRAG_NEEDED {
