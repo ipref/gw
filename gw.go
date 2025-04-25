@@ -426,6 +426,9 @@ func gw_receiver(con *net.UDPConn,
 		}
 		sref_ip := IPFromSlice(pb.ipref_sref_ip())
 		dref_ip := IPFromSlice(pb.ipref_dref_ip())
+		if sref_ip.IsZeroAddr() && sref_ip.Ver() == src_ip.Ver() {
+			copy(pb.ipref_sref_ip(), src_ip.AsSlice())
+		}
 		if sref_ip != src_ip {
 			log.err("gw in:   ipref header src(%v) does not match ip header src(%v), dropping",
 				sref_ip, src_ip)
