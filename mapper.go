@@ -248,7 +248,7 @@ func (mgw *MapGw) get_src_iprec(src IP) (IpRefRec, bool) {
 		return IpRefRec{}, false
 	}
 	mark := mgw.cur_mark[mgw.oid] + MAPPER_TMOUT
-	rec = IpRefRec{IpRef{cli.gw_ip, ref}, mgw.oid, mark}
+	rec = IpRefRec{IpRef{cli.gw_pub_ip, ref}, mgw.oid, mark}
 	mgw.our_ipref[src] = rec // add new record
 	pb := get_arec_pkt(IPNum(ea_iplen, 0), src, rec.IP, rec.Ref, rec.oid, rec.mark)
 	pbb := <-getbuf
@@ -263,10 +263,8 @@ func (mgw *MapGw) insert_record(oid O32, mark M32, arecb []byte) {
 
 	arec := AddrRecDecode(ea_iplen, gw_iplen, arecb)
 
-	if arec.GW.IsZeroAddr() || arec.Ref.IsZero() {
-		log.err("mgw:  unexpected null gw + ref, %v %v %v %v, dropping record",
-			arec.EA, arec.IP, arec.GW, &arec.Ref)
-		return
+	if arec.GW.IsZeroAddr() {
+		arec.GW = cli.gw_pub_ip
 	}
 
 	if !arec.EA.IsZeroAddr() && arec.IP.IsZeroAddr() {
@@ -706,10 +704,8 @@ func (mtun *MapTun) insert_record(oid O32, mark M32, arecb []byte) {
 
 	arec := AddrRecDecode(ea_iplen, gw_iplen, arecb)
 
-	if arec.GW.IsZeroAddr() || arec.Ref.IsZero() {
-		log.err("mtun: unexpected null gw + ref, %v %v %v %v, dropping record",
-			arec.EA, arec.IP, arec.GW, &arec.Ref)
-		return
+	if arec.GW.IsZeroAddr() {
+		arec.GW = cli.gw_pub_ip
 	}
 
 	if !arec.EA.IsZeroAddr() && arec.IP.IsZeroAddr() {

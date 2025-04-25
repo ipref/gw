@@ -355,9 +355,8 @@ func (db *DB) insert_record(db_arec []byte) {
 
 	arec := AddrRecDecode(ea_iplen, gw_iplen, db_arec[V1_MARK_LEN:])
 
-	if arec.GW.IsZeroAddr() || arec.Ref.IsZero()  {
-		log.err("db insert arec: null gw + ref, ignoring")
-		return
+	if arec.GW.IsZeroAddr() {
+		arec.GW = cli.gw_pub_ip
 	}
 
 	var err error

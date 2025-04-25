@@ -252,7 +252,7 @@ func (mgw *MapGw) get_src_ipref(ip IP) (IpRef, bool) {
 		// IP. So, we have the tun's address (ea_ip = xxx.0) and another address
 		// which is used for the gateway itself (ea_gwip = xxx.1) and we treat
 		// them as interchangeable.
-		return IpRef{cli.gw_ip, cli.gw_ref}, true
+		return IpRef{cli.gw_pub_ip, cli.gw_ref}, true
 	}
 	if ip.IsLinkLocal() {
 		return IpRef{}, false // drop silently
@@ -275,7 +275,7 @@ func (mgw *MapGw) get_src_ipref(ip IP) (IpRef, bool) {
 func (mgw *MapGw) get_dst_ipref(ip IP) (IpRef, bool) {
 
 	if ip == cli.ea_gwip || ip == cli.ea_ip {
-		return IpRef{cli.gw_ip, cli.gw_ref}, true
+		return IpRef{cli.gw_pub_ip, cli.gw_ref}, true
 	}
 	if !cli.ea_net.Contains(netip.Addr(ip)) {
 		log.err("encap:   destination (%v) IP isn't in encoded address space, dropping", ip)
@@ -834,10 +834,10 @@ func ipref_encap_l4(pb *PktBuf,
 
 func (mtun *MapTun) get_src_addr(src IpRef) (IP, bool) {
 
-	if src.IP == cli.gw_ip && src.Ref == cli.gw_ref {
+	if src.IP == cli.gw_pub_ip && src.Ref == cli.gw_ref {
 		return cli.ea_gwip, true
 	}
-	if !netip.Addr(src.IP).IsGlobalUnicast() {
+	if !src.IP.IsZeroAddr() && !netip.Addr(src.IP).IsGlobalUnicast() {
 		log.err("deencap: source (%v) IP isn't valid unicast, dropping", src)
 		return IP{}, false
 	}
@@ -850,10 +850,10 @@ func (mtun *MapTun) get_src_addr(src IpRef) (IP, bool) {
 
 func (mtun *MapTun) get_dst_addr(dst IpRef) (IP, bool) {
 
-	if dst.IP == cli.gw_ip && dst.Ref == cli.gw_ref {
+	if dst.IP == cli.gw_pub_ip && dst.Ref == cli.gw_ref {
 		return cli.ea_gwip, true
 	}
-	if !netip.Addr(dst.IP).IsGlobalUnicast() {
+	if !dst.IP.IsZeroAddr() && !netip.Addr(dst.IP).IsGlobalUnicast() {
 		log.err("deencap: destination (%v) IP isn't valid unicast, dropping", dst)
 		return IP{}, false
 	}

@@ -350,10 +350,10 @@ func icmp() {
 			pb.pkt[outer_ipref_hdr + 2] = IPREF_ICMP_SEND_TTL
 			pb.pkt[outer_ipref_hdr + 3] = ICMP
 			i := outer_ipref_hdr + 4
-			if cli.gw_ip.Len() != iplen {
+			if gw_iplen != iplen {
 				panic("unexpected")
 			}
-			copy(pb.pkt[i:], cli.gw_ip.AsSlice())
+			copy(pb.pkt[i:], cli.gw_pub_ip.AsSlice())
 			i += iplen
 			copy(pb.pkt[i:], src.IP.AsSlice())
 			i += iplen

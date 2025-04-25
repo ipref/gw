@@ -182,7 +182,7 @@ func (rgws *RemoteGwTable) get_rcon(daddr IP, dport uint16,
 	}
 
 	// open connection
-	saddr := cli.gw_ip
+	saddr := cli.gw_bind_ip
 	sport := uint16(cli.gw_port)
 	if dport == 0 {
 		dport = uint16(cli.rgw_port)
@@ -209,7 +209,7 @@ func (rgws *RemoteGwTable) get_rcon(daddr IP, dport uint16,
 	rcon.dport = dport
 	rcon.mtu, err = udpconn_getmtu(rcon.con)
 	if err != nil {
-		rcon.mtu = cli.ifc.MTU
+		rcon.mtu = cli.gw_ifc_mtu
 	}
 	rcon.removed = false
 	rcon.prev = rgws.most_recent
@@ -300,7 +300,11 @@ func gw_sender(rgws *RemoteGwTable) {
 			}
 			src_ip := IPFromSlice(pb.ipref_sref_ip())
 			dst_ip := IPFromSlice(pb.ipref_dref_ip())
-			if src_ip != cli.gw_ip {
+			if src_ip.IsZeroAddr() {
+				copy(pb.ipref_sref_ip(), cli.gw_pub_ip.AsSlice())
+				src_ip = IPFromSlice(pb.ipref_sref_ip())
+			}
+			if !cli.gw_pub_ip.IsZeroAddr() && src_ip != cli.gw_pub_ip {
 				log.err("gw out:  src(%v) is not gateway, packet dropped", src_ip)
 				retbuf <- pb
 				continue
@@ -412,7 +416,7 @@ func gw_receiver(con *net.UDPConn,
 			break
 		}
 		if rlen == len(pb.pkt) - pb.data {
-			log.err("gw in:   read failed (not enough space), dropping packet")
+			log.err("gw in:   read failed (not enough space; need -gateway-ifc-mtu?), dropping packet")
 			retbuf <- pb
 			continue
 		}
@@ -426,8 +430,9 @@ func gw_receiver(con *net.UDPConn,
 		}
 		sref_ip := IPFromSlice(pb.ipref_sref_ip())
 		dref_ip := IPFromSlice(pb.ipref_dref_ip())
-		if sref_ip.IsZeroAddr() && sref_ip.Ver() == src_ip.Ver() {
+		if sref_ip.IsZeroAddr() {
 			copy(pb.ipref_sref_ip(), src_ip.AsSlice())
+			sref_ip = IPFromSlice(pb.ipref_sref_ip())
 		}
 		if sref_ip != src_ip {
 			log.err("gw in:   ipref header src(%v) does not match ip header src(%v), dropping",
@@ -435,8 +440,12 @@ func gw_receiver(con *net.UDPConn,
 			retbuf <- pb
 			continue
 		}
-		if dref_ip != cli.gw_ip {
-			log.err("gw in:   ipref header dst(%v) does not match gateway ip, dropping", dref_ip)
+		if cli.gw_pub_ip.IsZeroAddr() || dref_ip.IsZeroAddr() {
+			copy(pb.ipref_dref_ip(), cli.gw_pub_ip.AsSlice())
+			dref_ip = IPFromSlice(pb.ipref_dref_ip())
+		}
+		if dref_ip != cli.gw_pub_ip {
+			log.err("gw in:   ipref header dst(%v) does not match gateway pub ip, dropping", dref_ip)
 			retbuf <- pb
 			continue
 		}
@@ -473,7 +482,7 @@ func start_gw() {
 			return rawconn_control(c, socket_configure)
 		}
 		packet_con, err := config.ListenPacket(context.Background(), gw_proto(),
-			(&net.UDPAddr{cli.gw_ip.AsSlice(), cli.gw_port, ""}).String())
+			(&net.UDPAddr{cli.gw_bind_ip.AsSlice(), cli.gw_port, ""}).String())
 		if err != nil {
 			log.fatal("gw:      cannot listen on UDP: %v", err)
 		}
@@ -484,7 +493,7 @@ func start_gw() {
 		}
 
 		log.info("gw:      gateway %v %v mtu(%v) %v pkt buffers",
-			cli.gw_ip, cli.ifc.Name, cli.ifc.MTU, cli.maxbuf)
+			cli.gw_bind_ip, cli.gw_pub_ip, cli.gw_ifc_mtu, cli.maxbuf)
 	}
 
 	rgws := new_rgw_table()
@@ -503,7 +512,7 @@ func start_gw() {
 }
 
 func gw_proto() string {
-	if cli.gw_ip.Is4() {
+	if cli.gw_bind_ip.Is4() {
 		return "udp4"
 	} else {
 		return "udp6"

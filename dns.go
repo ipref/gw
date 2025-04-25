@@ -109,7 +109,7 @@ func parse_hosts_file(fname string, input io.Reader) map[IP]AddrRec {
 				log.err("dns watcher: %v(%v): invalid gw address: %v", fname, lno, gwtoks[1])
 				continue
 			}
-			if !netip.Addr(gw).IsGlobalUnicast() {
+			if !gw.IsZeroAddr() && !netip.Addr(gw).IsGlobalUnicast() {
 				log.err("dns watcher: %v(%v): non-unicast gw: %v", fname, lno, gwtoks[1])
 				continue
 			}
@@ -269,7 +269,7 @@ func install_hosts_records(oid O32, arecs map[IP]AddrRec) {
 			} else if rec.EA.IsZero() && !rec.IP.IsZero() {
 
 				if rec.GW.IsZero() {
-					rec.GW = cli.gw_ip
+					rec.GW = cli.gw_pub_ip
 				}
 
 				//if rec.Ref.IsZero() {

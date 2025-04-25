@@ -957,7 +957,7 @@ func (pb *PktBuf) write_v1_header(cmd byte, pktid uint16) {
 	pkt[V1_VER] = V1_SIG
 	pkt[V1_CMD] = cmd
 	be.PutUint16(pkt[V1_PKTID:V1_PKTID+2], pktid)
-	pkt[V1_IPVER] = (byte(cli.ea_ip.Ver()) << 4) | byte(cli.gw_ip.Ver())
+	pkt[V1_IPVER] = (byte(cli.ea_ip.Ver()) << 4) | byte(cli.gw_bind_ip.Ver())
 	pkt[V1_RESERVED] = 0
 	copy(pkt[V1_PKTLEN:V1_PKTLEN+2], []byte{0, 2})
 }
@@ -985,9 +985,9 @@ func (pb *PktBuf) validate_v1_header(rlen int) error {
 		return fmt.Errorf("ea ip version mismatch: sent(%v) != expected(%v)",
 			pkt[V1_IPVER] >> 4, cli.ea_ip.Ver())
 	}
-	if pkt[V1_IPVER] & 0xf != byte(cli.gw_ip.Ver()) {
+	if pkt[V1_IPVER] & 0xf != byte(cli.gw_bind_ip.Ver()) {
 		return fmt.Errorf("gw ip version mismatch: sent(%v) != expected(%v)",
-			pkt[V1_IPVER] & 0xf, cli.gw_ip.Ver())
+			pkt[V1_IPVER] & 0xf, cli.gw_bind_ip.Ver())
 	}
 
 	if pkt[V1_RESERVED] != 0 {

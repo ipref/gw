@@ -26,6 +26,8 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	stamps     bool
 	datadir    string
 	gw         string
+	gw_bind    string
+	gw_pub     string
 	ea         string
 	hosts_path string
 	sockname   string
@@ -37,7 +39,9 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	ea_net     netip.Prefix
 	ea_ip      IP
 	ea_gwip    IP
-	gw_ip      IP
+	gw_bind_ip IP
+	gw_pub_ip  IP
+	gw_ifc_mtu int
 	gw_port    int
 	rgw_port   int
 	gw_refstr  string
@@ -75,7 +79,11 @@ func parse_cli() {
 	flag.BoolVar(&cli.devmode, "devmode", false, "development mode, disable forwarding, run as a standalone mapper broker")
 	flag.BoolVar(&cli.stamps, "time-stamps", false, "print logs with time stamps")
 	flag.StringVar(&cli.datadir, "data", ddir, "data directory")
-	flag.StringVar(&cli.gw, "gateway", "", "ip address of the public network interface")
+	flag.StringVar(&cli.gw, "gateway", "",
+		"short for -gateway-bind and -gateway-pub; this should usually be the ip address of the public network interface")
+	flag.StringVar(&cli.gw_bind, "gateway-bind", "", "ip address to bind/listen for the gateway tunnel server")
+	flag.StringVar(&cli.gw_pub, "gateway-pub", "", "ip address to use as the source context ip for ipref tunnel packets")
+	flag.IntVar(&cli.gw_ifc_mtu, "gateway-ifc-mtu", 0, "MTU of the gateway public network interface")
 	flag.IntVar(&cli.gw_port, "gateway-port", 0, "port to listen on for the gateway")
 	flag.IntVar(&cli.rgw_port, "remote-gateway-port", 0, "default destination port when sending to remote gateways")
 	flag.StringVar(&cli.gw_refstr, "gateway-ref", "1", "ref to use for the gateway's own ipref address")
@@ -97,6 +105,8 @@ func parse_cli() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	var err error
 
 	// initialize logger
 
@@ -129,56 +139,98 @@ func parse_cli() {
 	if cli.devmode {
 
 		cli.gw = "198.51.100.1"
-		cli.gw_ip = MustParseIP(cli.gw)
-		cli.ifc.MTU = 1500
+		cli.gw_bind_ip = MustParseIP(cli.gw)
+		cli.gw_pub_ip = cli.gw_bind_ip
+		if cli.gw_ifc_mtu == 0 {
+			cli.gw_ifc_mtu = 1500
+		}
 
 	} else {
 
 		// parse gw addresses
 
-		gw, err := ParseIP(cli.gw)
-		if err != nil {
-			if len(cli.gw) == 0 {
-				log.fatal("missing gateway IP address")
-			} else {
-				log.fatal("invalid gateway IP address: %v", cli.gw)
+		if cli.gw_bind == "" {
+			cli.gw_bind = cli.gw
+		}
+		if cli.gw_pub == "" {
+			cli.gw_pub = cli.gw
+		}
+
+		if cli.gw_bind == "" && cli.gw_pub == "" {
+			log.fatal("missing gateway IP address (try -gateway 0.0.0.0 or -gateway ::)")
+		}
+
+		cli.gw_bind_ip = IP{}
+		cli.gw_pub_ip = IP{}
+
+		if cli.gw_bind != "" {
+			cli.gw_bind_ip, err = ParseIP(cli.gw_bind)
+			if err != nil {
+				log.fatal("invalid gateway bind IP address: %v", cli.gw_bind)
+			}
+		}
+		if cli.gw_pub != "" {
+			cli.gw_pub_ip, err = ParseIP(cli.gw_pub)
+			if err != nil {
+				log.fatal("invalid gateway pub IP address: %v", cli.gw_pub)
 			}
 		}
 
-		if !netip.Addr(gw).IsGlobalUnicast() {
-			log.fatal("gateway IP address is not a valid unicast address: %v", cli.gw)
+		if cli.gw_bind_ip.IsZero() {
+			cli.gw_bind_ip = IPZero(cli.gw_pub_ip.Len())
 		}
-		cli.gw_ip = gw
-
-		// deduce gw interface
-
-		ifcs, err := net.Interfaces()
-		if err != nil {
-			log.fatal("cannot get interface data: %v", err)
+		if cli.gw_pub_ip.IsZero() {
+			cli.gw_pub_ip = IPZero(cli.gw_bind_ip.Len())
 		}
-	ifc_loop:
-		for _, ifc := range ifcs {
-			addrs, err := ifc.Addrs()
-			if err == nil {
-				for _, addr := range addrs {
-					net, err := netip.ParsePrefix(addr.String())
-					if err != nil {
-						log.err("unrecognized address for interface %v: %v", ifc, addr)
-						continue
-					}
-					if net.Contains(netip.Addr(cli.gw_ip)) {
-						cli.ifc = ifc
-						break ifc_loop
+
+		if !cli.gw_bind_ip.IsZeroAddr() && !netip.Addr(cli.gw_bind_ip).IsGlobalUnicast() {
+			log.fatal("gateway bind IP address is not a valid unicast address: %v", cli.gw_bind)
+		}
+		if !cli.gw_pub_ip.IsZeroAddr() && !netip.Addr(cli.gw_pub_ip).IsGlobalUnicast() {
+			log.fatal("gateway pub IP address is not a valid unicast address: %v", cli.gw_pub)
+		}
+
+		// deduce gw public network interface mtu
+
+		if cli.gw_ifc_mtu == 0 && !cli.gw_bind_ip.IsZeroAddr() {
+			ifcs, err := net.Interfaces()
+			if err != nil {
+				log.fatal("cannot get interface data: %v", err)
+			}
+		ifc_loop:
+			for _, ifc := range ifcs {
+				addrs, err := ifc.Addrs()
+				if err == nil {
+					for _, addr := range addrs {
+						net, err := netip.ParsePrefix(addr.String())
+						if err != nil {
+							log.err("unrecognized address for interface %v: %v", ifc, addr)
+							continue
+						}
+						if net.Contains(netip.Addr(cli.gw_bind_ip)) {
+							cli.gw_ifc_mtu = ifc.MTU
+							break ifc_loop
+						}
 					}
 				}
 			}
 		}
 
-		if cli.ifc.Index == 0 {
-			log.fatal("cannot find interface with gw address %v", cli.gw_ip)
+		if cli.gw_ifc_mtu == 0 {
+			log.err("cannot deduce mtu of gateway public network interface " +
+				"(try -gateway-bind or -gateway-ifc-mtu), using default")
+			cli.gw_ifc_mtu = 1500
 		}
+
 	}
-	gw_iplen = cli.gw_ip.Len()
+	if cli.gw_bind_ip.Ver() != cli.gw_pub_ip.Ver() {
+		log.err("mismatch between ip versions of gateway bind and pub ip addresses: %v %v",
+			cli.gw_bind_ip, cli.gw_pub_ip)
+	}
+	gw_iplen = cli.gw_bind_ip.Len()
+	if cli.gw_ifc_mtu <= 0 || cli.gw_ifc_mtu >= 0xffff {
+		log.fatal("invalid gw interface mtu: %v", cli.gw_ifc_mtu)
+	}
 
 	if cli.gw_port <= 0 || cli.gw_port > 0xffff {
 		cli.gw_port = IPREF_PORT
@@ -186,13 +238,12 @@ func parse_cli() {
 	if cli.rgw_port <= 0 || cli.rgw_port > 0xffff {
 		cli.rgw_port = IPREF_PORT
 	}
-	var err error
 	cli.gw_ref, err = rff.Parse(cli.gw_refstr)
 	if err != nil {
 		log.fatal("invalid gateway reference \"%v\": %v", cli.gw_refstr, err)
 	}
 
-	cli.pktbuflen = TUN_HDR_LEN + TUN_RECV_OFF + cli.ifc.MTU + 8
+	cli.pktbuflen = TUN_HDR_LEN + TUN_RECV_OFF + cli.gw_ifc_mtu + 8
 	cli.pktbuflen += 7
 	cli.pktbuflen &^= 7
 

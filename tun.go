@@ -316,13 +316,13 @@ func start_tun() {
 
 		ifcname := strings.Trim(string(ifreq.name[:]), "\x00")
 		ea_masklen := cli.ea_net.Bits()
-		mtu := cli.ifc.MTU - UDP_HDR_LEN - IPREF_HDR_MAX_LEN
+		mtu := cli.gw_ifc_mtu - UDP_HDR_LEN - IPREF_HDR_MAX_LEN
 		if cli.ea_net.Addr().Is4() {
 			mtu += IPv4_HDR_MIN_LEN
 		} else {
 			mtu += IPv6_HDR_MIN_LEN
 		}
-		if cli.gw_ip.Is4() {
+		if cli.gw_bind_ip.Is4() {
 			mtu += (16 - 4) * 2
 		}
 		mtu += 3

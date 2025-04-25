@@ -110,7 +110,7 @@ func allocate_refs(base, from, to IP) {
 
 	var arec AddrRec
 	arec.EA = IPNum(ea_iplen, 0)
-	arec.GW = cli.gw_ip
+	arec.GW = cli.gw_pub_ip
 
 	for ip := from;; {
 
