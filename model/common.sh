@@ -38,6 +38,7 @@ gw_args=(
 
 function run-gw7 {
     gw7 go run . \
+        -debug "$GW_DEBUG_LIST" \
         -data /var/lib/ipref/gw7 \
         -gateway "${GW_IP_PREFIX}192.168.11.97" \
         -gateway-port 1046 \

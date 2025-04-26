@@ -104,16 +104,19 @@ func parse_hosts_file(fname string, input io.Reader) map[IP]AddrRec {
 		}
 
 		if len(gwtoks) == 2 {
-			gw, err := ParseIP(gwtoks[1])
-			if err != nil {
-				log.err("dns watcher: %v(%v): invalid gw address: %v", fname, lno, gwtoks[1])
+			if gw, err := ParseIP(gwtoks[1]); err == nil {
+				if !gw.IsZeroAddr() && !netip.Addr(gw).IsGlobalUnicast() {
+					log.err("dns watcher: %v(%v): non-unicast gw: %v", fname, lno, gwtoks[1])
+					continue
+				}
+				arec.GW = gw
+			} else if ref, err := rff.Parse(gwtoks[1]); err == nil && len(rtoks) == 1 && rectype == "pub" {
+				arec.GW = cli.gw_pub_ip
+				arec.Ref = ref
+			} else {
+				log.err("dns watcher: %v(%v): invalid gw address or ref: %v", fname, lno, gwtoks[1])
 				continue
 			}
-			if !gw.IsZeroAddr() && !netip.Addr(gw).IsGlobalUnicast() {
-				log.err("dns watcher: %v(%v): non-unicast gw: %v", fname, lno, gwtoks[1])
-				continue
-			}
-			arec.GW = gw
 		}
 
 		// parse ref

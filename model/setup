@@ -99,7 +99,7 @@ cat > /etc/netns/gw7/hosts << EOF
 ${GW_IP_PREFIX}192.168.11.1       router1
 ${GW_IP_PREFIX}192.168.12.98      gw8
 ${GW7EN_IP_PREFIX}10.248.22.1     gw8gw     #= ext ${GW_IP_PREFIX}192.168.12.98 + 1
-${GW7EN_IP_PREFIX}192.168.97.11   host711   #= pub ${GW_IP_PREFIX}192.168.11.97 + 10711
+${GW7EN_IP_PREFIX}192.168.97.11   host711   #= pub 10711
 ${GW7EN_IP_PREFIX}10.248.22.222   host822   #= ext ${GW_IP_PREFIX}192.168.12.98 + 20822
 ${GW7EN_IP_PREFIX}10.248.22.223   host823                                               # unreachable at local gw
 ${GW7EN_IP_PREFIX}10.248.22.224   host824   #= ext ${GW_IP_PREFIX}192.168.12.98 + 20824 # unreachable at remote gw
@@ -112,7 +112,7 @@ ${GW_IP_PREFIX}192.168.12.1       router1
 ${GW8EN_IP_PREFIX}10.255.11.1     gw7gw     #= ext ${GW_IP_PREFIX}192.168.11.97 + 1
 ${GW_IP_PREFIX}192.168.11.97      gw7
 ${GW8EN_IP_PREFIX}10.255.11.111   host711   #= ext ${GW_IP_PREFIX}192.168.11.97 + 10711
-${GW8EN_IP_PREFIX}192.168.98.22   host822   #= pub ${GW_IP_PREFIX}192.168.12.98 + 20822
+${GW8EN_IP_PREFIX}192.168.98.22   host822   #= pub 20822
 EOF
 cat > /etc/netns/host711/hosts << EOF
 127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4 host711
