@@ -976,26 +976,26 @@ func (pb *PktBuf) validate_v1_header(rlen int) error {
 	}
 
 	if pkt[V1_VER] != V1_SIG {
-		return fmt.Errorf("invalid signature: 0x%02x", pkt[V1_VER])
+		return fmt.Errorf("v1 0x%02x: invalid signature: 0x%02x", pkt[V1_CMD], pkt[V1_VER])
 	}
 
 	lenfield := int(be.Uint16(pkt[V1_PKTLEN : V1_PKTLEN+2]))
 	if len(pkt) != lenfield*4 {
-		return fmt.Errorf("pkt length(%v) does not match length field(%v)",
-			len(pkt), lenfield*4)
+		return fmt.Errorf("v1 0x%02x: pkt length(%v) does not match length field(%v)",
+			pkt[V1_CMD], len(pkt), lenfield*4)
 	}
 
 	if pkt[V1_IPVER] >> 4 != byte(cli.ea_ip.Ver()) {
-		return fmt.Errorf("ea ip version mismatch: sent(%v) != expected(%v)",
-			pkt[V1_IPVER] >> 4, cli.ea_ip.Ver())
+		return fmt.Errorf("v1 0x%02x: ea ip version mismatch: sent(%v) != expected(%v)",
+			pkt[V1_CMD], pkt[V1_IPVER] >> 4, cli.ea_ip.Ver())
 	}
 	if pkt[V1_IPVER] & 0xf != byte(cli.gw_bind_ip.Ver()) {
-		return fmt.Errorf("gw ip version mismatch: sent(%v) != expected(%v)",
-			pkt[V1_IPVER] & 0xf, cli.gw_bind_ip.Ver())
+		return fmt.Errorf("v1 0x%02x: gw ip version mismatch: sent(%v) != expected(%v)",
+			pkt[V1_CMD], pkt[V1_IPVER] & 0xf, cli.gw_bind_ip.Ver())
 	}
 
 	if pkt[V1_RESERVED] != 0 {
-		return fmt.Errorf("non-zero reserved field")
+		return fmt.Errorf("v1 0x%02x: non-zero reserved field", pkt[V1_CMD])
 	}
 
 	return nil
