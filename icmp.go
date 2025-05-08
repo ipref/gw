@@ -186,7 +186,7 @@ func icmp() {
 			pb.pkt[outer_ip_hdr + IPv4_TTL] = ICMPv4_SEND_TTL
 			pb.pkt[outer_ip_hdr + IPv4_PROTO] = ICMP
 			be.PutUint16(pb.pkt[outer_ip_hdr + IPv4_CSUM : outer_ip_hdr + IPv4_CSUM + 2], 0)
-			copy(pb.pkt[outer_ip_hdr + IPv4_SRC:], cli.ea_gwip.AsSlice4())
+			copy(pb.pkt[outer_ip_hdr + IPv4_SRC:], cli.ea_ip.AsSlice4())
 			copy(pb.pkt[outer_ip_hdr + IPv4_DST:], src.AsSlice4())
 			ip_csum := csum_add(0, pb.pkt[outer_ip_hdr : outer_ip_hdr + IPv4_HDR_MIN_LEN])
 			be.PutUint16(pb.pkt[outer_ip_hdr + IPv4_CSUM : outer_ip_hdr + IPv4_CSUM + 2], ip_csum^0xffff)
@@ -268,7 +268,7 @@ func icmp() {
 				uint16(pb.tail - icmp_hdr))
 			pb.pkt[outer_ip_hdr + IPv6_NEXT] = ICMPv6
 			pb.pkt[outer_ip_hdr + IPv6_TTL] = ICMPv6_SEND_TTL
-			copy(pb.pkt[outer_ip_hdr + IPv6_SRC:], cli.ea_gwip.AsSlice6())
+			copy(pb.pkt[outer_ip_hdr + IPv6_SRC:], cli.ea_ip.AsSlice6())
 			copy(pb.pkt[outer_ip_hdr + IPv6_DST:], src.AsSlice6())
 
 			// build ICMP header

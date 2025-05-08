@@ -105,7 +105,7 @@ func inspect_from_tun(pb *PktBuf) {
 	}
 }
 
-func tun_sender(fd *os.File) {
+func tun_sender(tun_fd *os.File, raw_fd int) {
 
 	if cli.devmode {
 		return
@@ -128,15 +128,26 @@ func tun_sender(fd *os.File) {
 		var proto uint16
 		var sent, trimmed int
 		var orig_mf bool
+		var gw_is_src bool
+		var dst_addr unix.Sockaddr
 		switch pb.typ {
 
 		case PKT_IPv4:
 
 			proto = ETHER_IPv4
+			gw_is_src = IPFromSlice(pb.pkt[pb.data+IPv4_SRC : pb.data+IPv4_SRC+4]) == cli.ea_ip
+			var dst_addr2 unix.SockaddrInet4
+			copy(dst_addr2.Addr[:], pb.pkt[pb.data+IPv4_DST : pb.data+IPv4_DST+4])
+			dst_addr = &dst_addr2
 
 		case PKT_IPv6:
 
 			proto = ETHER_IPv6
+			gw_is_src = IPFromSlice(pb.pkt[pb.data+IPv6_SRC : pb.data+IPv6_SRC+16]) == cli.ea_ip
+			var dst_addr2 unix.SockaddrInet6
+			copy(dst_addr2.Addr[:], pb.pkt[pb.data+IPv4_DST : pb.data+IPv4_DST+16])
+			dst_addr = &dst_addr2
+
 			if !pb.df {
 				dst := IPFromSlice(pb.pkt[pb.data+IPv6_DST : pb.data+IPv6_DST+16])
 				if mtu, exists := tun_mtucache.Get(dst); exists && mtu > 0 {
@@ -161,36 +172,57 @@ func tun_sender(fd *os.File) {
 			log.fatal("tun out: not an IPv4/6 packet (%v)", pb.typ)
 		}
 
-		if pb.data < TUN_HDR_LEN {
-			log.err("tun out: not enough space for tun header data/tail(%v/%v), dropping", pb.data, pb.tail)
-			retbuf <- pb
-			continue
-		}
-		pb.data -= TUN_HDR_LEN
+		var err error
+		var wlen int
+		success := false
 
-		be.PutUint16(pb.pkt[pb.data+TUN_FLAGS:pb.data+TUN_FLAGS+2], TUN_IFF_TUN)
-		be.PutUint16(pb.pkt[pb.data+TUN_PROTO:pb.data+TUN_PROTO+2], proto)
+		if gw_is_src {
 
-		wlen, err := fd.Write(pb.pkt[pb.data:pb.tail])
-		if err != nil {
-			log.err("tun out: send to tun interface failed: %v", err)
-		} else if wlen != pb.tail-pb.data {
-			log.err("tun out: send to tun interface truncated: wlen(%v) data/tail(%v/%v)",
-				wlen, pb.data, pb.tail)
-		} else {
-			pb.data += TUN_HDR_LEN
-			if trimmed != 0 {
-				frag_off := ipv6_next_frag_in_place(pb, trimmed, orig_mf)
-				log.trace("tun out: moving on to next fragment (%v)", frag_off)
-				goto next_fragment
+			// Linux won't route packets written to a tun device if the source address is the host's own address.
+			err = unix.Sendto(raw_fd, pb.pkt[pb.data:pb.tail], 0, dst_addr)
+			if err != nil {
+				log.err("tun out: send on raw socket failed: %v", err)
+			} else {
+				success = true
 			}
+
+		} else {
+
+			if pb.data < TUN_HDR_LEN {
+				log.err("tun out: not enough space for tun header data/tail(%v/%v), dropping", pb.data, pb.tail)
+				retbuf <- pb
+				continue
+			}
+			pb.data -= TUN_HDR_LEN
+
+			be.PutUint16(pb.pkt[pb.data+TUN_FLAGS:pb.data+TUN_FLAGS+2], TUN_IFF_TUN)
+			be.PutUint16(pb.pkt[pb.data+TUN_PROTO:pb.data+TUN_PROTO+2], proto)
+
+			wlen, err = tun_fd.Write(pb.pkt[pb.data:pb.tail])
+			if err != nil {
+				log.err("tun out: send to tun interface failed: %v", err)
+			} else if wlen != pb.tail-pb.data {
+				log.err("tun out: send to tun interface truncated: wlen(%v) data/tail(%v/%v)",
+					wlen, pb.data, pb.tail)
+			} else {
+				success = true
+			}
+
+			pb.data += TUN_HDR_LEN
+
+		}
+
+		if success && trimmed != 0 {
+			frag_off := ipv6_next_frag_in_place(pb, trimmed, orig_mf)
+			log.trace("tun out: moving on to next fragment (%v)", frag_off)
+			goto next_fragment
 		}
 
 		retbuf <- pb
 	}
 }
 
-func tun_receiver(fd *os.File) {
+func tun_receiver(tun_fd *os.File) {
 
 	if cli.devmode {
 		return
@@ -206,7 +238,7 @@ func tun_receiver(fd *os.File) {
 		pkt := pb.pkt[pb.data:]
 
 		maxmsg := 3
-		for rlen, err = fd.Read(pkt); err != nil; {
+		for rlen, err = tun_fd.Read(pkt); err != nil; {
 
 			if maxmsg > 0 {
 				log.err("tun in: error reading from tun interface: %v", err)
@@ -272,7 +304,8 @@ func tun_receiver(fd *os.File) {
 
 func start_tun() {
 
-	var fd *os.File
+	var tun_fd *os.File
+	var raw_fd int
 
 	if !cli.devmode {
 
@@ -307,8 +340,8 @@ func start_tun() {
 			log.fatal("tun: cannot make tun device non blocking, errno(%v)", errno)
 		}
 
-		fd = os.NewFile(uintptr(ufd), "/dev/net/tun")
-		if fd == nil {
+		tun_fd = os.NewFile(uintptr(ufd), "/dev/net/tun")
+		if tun_fd == nil {
 			log.fatal("tun: invalid tun device")
 		}
 
@@ -355,12 +388,23 @@ func start_tun() {
 		}
 
 		log.info("tun: netifc %v %v mtu(%v)", cli.ea_ip, ifcname, mtu)
+
+		// create raw socket
+
+		raw_fd, err = unix.Socket(unix.AF_INET, unix.SOCK_RAW, unix.IPPROTO_RAW)
+		if err != nil {
+			log.fatal("tun: error creating raw socket: %v", err)
+		}
+		err = unix.SetsockoptInt(raw_fd, unix.IPPROTO_IP, unix.IP_HDRINCL, 1)
+		if err != nil {
+			log.fatal("tun: error setting IP_HDRINCL on raw socket: %v", err)
+		}
 	}
 
 	tun_mtucache = lru.NewLRU[IP, int](max(cli.maxlips, 1), nil, 0)
 
-	go tun_receiver(fd)
-	go tun_sender(fd)
+	go tun_receiver(tun_fd)
+	go tun_sender(tun_fd, raw_fd)
 }
 
 type IPv6FragInPlaceStatus int

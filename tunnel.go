@@ -242,12 +242,7 @@ func MustParseIpRef(str string) (ipref IpRef) {
 
 func (mgw *MapGw) get_src_ipref(ip IP) (IpRef, bool) {
 
-	if ip == cli.ea_gwip || ip == cli.ea_ip {
-		// TODO This is a temporary fix because Linux won't let you write a
-		// packet to a tun device if the packet's source IP matches the host's
-		// IP. So, we have the tun's address (ea_ip = xxx.0) and another address
-		// which is used for the gateway itself (ea_gwip = xxx.1) and we treat
-		// them as interchangeable.
+	if ip == cli.ea_ip {
 		return IpRef{cli.gw_pub_ip, cli.gw_ref}, true
 	}
 	if ip.IsLinkLocal() {
@@ -270,7 +265,7 @@ func (mgw *MapGw) get_src_ipref(ip IP) (IpRef, bool) {
 
 func (mgw *MapGw) get_dst_ipref(ip IP) (IpRef, bool) {
 
-	if ip == cli.ea_gwip || ip == cli.ea_ip {
+	if ip == cli.ea_ip {
 		return IpRef{cli.gw_pub_ip, cli.gw_ref}, true
 	}
 	if !cli.ea_net.Contains(netip.Addr(ip)) {
@@ -821,6 +816,9 @@ func (mtun *MapTun) get_src_addr(src IpRef, rgw_hint IP) (IP, bool) {
 		}
 		src.IP = rgw_hint
 	}
+	if src.IP == cli.gw_pub_ip && src.Ref == cli.gw_ref {
+		return cli.ea_ip, true
+	}
 	if !netip.Addr(src.IP).IsGlobalUnicast() {
 		log.err("deencap: source (%v) IP isn't valid unicast, dropping", src)
 		return IP{}, false
@@ -838,7 +836,7 @@ func (mtun *MapTun) get_dst_addr(dst IpRef, gw_hint IP) (IP, bool) {
 		dst.IP = cli.gw_pub_ip
 	}
 	if dst.IP == cli.gw_pub_ip && dst.Ref == cli.gw_ref {
-		return cli.ea_gwip, true
+		return cli.ea_ip, true
 	}
 	if !dst.IP.IsZeroAddr() && !netip.Addr(dst.IP).IsGlobalUnicast() {
 		log.err("deencap: destination (%v) IP isn't valid unicast, dropping", dst)

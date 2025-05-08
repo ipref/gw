@@ -38,7 +38,6 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	debug      map[string]bool
 	ea_net     netip.Prefix
 	ea_ip      IP
-	ea_gwip    IP
 	gw_bind_ip IP
 	gw_pub_ip  IP
 	gw_ifc_mtu int
@@ -260,11 +259,10 @@ func parse_cli() {
 	if !cli.ea_net.Addr().IsGlobalUnicast() {
 		log.fatal("encode-net is not a valid unicast address: %v", cli.ea)
 	}
-	cli.ea_ip = IP(cli.ea_net.Addr())
+	ea_ipb := IP(cli.ea_net.Addr()).AsSlice()
+	ea_ipb[len(ea_ipb)-1] = 1 // hard code .1 as gw address on ea network
+	cli.ea_ip = IPFromSlice(ea_ipb)
 	ea_iplen = cli.ea_ip.Len()
-	ea_gwipb := cli.ea_ip.AsSlice()
-	ea_gwipb[len(ea_gwipb)-1] = 1 // hard code .1 as gw address on ea network
-	cli.ea_gwip = IPFromSlice(ea_gwipb)
 
 	v1_arec_len = AddrRecEncodedLen(ea_iplen, gw_iplen)
 
