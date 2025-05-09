@@ -25,11 +25,17 @@ def main():
     ipver = sys.argv[2]
     if ipver != '4' and ipver != '6':
         raise ValueError(f'IP version: {ipver!r}')
-    pmtud = sys.argv[3]
+    if len(sys.argv) > 3:
+        port = int(sys.argv[3])
+    else:
+        port = 5204
+    if len(sys.argv) > 4:
+        pmtud = sys.argv[4]
+    else:
+        pmtud = 'want'
     if pmtud not in PMTUD_BY_NAME:
         raise ValueError(f'pmtud: {df!r}')
     pmtud = PMTUD_BY_NAME[pmtud]
-    port = 8000
 
     sock = socket.socket(socket.AF_INET if ipver == '4' else socket.AF_INET6,
         socket.SOCK_DGRAM)
