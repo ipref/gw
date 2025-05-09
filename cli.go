@@ -253,8 +253,8 @@ func parse_cli() {
 		log.fatal("invalid encode-net: %v", cli.ea)
 	}
 	cli.ea_net = cli.ea_net.Masked()
-	if cli.ea_net.Addr().BitLen() - cli.ea_net.Bits() < 16 {
-		log.fatal("invalid encode-net (subnet not large enough, need at least 16 bits): %v", cli.ea)
+	if cli.ea_net.Addr().BitLen() - cli.ea_net.Bits() < 13 {
+		log.fatal("invalid encode-net (subnet not large enough, need at least 13 bits): %v", cli.ea)
 	}
 	if !cli.ea_net.Addr().IsGlobalUnicast() {
 		log.fatal("encode-net is not a valid unicast address: %v", cli.ea)

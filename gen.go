@@ -21,7 +21,7 @@ listed in /etc/hosts.
 
 const (
 	GENQLEN     = 2
-	SECOND_BYTE = 100
+	SECOND_BYTE = 16
 	MIN_REF     = 256 // low ref values are reserved
 	MAXTRIES    = 10  // num of tries to get unique random value before giving up
 
