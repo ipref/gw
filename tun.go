@@ -143,7 +143,7 @@ func tun_sender(tun_fd *os.File, raw_fd int) {
 		case PKT_IPv6:
 
 			proto = ETHER_IPv6
-			gw_is_src = IPFromSlice(pb.pkt[pb.data+IPv6_SRC : pb.data+IPv6_SRC+16]) == cli.ea_ip
+			gw_is_src = false // We don't use raw sockets on IPv6.
 			var dst_addr2 unix.SockaddrInet6
 			copy(dst_addr2.Addr[:], pb.pkt[pb.data+IPv4_DST : pb.data+IPv4_DST+16])
 			dst_addr = &dst_addr2
@@ -178,7 +178,8 @@ func tun_sender(tun_fd *os.File, raw_fd int) {
 
 		if gw_is_src {
 
-			// Linux won't route packets written to a tun device if the source address is the host's own address.
+			// Linux won't route IPv4 packets written to a tun device if the source address is the host's own address,
+			// so we use raw sockets to work around that problem.
 			err = unix.Sendto(raw_fd, pb.pkt[pb.data:pb.tail], 0, dst_addr)
 			if err != nil {
 				log.err("tun out: send on raw socket failed: %v", err)
@@ -305,7 +306,7 @@ func tun_receiver(tun_fd *os.File) {
 func start_tun() {
 
 	var tun_fd *os.File
-	var raw_fd int
+	raw_fd := -1
 
 	if !cli.devmode {
 
@@ -389,15 +390,17 @@ func start_tun() {
 
 		log.info("tun: netifc %v %v mtu(%v)", cli.ea_ip, ifcname, mtu)
 
-		// create raw socket
+		// create raw socket (only needed with an IPv4 ea)
 
-		raw_fd, err = unix.Socket(unix.AF_INET, unix.SOCK_RAW, unix.IPPROTO_RAW)
-		if err != nil {
-			log.fatal("tun: error creating raw socket: %v", err)
-		}
-		err = unix.SetsockoptInt(raw_fd, unix.IPPROTO_IP, unix.IP_HDRINCL, 1)
-		if err != nil {
-			log.fatal("tun: error setting IP_HDRINCL on raw socket: %v", err)
+		if cli.ea_ip.Is4() {
+			raw_fd, err = unix.Socket(unix.AF_INET, unix.SOCK_RAW, unix.IPPROTO_RAW)
+			if err != nil {
+				log.fatal("tun: error creating raw socket: %v", err)
+			}
+			err = unix.SetsockoptInt(raw_fd, unix.IPPROTO_IP, unix.IP_HDRINCL, 1)
+			if err != nil {
+				log.fatal("tun: error setting IP_HDRINCL on raw socket: %v", err)
+			}
 		}
 	}
 
