@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"github.com/fsnotify/fsnotify"
 	. "github.com/ipref/common"
-	rff "github.com/ipref/ref"
 	"io"
 	"io/ioutil"
 	"net/netip"
@@ -110,7 +109,7 @@ func parse_hosts_file(fname string, input io.Reader) map[IP]AddrRec {
 					continue
 				}
 				arec.GW = gw
-			} else if ref, err := rff.Parse(gwtoks[1]); err == nil && len(rtoks) == 1 && rectype == "pub" {
+			} else if ref, err := ParseRef(gwtoks[1]); err == nil && len(rtoks) == 1 && rectype == "pub" {
 				arec.GW = cli.gw_pub_ip
 				arec.Ref = ref
 			} else {
@@ -137,7 +136,7 @@ func parse_hosts_file(fname string, input io.Reader) map[IP]AddrRec {
 				continue
 			}
 
-			ref, err := rff.Parse(reftoks[0])
+			ref, err := ParseRef(reftoks[0])
 			if err != nil {
 				log.err("dns watcher: %v(%v): invalid reference: %v: %v", fname, lno, reftoks[0], err)
 				continue

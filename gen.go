@@ -5,7 +5,6 @@ package main
 import (
 	"crypto/rand"
 	. "github.com/ipref/common"
-	rff "github.com/ipref/ref"
 	prng "math/rand" // where crypto/rand would be an overkill
 )
 
@@ -30,8 +29,6 @@ const (
 	RCVY_MAX      = 7                         // max records to recover at a time
 	RCVY_EXPIRE   = (MAPPER_TMOUT * 3) / 2    // [s] extra time before attempting recovery
 )
-
-var refzero rff.Ref // constant rff.Ref{0,0}
 
 // -- ea gen -------------------------------------------------------------------
 
@@ -244,10 +241,10 @@ func (gen *GenEA) init() {
 // -- ref gen ------------------------------------------------------------------
 
 type GenREF struct {
-	allocated map[rff.Ref]bool
-	ref       chan rff.Ref // mapper random ref
+	allocated map[Ref]bool
+	ref       chan Ref // mapper random ref
 	recv      chan *PktBuf
-	rcvy      chan rff.Ref
+	rcvy      chan Ref
 }
 
 var gen_ref GenREF
@@ -261,7 +258,7 @@ func (gen *GenREF) recover_expired_refs() {
 		sleep(prng.Intn(MAPPER_TMOUT/3)*1000, (MAPPER_TMOUT/8)*1000) // random start point
 		for {
 			sleep(RCVY_INTERVAL, RCVY_INTERVAL/8)
-			gen.rcvy <- refzero
+			gen.rcvy <- Ref{}
 		}
 	}()
 
@@ -321,7 +318,7 @@ func (gen *GenREF) receive(pb *PktBuf) int {
 
 	pktlen := len(pkt)
 
-	var ref rff.Ref
+	var ref Ref
 
 	switch cmd {
 
@@ -394,13 +391,13 @@ func (gen *GenREF) receive(pb *PktBuf) int {
 }
 
 // generate random refs with second to last byte >= SECOND_BYTE
-func (gen *GenREF) next_ref() rff.Ref {
+func (gen *GenREF) next_ref() Ref {
 
-	var ref rff.Ref
+	var ref Ref
 	creep := make([]byte, 16)
 
 	// clear ref before incrementing ii
-	for ii := 0; ii < MAXTRIES; ii, ref = ii+1, refzero {
+	for ii := 0; ii < MAXTRIES; ii, ref = ii+1, (Ref{}) {
 
 		_, err := rand.Read(creep[7:])
 		if err != nil {
@@ -428,7 +425,7 @@ func (gen *GenREF) next_ref() rff.Ref {
 	}
 
 	log.err("gen_ref: cannot allocate ref")
-	return refzero
+	return Ref{}
 }
 
 func (gen *GenREF) start() {
@@ -453,8 +450,8 @@ func (gen *GenREF) start() {
 }
 
 func (gen *GenREF) init() {
-	gen.allocated = make(map[rff.Ref]bool)
-	gen.ref = make(chan rff.Ref, GENQLEN)
+	gen.allocated = make(map[Ref]bool)
+	gen.ref = make(chan Ref, GENQLEN)
 	gen.recv = make(chan *PktBuf, PKTQLEN)
-	gen.rcvy = make(chan rff.Ref, PKTQLEN)
+	gen.rcvy = make(chan Ref, PKTQLEN)
 }

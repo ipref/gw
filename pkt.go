@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	. "github.com/ipref/common"
-	rff "github.com/ipref/ref"
 	"net"
 	"strings"
 )
@@ -535,7 +534,7 @@ func (pb *PktBuf) pp_tran(pfx string) {
 }
 
 // TODO Move to ipref/ref
-func ref_asslice(ref rff.Ref) (refb []byte) {
+func ref_asslice(ref Ref) (refb []byte) {
 	refb = make([]byte, 16)
 	be.PutUint64(refb[:8], ref.H)
 	be.PutUint64(refb[8:], ref.L)
@@ -543,13 +542,13 @@ func ref_asslice(ref rff.Ref) (refb []byte) {
 }
 
 // TODO Move to ipref/ref
-func ref_fromslice(refb []byte) (ref rff.Ref) {
+func ref_fromslice(refb []byte) (ref Ref) {
 	ref.H = be.Uint64(refb[:8])
 	ref.L = be.Uint64(refb[8:])
 	return
 }
 
-func ref_secondbyte(ref rff.Ref) byte {
+func ref_secondbyte(ref Ref) byte {
 	return byte(ref.L >> 8)
 }
 
@@ -706,7 +705,7 @@ func (pb *PktBuf) ipref_dref_ip() []byte {
 }
 
 // Don't call until you've checked ipref_ok().
-func (pb *PktBuf) ipref_sref() rff.Ref {
+func (pb *PktBuf) ipref_sref() Ref {
 
 	reflen := pb.ipref_reflen()
 	i := pb.data + 4 + pb.ipref_iplen() * 2
@@ -717,7 +716,7 @@ func (pb *PktBuf) ipref_sref() rff.Ref {
 }
 
 // Don't call until you've checked ipref_ok().
-func (pb *PktBuf) ipref_dref() rff.Ref {
+func (pb *PktBuf) ipref_dref() Ref {
 
 	reflen := pb.ipref_reflen()
 	i := pb.data + 4 + pb.ipref_iplen() * 2 + reflen
@@ -760,7 +759,7 @@ func (pb *PktBuf) ipref_swap_srcdst() {
 	copy(pb.pkt[i + reflen:], temp[:reflen])
 }
 
-func min_reflen(ref rff.Ref) int {
+func min_reflen(ref Ref) int {
 
 	if ref.H == 0 {
 		if ref.L >> 32 == 0 {

@@ -4,7 +4,6 @@ package main
 
 import (
 	. "github.com/ipref/common"
-	rff "github.com/ipref/ref"
 	"slices"
 )
 
@@ -64,13 +63,13 @@ type IpRec struct {
 
 func ref_cmp(a, b interface{}) int {
 
-	if a.(rff.Ref).H < b.(rff.Ref).H {
+	if a.(Ref).H < b.(Ref).H {
 		return -1
-	} else if a.(rff.Ref).H > b.(rff.Ref).H {
+	} else if a.(Ref).H > b.(Ref).H {
 		return 1
-	} else if a.(rff.Ref).L < b.(rff.Ref).L {
+	} else if a.(Ref).L < b.(Ref).L {
 		return -1
-	} else if a.(rff.Ref).L > b.(rff.Ref).L {
+	} else if a.(Ref).L > b.(Ref).L {
 		return 1
 	} else {
 		return 0
@@ -91,7 +90,7 @@ func addr_cmp(a, b interface{}) int {
 }
 
 // get a packet with an address record
-func get_arec_pkt(ea, ip, gw IP, ref rff.Ref, oid O32, mark M32) *PktBuf {
+func get_arec_pkt(ea, ip, gw IP, ref Ref, oid O32, mark M32) *PktBuf {
 
 	pb := <-getbuf
 
@@ -535,7 +534,7 @@ func (mgw *MapGw) query_expired_refs(pb *PktBuf) int {
 
 		if !(rec.mark < mgw.cur_mark[rec.oid]) {
 			arec.IP = IPNum(arec.IP.Len(), 0)
-			arec.Ref = rff.Ref{}
+			arec.Ref = Ref{}
 			arec.Encode(pkt[off:])
 			if cli.debug["mapper"] {
 				log.debug("mgw:  keeping non-expired gw+ref(%v + %v) -> %v rec.mark(%v) not less than mark(%v)",
@@ -560,18 +559,18 @@ func (mgw *MapGw) query_expired_refs(pb *PktBuf) int {
 // -- MapTun -------------------------------------------------------------------
 
 type MapTun struct {
-	our_ip   map[IP]map[rff.Ref]IpRec // our_gw   -> our_ref   -> our_ip
-	our_ea   map[IP]map[rff.Ref]IpRec // their_gw -> their_ref -> our_ea
-	oid      O32                      // must be the same for both mgw and mtun
-	cur_mark []M32                    // current mark per oid
+	our_ip   map[IP]map[Ref]IpRec // our_gw   -> our_ref   -> our_ip
+	our_ea   map[IP]map[Ref]IpRec // their_gw -> their_ref -> our_ea
+	oid      O32                  // must be the same for both mgw and mtun
+	cur_mark []M32                // current mark per oid
 	pfx      string
 }
 
 func (mtun *MapTun) init(oid O32) {
 
 	mtun.pfx = "mtun"
-	mtun.our_ip = make(map[IP]map[rff.Ref]IpRec)
-	mtun.our_ea = make(map[IP]map[rff.Ref]IpRec)
+	mtun.our_ip = make(map[IP]map[Ref]IpRec)
+	mtun.our_ea = make(map[IP]map[Ref]IpRec)
 	mtun.oid = oid
 	mtun.cur_mark = make([]M32, 2)
 }
@@ -587,7 +586,7 @@ func (mtun *MapTun) set_cur_mark(oid O32, mark M32) {
 	mtun.cur_mark[oid] = mark
 }
 
-func (mtun *MapTun) get_dst_ip(gw IP, ref rff.Ref) (IP, bool) {
+func (mtun *MapTun) get_dst_ip(gw IP, ref Ref) (IP, bool) {
 
 	is_gw_iplen(gw)
 	our_refs, ok := mtun.our_ip[gw]
@@ -632,13 +631,13 @@ func (mtun *MapTun) get_dst_ip(gw IP, ref rff.Ref) (IP, bool) {
 	return rec.ip, true
 }
 
-func (mtun *MapTun) get_src_iprec(gw IP, ref rff.Ref) (IpRec, bool) {
+func (mtun *MapTun) get_src_iprec(gw IP, ref Ref) (IpRec, bool) {
 
 	is_gw_iplen(gw)
 	their_refs, ok := mtun.our_ea[gw]
 	if !ok {
 		// unknown remote gw, allocate a map for it
-		their_refs = make(map[rff.Ref]IpRec)
+		their_refs = make(map[Ref]IpRec)
 		mtun.our_ea[gw] = their_refs
 	}
 
@@ -719,7 +718,7 @@ func (mtun *MapTun) insert_record(oid O32, mark M32, arecb []byte) {
 
 		their_refs, ok := mtun.our_ea[arec.GW]
 		if !ok {
-			their_refs = make(map[rff.Ref]IpRec)
+			their_refs = make(map[Ref]IpRec)
 			mtun.our_ea[arec.GW] = their_refs
 		}
 		if cli.debug["mapper"] {
@@ -738,7 +737,7 @@ func (mtun *MapTun) insert_record(oid O32, mark M32, arecb []byte) {
 
 		our_refs, ok := mtun.our_ip[arec.GW]
 		if !ok {
-			our_refs = make(map[rff.Ref]IpRec)
+			our_refs = make(map[Ref]IpRec)
 			mtun.our_ip[arec.GW] = our_refs
 		}
 		if cli.debug["mapper"] {

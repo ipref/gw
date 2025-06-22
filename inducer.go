@@ -4,7 +4,6 @@ package main
 
 import (
 	. "github.com/ipref/common"
-	rff "github.com/ipref/ref"
 	prng "math/rand"
 )
 
@@ -18,7 +17,7 @@ the need to run external mapper agents or ipref aware resolvers.
 
 // -- ea allocation inducer ----------------------------------------------------
 
-func allocate_eas(gw []IP, ref rff.Ref, from, to uint64) {
+func allocate_eas(gw []IP, ref Ref, from, to uint64) {
 
 	pktid := uint16(prng.Intn(0x10000))
 
@@ -65,7 +64,7 @@ func induce_ea_allocation() {
 
 	dly := (MAPPER_TMOUT * 1000) / 3
 
-	base_ref := rff.Ref{0, 0x11110000}
+	base_ref := Ref{L: 0x11110000}
 	base_gw := []IP{
 		IPNum(gw_iplen, 0x01010101),
 		IPNum(gw_iplen, 0x01010102),

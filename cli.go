@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	. "github.com/ipref/common"
-	rff "github.com/ipref/ref"
 	"net"
 	"net/netip"
 	"os"
@@ -45,7 +44,7 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	rgw_port   int
 	gw_refstr  string
 	dec_ttl    bool
-	gw_ref     rff.Ref
+	gw_ref     Ref
 	ifc        net.Interface
 	pktbuflen  int
 	log_level  uint
@@ -237,7 +236,7 @@ func parse_cli() {
 	if cli.rgw_port <= 0 || cli.rgw_port > 0xffff {
 		cli.rgw_port = IPREF_PORT
 	}
-	cli.gw_ref, err = rff.Parse(cli.gw_refstr)
+	cli.gw_ref, err = ParseRef(cli.gw_refstr)
 	if err != nil {
 		log.fatal("invalid gateway reference \"%v\": %v", cli.gw_refstr, err)
 	}

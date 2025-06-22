@@ -6,8 +6,6 @@ import (
 	"crypto/rand"
 	"net/netip"
 	. "github.com/ipref/common"
-	rff "github.com/ipref/ref"
-	"strings"
 	"time"
 )
 
@@ -218,26 +216,6 @@ func icmp_deencap(pkt_typ int, typ byte, code byte) (byte, byte, int) {
 	}
 
 	return 0, 0, ICMP_DROP
-}
-
-func MustParseRef(str string) rff.Ref {
-	str = strings.TrimSpace(str)
-	ref, err := rff.Parse(str)
-	if err != nil {
-		log.fatal("invalid ref: %v", err)
-	}
-	return ref
-}
-
-func MustParseIpRef(str string) (ipref IpRef) {
-	str = strings.TrimSpace(str)
-	ip, ref, found := strings.Cut(str, "+")
-	if !found {
-		log.fatal("invalid ipref: %v", str)
-	}
-	ipref.IP = MustParseIP(strings.TrimSpace(ip))
-	ipref.Ref = MustParseRef(strings.TrimSpace(ref))
-	return
 }
 
 func (mgw *MapGw) get_src_ipref(ip IP) (IpRef, bool) {
