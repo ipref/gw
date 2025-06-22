@@ -773,13 +773,20 @@ func min_reflen(ref rff.Ref) int {
 	}
 }
 
-func ipref_encode_ref(bs []byte, ref rff.Ref) {
+// Encoded representation of a reference with bytes ABBB_BCCC_CDDD_DEEE:
+//
+// - 128-bit: ABBB_BCCC_CDDD_DEEE
+// - 64-bit: ADDD_DEEE (B and C are implicitly zero)
+// - 32-bit: AEEE (B, C, and D are implicitly zero)
+func ipref_encode_ref(bs []byte, ref Ref) {
 
 	switch len(bs) {
 	case 4:
 		be.PutUint32(bs, uint32(ref.L))
+		bs[0] = byte(ref.H >> 56)
 	case 8:
 		be.PutUint64(bs, ref.L)
+		bs[0] = byte(ref.H >> 56)
 	case 16:
 		be.PutUint64(bs[:8], ref.H)
 		be.PutUint64(bs[8:], ref.L)
@@ -788,13 +795,15 @@ func ipref_encode_ref(bs []byte, ref rff.Ref) {
 	}
 }
 
-func ipref_decode_ref(bs []byte) (ref rff.Ref) {
+func ipref_decode_ref(bs []byte) (ref Ref) {
 
 	switch len(bs) {
 	case 4:
-		ref.L = uint64(be.Uint32(bs))
+		ref.H = uint64(bs[0]) << 56
+		ref.L = uint64(be.Uint32(bs) & 0xff_ffff)
 	case 8:
-		ref.L = be.Uint64(bs)
+		ref.H = uint64(bs[0]) << 56
+		ref.L = (be.Uint64(bs) << 8) >> 8
 	case 16:
 		ref.H = be.Uint64(bs[:8])
 		ref.L = be.Uint64(bs[8:])
