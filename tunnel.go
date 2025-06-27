@@ -526,7 +526,7 @@ func ipref_encap(pb *PktBuf, our_src, our_dst bool, icmp_depth int, strict, dec_
 		}
 		// This should only happen for packets inside ICMP, which should be pretty small.
 		copy(pkt[ipref_hdr_len:], pkt[l4:pb.tail])
-		l4 = ipref_hdr_len
+		l4, pb.tail = ipref_hdr_len, ipref_hdr_len + l4_pkt_len
 	}
 	pb.data = l4 - ipref_hdr_len
 	pb.typ = PKT_IPREF

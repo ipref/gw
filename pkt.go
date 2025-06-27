@@ -644,8 +644,8 @@ func (pb *PktBuf) ipref_frag() (frag_if bool, frag_off int, frag_mf bool, ident 
 // Don't call until you've checked ipref_ok().
 func (pb *PktBuf) ipref_hdr_len() int {
 
-	if pb.tail - pb.data == 0 {
-		return 0
+	if pb.tail - pb.data < 2 {
+		return pb.tail - pb.data
 	}
 	n := 4
 	if pb.ipref_if() {
@@ -761,14 +761,11 @@ func (pb *PktBuf) ipref_swap_srcdst() {
 
 func min_reflen(ref Ref) int {
 
-	if ref.H == 0 {
-		if ref.L >> 32 == 0 {
-			return 4
-		} else {
-			return 8
-		}
-	} else {
-		return 16
+	val := Uint128(ref).Lsh(8).Rsh(8)
+	switch {
+	case val.Rsh(3 * 8).IsZero(): return 4
+	case val.Rsh(7 * 8).IsZero(): return 8
+	default: return 16
 	}
 }
 
