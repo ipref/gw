@@ -52,7 +52,11 @@ Publishing a service via IPREF amounts to setting proper DNS entries in the inte
 
 Blah, blah, ...
 
-### Dealing with IPv6 Internet
+### Testing the services
+
+Blah, blah...
+
+## Dealing with IPv6 Internet
 
 If your Internet Service provider offers IPv6 addresses, and you router supports IPv6, you can connect to both IPv4 and IPv6 Internets and reach external hosts over either IPv4 or IPv6 Internet.
 
