@@ -4,7 +4,48 @@ IPREF provides means of communication across different address spaces, such as p
 An IPREF gateway must be installed within each address space that wants to communicate. Here is an example of how such a gateway may be installed at a home network.
 
 ## Build the gateway
-Blah, blah...
+### Prerequisites
+
+- Go 1.22 or later
+- Git
+
+### Steps
+
+1. Clone the repository:
+```bash
+git clone https://github.com/ipref/gw.git
+cd gw
+```
+
+2. Install dependencies:
+```bash
+go mod download
+```
+
+3. Build the project:
+```bash
+go build -o gw
+```
+
+The build will generate an executable named `gw` in your current directory.
+
+### Dependencies
+
+The project uses the following main dependencies (as specified in go.mod):
+
+- github.com/fsnotify/fsnotify v1.8.0
+- github.com/hashicorp/golang-lru/v2 v2.0.7  
+- github.com/ipref/common v1.3.1
+- go.etcd.io/bbolt v1.3.11
+- golang.org/x/sys v0.28.0
+
+### Verify installation
+
+To verify the build was successful:
+
+```bash
+./gw -h
+```
 
 ## Install and configure the gateway at a home network.
 Blah, blah
