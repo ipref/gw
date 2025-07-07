@@ -34,7 +34,7 @@ The build will generate an executable named `gw` in your current directory.
 The project uses the following main dependencies (as specified in go.mod):
 
 - github.com/fsnotify/fsnotify v1.8.0
-- github.com/hashicorp/golang-lru/v2 v2.0.7  
+- github.com/hashicorp/golang-lru/v2 v2.0.7
 - github.com/ipref/common v1.3.1
 - go.etcd.io/bbolt v1.3.11
 - golang.org/x/sys v0.28.0
@@ -46,6 +46,58 @@ To verify the build was successful:
 ```bash
 ./gw -h
 ```
+
+## Build the DNS agent
+
+The DNS agent informs the gateway about the mappings between public IPREF addresses and private IP addresses by periodically querying DNS servers.
+
+Clone the repository and build it:
+
+```sh
+git clone https://github.com/ipref/dns-agent.git
+cd dns-agent/
+go build
+```
+
+The binary will be named `dns-agent`. Verify that it was built successfully:
+
+```sh
+./dns-agent -h
+```
+
+## Build CoreDNS with the `ipref` plugin
+
+CoreDNS can be used to host the special resolver (using the `ipref` plugin) and also optionally your `*.internal` and/or your public nameservers.
+
+The special resolver receives requests from the local network and translates AA records into A/AAAA records by asking `gw` to dynamically allocate addresses in the encoding network that are mapped to the IPREF address that appears in the AA record.
+
+To build CoreDNS, you'll need to clone the CoreDNS repo and also the ipref plugin repo inside CoreDNS's tree. You'll also need to add the dependencies for the ipref plugin to CoreDNS's `go.mod`.
+
+```sh
+git clone https://github.com/coredns/coredns.git
+cd coredns/
+git checkout v1.12.1
+echo "require github.com/ipref/common v1.3.1" >> go.mod
+cd plugin/
+git clone https://github.com/ipref/coredns-plugin-ipref.git
+mv coredns-plugin-ipref/ ipref/ # Rename
+```
+
+Additionally, to ensure that CoreDNS's build system can find the plugin, this line needs to be added to the `plugin.cfg` file at the top level of the CoreDNS repo:
+
+```
+ipref:ipref
+```
+
+The order in `plugin.cfg` determines the order that plugins apply. It is recommended to place the above line after the line `auto:auto`.
+
+Once these steps are complete, you can run `make` to build CoreDNS. Verify that it was build successfully:
+
+```sh
+./coredns -plugins
+```
+
+Make sure `ipref` is in the list of plugins. If not, then the build system might not have recognized the plugin. Also make sure that the `require` line mentioned above is still in `go.mod` - Go's build system might have removed it if it couldn't find the plugin. Make sure the plugin repo is in the correct place and has the correct name before running `make`.
 
 ## Install and configure the gateway at a home network.
 Blah, blah
