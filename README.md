@@ -111,6 +111,108 @@ Once these steps are complete, you can run `make` to build CoreDNS. Verify that 
 
 Make sure `ipref` is in the list of plugins. If not, then the build system might not have recognized the plugin. Also make sure that the `require` line mentioned above is still in `go.mod` - Go's build system might have removed it if it couldn't find the plugin. Make sure the plugin repo is in the correct place and has the correct name before running `make`.
 
+## Configuration
+
+For the sake of demonstration, we'll assume that you've decided to use:
+
+- `*.internal` as your internal, private TLD for hosting local IP addresses
+- `*.example.com` as your public domain for hosting IPREF addresses
+- `ns1.example.com` and `ns2.example.com` are your public nameservers for `example.com`
+- `10.240.0.0/12` as your encoding network (the virtual, local address space that the gateway uses to emulate remote IPREF hosts)
+- `1.2.3.4` is your gateway's public IP address
+
+Run the gateway using these arguments:
+
+```sh
+gw \
+    -data /var/lib/ipref \
+    -gateway-bind 0.0.0.0 \
+    -gateway-pub 1.2.3.4 \
+    -encode-net 10.240.0.0/12 \
+    -mapper-socket /run/ipref/mapper.sock
+```
+
+The directory `/var/lib/ipref` is where the mapping database will be stored. `/run/ipref/mapper.sock` is the path to the Unix domain socket used for communication between `gw`, `dns-agent`, and the CoreDNS ipref plugin (it will be created by `gw` on startup).
+
+`-gateway-bind` can be used to tell the gateway to only listen for UDP tunnel packets on a specific interface. Specifying `0.0.0.0` will tell it to listen on all interfaces.
+
+Run the DNS agent like so:
+
+```sh
+dns-agent \
+    -ea-ipver 4 \
+    -gw-ipver 4 \
+    -m unix:///run/ipref/mapper.sock \
+    -t 60 \
+    internal:example.com:ns1.example.com,ns2.example.com
+```
+
+The options `-ea-ipver` and `-gw-ipver` specify the IP version for the local network and UDP tunnel respectively. The `-t` option specifies the approximate interval in minutes at which the DNS agent will query the nameservers for updates.
+
+CoreDNS requires a Corefile (configuration file). Depending on your use case, there are a variety of ways to configure it. This example demonstrates a basic setup where CoreDNS acts as the special resolver (using the ipref plugin) and hosts the `*.internal` domain from a zone file.
+
+`/etc/coredns/Corefile`:
+
+```Corefile
+internal {
+    file /etc/coredns/db.internal
+    transfer {
+        to *
+    }
+    log
+    debug
+}
+. {
+    ipref {
+        upstream 8.8.8.8
+        ea-ipver 4
+        gw-ipver 4
+        mapper /run/ipref/mapper.sock
+    }
+    log
+    debug
+}
+```
+
+The `ea-ipver` and `gw-ipver` options are the same as for `dns-agent`. The `upstream` specifies the nameserver to query for AA records.
+
+Your `/etc/coredns/db.internal` is a zone file containing your local IP addresses. For example:
+
+```
+$ORIGIN internal.
+$TTL 120
+
+internal.  IN  SOA  localhost. admin.internal. ( 1 120 120 120 120 )
+internal.  IN  NS   localhost.
+
+gw.internal.      IN  A  10.0.0.1 ; The gateway itself
+host11.internal.  IN  A  10.0.0.11
+host22.internal.  IN  A  10.0.0.22
+```
+
+You can then start CoreDNS with:
+
+```sh
+coredns -conf /etc/coredns/Corefile
+```
+
+Finally, you will need to add AA records to your nameservers for your public domain (`example.com` in this example). Your zone file for this domain might look like:
+
+```
+$ORIGIN example.com.
+$TTL 3600
+
+example.com.  IN  SOA  ns1.example.com. admin.example.com. ( 2024123101 7200 3600 1209600 3600 )
+example.com.  IN  NS   ns1
+example.com.  IN  NS   ns2
+
+gw.example.com.      IN  A    1.2.3.4
+
+gw.example.com.      IN  TXT  "AA gw.example.com + 1" ; By convention, ref 1 is reserved for the gw itself
+host11.example.com.  IN  TXT  "AA gw.example.com + 11"
+host22.example.com.  IN  TXT  "AA gw.example.com + 22"
+```
+
 ## Install and configure the gateway at a home network.
 Blah, blah
 
