@@ -3,6 +3,18 @@ IPREF provides means of communication across different address spaces, such as p
 
 An IPREF gateway must be installed within each address space that wants to communicate. Here is an example of how such a gateway may be installed at a home network.
 
+## Building
+
+For a complete IPREF gateway, you'll need three binaries: `gw`, `dns-agent`, and `coredns`. Below are instructions for manually building them. Alternatively, you can use the Makefile in this repository to perform the process automatically. Before using it, you'll need to clone these repositories alongside the `gw` repository:
+
+- https://github.com/ipref/dns-agent
+- https://github.com/coredns/coredns (it's recommended to checkout tag `v1.12.1`)
+- https://github.com/ipref/coredns-plugin-ipref
+
+So the same directory should contain `gw`, `dns-agent`, `coredns`, and `coredns-plugin-ipref`.
+
+Then just run `make` inside this repository, and you'll find the binaries in `bin/`.
+
 ## Build the gateway
 ### Prerequisites
 
