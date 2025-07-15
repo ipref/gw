@@ -111,6 +111,8 @@ Once these steps are complete, you can run `make` to build CoreDNS. Verify that 
 
 Make sure `ipref` is in the list of plugins. If not, then the build system might not have recognized the plugin. Also make sure that the `require` line mentioned above is still in `go.mod` - Go's build system might have removed it if it couldn't find the plugin. Make sure the plugin repo is in the correct place and has the correct name before running `make`.
 
+> You have to disable `systemd-resolved` in order for CoreDNS to occupy port 53
+
 ## Configuration
 
 For the sake of demonstration, we'll assume that you've decided to use:
