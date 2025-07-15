@@ -155,6 +155,7 @@ CoreDNS requires a Corefile (configuration file). Depending on your use case, th
 
 ```Corefile
 internal {
+    #bind 127.0.0.2 # Optional
     file /etc/coredns/db.internal
     transfer {
         to *
@@ -163,18 +164,24 @@ internal {
     debug
 }
 . {
+    #bind 127.0.0.2 # Optional
     ipref {
         upstream 8.8.8.8
         ea-ipver 4
         gw-ipver 4
         mapper /run/ipref/mapper.sock
     }
+    #forward . 8.8.8.8 8.8.4.4 # Optional
     log
     debug
 }
 ```
 
 The `ea-ipver` and `gw-ipver` options are the same as for `dns-agent`. The `upstream` specifies the nameserver to query for AA records.
+
+The `forward` built-in plugin can optionally be used to forward requests for non-IPREF domains to another nameserver. For requests where the domain name had no AA records in the upstream DNS server or no mappings could be found/created, the DNS query is proxied to the nameservers listed after `forward .`.
+
+If you do not use `forward`, then the DNS server will return SERVFAIL for requests where no mappings could be found/created (even if there was an A or AAAA record on the upstream DNS server). This can be useful if you want to put the special resolver in your list of nameservers before your usual nameserver - most operating systems will try the next nameserver if the first one returned SERVFAIL. In this case, it can be useful to use the `bind` option to bind the nameserver to an alternative address (eg. `127.0.0.2`) so it can exist alongside another nameserver (eg. `systemd-resolved`).
 
 Your `/etc/coredns/db.internal` is a zone file containing your local IP addresses. For example:
 
