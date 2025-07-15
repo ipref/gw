@@ -21,37 +21,56 @@ WORK_DIR=$(mktemp -d)
 cd "$WORK_DIR"
 
 # -- Build
+check_binary() {
+    local binary=$1
+    local version_arg=${2:---version}
+    if [ -f "/usr/local/bin/$binary" ]; then
+        echo "Found existing $binary binary, checking if it works..."
+        if "/usr/local/bin/$binary" $version_arg >/dev/null 2>&1; then
+            echo "$binary is already installed and working, skipping build"
+            return 0
+        fi
+    fi
+    return 1
+}
+
 # - gw
-echo "Building gateway..."
-git clone https://github.com/ipref/gw.git
-cd gw
-go mod download
-go build -o gw
-cp gw /usr/local/bin/
-cd ..
+if ! check_binary "gw" "-h"; then
+    echo "Building gateway..."
+    git clone https://github.com/ipref/gw.git
+    cd gw
+    go mod download
+    go build -o gw
+    cp gw /usr/local/bin/
+    cd ..
+fi
 
 # - dns-agent
-echo "Building DNS agent..."
-git clone https://github.com/ipref/dns-agent.git
-cd dns-agent
-go build
-cp dns-agent /usr/local/bin/
-cd ..
+if ! check_binary "dns-agent" "-h"; then
+    echo "Building DNS agent..."
+    git clone https://github.com/ipref/dns-agent.git
+    cd dns-agent
+    go build
+    cp dns-agent /usr/local/bin/
+    cd ..
+fi
 
 # - coredns
-echo "Building CoreDNS with IPREF plugin..."
-git clone https://github.com/coredns/coredns.git
-cd coredns
-git checkout v1.12.1
-echo "require github.com/ipref/common v1.3.1" >> go.mod
-cd plugin
-git clone https://github.com/ipref/coredns-plugin-ipref.git
-mv coredns-plugin-ipref ipref
-cd ..
-sed -i '/auto:auto/a ipref:ipref' plugin.cfg
-make
-cp coredns /usr/local/bin/
-cd ..
+if ! check_binary "coredns"; then
+    echo "Building CoreDNS with IPREF plugin..."
+    git clone https://github.com/coredns/coredns.git
+    cd coredns
+    git checkout v1.12.1
+    echo "require github.com/ipref/common v1.3.1" >> go.mod
+    cd plugin
+    git clone https://github.com/ipref/coredns-plugin-ipref.git
+    mv coredns-plugin-ipref ipref
+    cd ..
+    sed -i '/auto:auto/a ipref:ipref' plugin.cfg
+    make
+    cp coredns /usr/local/bin/
+    cd ..
+fi
 
 # -- Configs
 cat > /etc/coredns/Corefile <<EOF
@@ -137,6 +156,9 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 EOF
+
+systemctl stop systemd-resolved
+systemctl disable systemd-resolved
 
 systemctl daemon-reload
 systemctl enable ipref-gateway ipref-dns-agent ipref-coredns
