@@ -5,6 +5,7 @@ package main
 import (
 	"errors"
 	. "github.com/ipref/ref"
+	newv1 "github.com/ipref/ref/newv1"
 	. "github.com/ipref/ref/oldv1"
 	"math/rand"
 	"net"
@@ -94,7 +95,10 @@ func (mb *MB) get_ea(rpb *PktBuf) int {
 		off := V1_HDR_LEN                // offset to arec in originator's packet
 		roff := V1_HDR_LEN + V1_MARK_LEN // offset to arec in response
 
-		arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
+		ok, length, arec := newv1.AddrRecDecode(pkt[off:])
+		if !ok {
+			panic("unexpected")
+		}
 		rarec := AddrRecDecode(ea_iplen, gw_iplen, rpkt[roff:])
 		arec.EA = rarec.EA
 
@@ -110,9 +114,9 @@ func (mb *MB) get_ea(rpb *PktBuf) int {
 			mark: M32(be.Uint32(rpkt[roff-V1_MARK_LEN+V1_MARK:])),
 		}
 
-		AddrRecEncode(pkt[off:], arec)
+		off += length
 		pkt[V1_CMD] = V1_ACK | V1_MC_GET_EA
-		pb.tail = pb.data + V1_HDR_LEN + v1_arec_len
+		pb.tail = off
 
 	case V1_NACK | V1_GET_EA:
 
@@ -126,7 +130,7 @@ func (mb *MB) get_ea(rpb *PktBuf) int {
 	}
 
 	be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((pb.tail-pb.data)/4))
-	log.debug("mb: out to  %v: %v\n", pb.peer, pb.pp_pkt())
+	log.trace("mb: out to  %v: %v\n", pb.peer, pb.pp_pkt())
 	if cli.trace {
 		pb.pp_raw("mbroker out: ")
 	}
@@ -139,14 +143,27 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 
 	pkt := pb.pkt[pb.data:pb.tail]
 
-	if len(pkt) < V1_HDR_LEN+v1_arec_len {
+	if len(pkt) < V1_HDR_LEN + newv1.V1_AREC_MIN_LEN {
 		log.err("mb: mc get ea pkt: len(%v) too short, dropping", len(pkt))
 		return DROP
 	}
 
 	off := V1_HDR_LEN
 
-	arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
+	ok, length, arec := newv1.AddrRecDecode(pkt[off:])
+	if !ok {
+		log.err("mb: mc get ea pkt: invalid arec format, dropping")
+		return DROP
+	}
+	if arec.EA.Len() != ea_iplen || arec.GW.Len() != gw_iplen {
+		pkt[V1_CMD] = V1_NACK | V1_MC_GET_EA
+		be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((V1_HDR_LEN / 4)))
+		pb.tail = pb.data + V1_HDR_LEN
+		log.trace("mb: NACK to %v: IP version mismatch", pb.peer)
+		pb.schan <- pb
+		return ACCEPT
+	}
+	off += length
 
 	ipr := IpRef{arec.GW, arec.Ref}
 
@@ -162,15 +179,14 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 			// found it
 
 			off := V1_HDR_LEN
-			wlen := V1_HDR_LEN + v1_arec_len
 
 			pkt[V1_CMD] = V1_ACK | V1_MC_GET_EA
 			arec.EA = iprec.ip
-			AddrRecEncode(pkt[off:], arec)
-			be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((wlen / 4)))
-			pb.tail = pb.data + wlen
+			off += newv1.AddrRecEncode(pkt[off:], arec)
+			be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((off / 4)))
+			pb.tail = pb.data + off
 
-			log.debug("mb: out to  %v: %v\n", pb.peer, pb.pp_pkt())
+			log.trace("mb: out to  %v: %v\n", pb.peer, pb.pp_pkt())
 			if cli.trace {
 				pb.pp_raw("mbroker out: ")
 			}
@@ -201,7 +217,8 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 
 	off += V1_MARK_LEN
 
-	copy(rpkt[off:off+v1_arec_len], pkt[V1_HDR_LEN:V1_HDR_LEN+v1_arec_len])
+	AddrRecEncode(rpkt[off:], arec)
+	off += v1_arec_len
 
 	// don't wait too long
 
@@ -399,9 +416,19 @@ func (mb *MB) mc_host_data(pb *PktBuf) int {
 
 	log.info("source:  %v  hash[%016x]  batch[%08x]", source, hash, batch)
 
-	for ; off <= pktlen-v1_arec_len; off += v1_arec_len {
+	for off != pktlen {
 
-		arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
+		ok, length, arec := newv1.AddrRecDecode(pkt[off:])
+		if !ok {
+			log.err("mb: mc host data: invalid arec, dropping")
+			retbuf <- pba
+			return DROP
+		}
+		off += length
+		if arec.EA.Len() != ea_iplen || arec.GW.Len() != gw_iplen {
+			log.trace("mb: mc host data: IP version mismatch, ignoring arec")
+			continue
+		}
 
 		log.info("   host:  %v + %v -> %v", arec.GW, &arec.Ref, arec.IP)
 
@@ -414,13 +441,13 @@ func (mb *MB) mc_host_data(pb *PktBuf) int {
 			continue
 		}
 
-		copy(pkta[offa:], pkt[off:off+v1_arec_len])
-		dnssrc.recs[arec] = true
+		if len(pkta[offa:]) < v1_arec_len {
+			log.err("mb: mc host data: not enough space for arec")
+			continue
+		}
+		AddrRecEncode(pkta[offa:], arec)
 		offa += v1_arec_len
-	}
-
-	if off != pktlen {
-		log.err("mb: mc host data pkt: garbage at end of packet")
+		dnssrc.recs[arec] = true
 	}
 
 	// send arec records
@@ -527,9 +554,7 @@ func (mb *MB) receive() {
 			continue
 		}
 
-		if cli.ticks || pkt[V1_CMD]&0x3f != V1_SET_MARK {
-			log.debug("mb: in from %v: %v", pb.peer, pb.pp_pkt())
-		}
+		log.trace("mb: in from %v: %v", pb.peer, pb.pp_pkt())
 		if cli.trace {
 			pb.pp_raw("mbroker in:  ")
 		}
@@ -582,6 +607,7 @@ func (mb *MB) connect_recv(inst uint, conn *net.UnixConn, schan chan<- *PktBuf) 
 			log.err("mbroker recv[%v] instance(%v) io error: %v", peer, inst, err)
 			conn.Close()
 			pb.write_v1_header(V1_NOOP, 0)
+			pb.typ = PKT_V1
 			pb.peer = peer
 			schan <- pb // force send which will cause connect_send to exit
 			break
@@ -602,6 +628,7 @@ func (mb *MB) connect_recv(inst uint, conn *net.UnixConn, schan chan<- *PktBuf) 
 
 		// send to mbroker
 
+		pb.typ = PKT_V1
 		pb.tail = pb.data + rlen
 		pb.peer = peer
 		pb.schan = schan

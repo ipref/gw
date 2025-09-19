@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	. "github.com/ipref/ref"
+	newv1 "github.com/ipref/ref/newv1"
 	. "github.com/ipref/ref/oldv1"
 	"net"
 	"strings"
@@ -326,16 +327,16 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 			ss += fmt.Sprintf("  REQ MC_GET_EA(%v) pktid[%04x]",
 				cmd&0x3f, be.Uint16(pkt[V1_PKTID:V1_PKTID+2]))
 
-			if pktlen-off < v1_arec_len {
-				ss += fmt.Sprintf(" too short")
-			} else {
-				arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
+			if ok, length, arec := newv1.AddrRecDecode(pkt[off:]); ok {
+
 				ss += fmt.Sprintf(" %v + %v", arec.GW, &arec.Ref)
 
-				off += v1_arec_len
+				off += length
 				if pktlen-off > 4 && pkt[off] == V1_TYPE_STRING && int(pkt[off+1]) <= pktlen-off-2 {
 					ss += fmt.Sprintf("   %v", string(pkt[off+2:off+2+int(pkt[off+1])]))
 				}
+			} else {
+				ss += fmt.Sprintf("invalid arec")
 			}
 		case V1_ACK | V1_MC_GET_EA:
 
@@ -344,11 +345,11 @@ func (pb *PktBuf) pp_pkt() (ss string) {
 			ss += fmt.Sprintf("  ACK MC_GET_EA(%v) pktid[%04x]",
 				cmd&0x3f, be.Uint16(pkt[V1_PKTID:V1_PKTID+2]))
 
-			if pktlen-off < v1_arec_len {
-				ss += fmt.Sprintf(" too short")
-			} else {
-				arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
+			if ok, _, arec := newv1.AddrRecDecode(pkt[off:]); ok {
+
 				ss += fmt.Sprintf(" %v + %v = %v", arec.GW, &arec.Ref, arec.EA)
+			} else {
+				ss += fmt.Sprintf("invalid arec")
 			}
 
 		case V1_NACK | V1_MC_GET_EA:
@@ -978,7 +979,7 @@ func (pb *PktBuf) validate_v1_header(rlen int) error {
 	pkt := pb.pkt[pb.data:pb.tail]
 
 	if len(pkt) < V1_HDR_LEN {
-		return fmt.Errorf("pkt too short: %v bytes", rlen)
+		return fmt.Errorf("v1 pkt too short: %v bytes", rlen)
 	}
 
 	if pkt[V1_VER] != V1_SIG {
@@ -991,17 +992,29 @@ func (pb *PktBuf) validate_v1_header(rlen int) error {
 			pkt[V1_CMD], len(pkt), lenfield*4)
 	}
 
-	if pkt[V1_IPVER] >> 4 != byte(cli.ea_ip.Ver()) {
-		return fmt.Errorf("v1 0x%02x: ea ip version mismatch: sent(%v) != expected(%v)",
-			pkt[V1_CMD], pkt[V1_IPVER] >> 4, cli.ea_ip.Ver())
-	}
-	if pkt[V1_IPVER] & 0xf != byte(cli.gw_bind_ip.Ver()) {
-		return fmt.Errorf("v1 0x%02x: gw ip version mismatch: sent(%v) != expected(%v)",
-			pkt[V1_CMD], pkt[V1_IPVER] & 0xf, cli.gw_bind_ip.Ver())
-	}
+	switch pkt[V1_CMD] & 0x3f {
 
-	if pkt[V1_RESERVED] != 0 {
-		return fmt.Errorf("v1 0x%02x: non-zero reserved field", pkt[V1_CMD])
+	case V1_MC_GET_EA:
+	case V1_MC_HOST_DATA:
+	case V1_MC_HOST_DATA_HASH:
+		// Use newv1
+		if pkt[V1_RESERVED] != 0 || pkt[V1_RESERVED+1] != 0 {
+			return fmt.Errorf("newv1 0x%02x: non-zero reserved field", pkt[V1_CMD])
+		}
+
+	default:
+		// Use oldv1
+		if pkt[V1_IPVER] >> 4 != byte(cli.ea_ip.Ver()) {
+			return fmt.Errorf("v1 0x%02x: ea ip version mismatch: sent(%v) != expected(%v)",
+				pkt[V1_CMD], pkt[V1_IPVER] >> 4, cli.ea_ip.Ver())
+		}
+		if pkt[V1_IPVER] & 0xf != byte(cli.gw_bind_ip.Ver()) {
+			return fmt.Errorf("v1 0x%02x: gw ip version mismatch: sent(%v) != expected(%v)",
+				pkt[V1_CMD], pkt[V1_IPVER] & 0xf, cli.gw_bind_ip.Ver())
+		}
+		if pkt[V1_RESERVED] != 0 {
+			return fmt.Errorf("v1 0x%02x: non-zero reserved field", pkt[V1_CMD])
+		}
 	}
 
 	return nil
