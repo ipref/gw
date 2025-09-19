@@ -4,7 +4,7 @@ package main
 
 import (
 	"crypto/rand"
-	. "github.com/ipref/common"
+	. "github.com/ipref/ref"
 	prng "math/rand" // we don't need crypto rng for time delays
 	"time"
 )

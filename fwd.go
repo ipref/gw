@@ -2,7 +2,7 @@
 
 package main
 
-import . "github.com/ipref/common"
+import . "github.com/ipref/ref"
 
 /* Packet flow
 

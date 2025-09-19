@@ -6,7 +6,8 @@ import (
 	"bufio"
 	"bytes"
 	"github.com/fsnotify/fsnotify"
-	. "github.com/ipref/common"
+	. "github.com/ipref/ref"
+	. "github.com/ipref/ref/oldv1"
 	"io"
 	"io/ioutil"
 	"net/netip"
@@ -357,7 +358,7 @@ func install_hosts_records(oid O32, arecs map[IP]AddrRec) {
 
 			// pack it up
 
-			rec.Encode(pkt[off:])
+			AddrRecEncode(pkt[off:], rec)
 
 			off += v1_arec_len
 

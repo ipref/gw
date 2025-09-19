@@ -9,7 +9,7 @@ import (
 	"os"
 	"sync"
 	"syscall"
-	. "github.com/ipref/common"
+	. "github.com/ipref/ref"
 	"golang.org/x/sys/unix"
 )
 

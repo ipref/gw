@@ -3,7 +3,8 @@
 package main
 
 import (
-	. "github.com/ipref/common"
+	. "github.com/ipref/ref"
+	. "github.com/ipref/ref/oldv1"
 	"slices"
 )
 
@@ -105,7 +106,7 @@ func get_arec_pkt(ea, ip, gw IP, ref Ref, oid O32, mark M32) *PktBuf {
 
 	off += V1_MARK_LEN
 
-	AddrRec{ea, ip, gw, ref}.Encode(pkt[off:])
+	AddrRecEncode(pkt[off:], AddrRec{ea, ip, gw, ref})
 
 	off += v1_arec_len
 
@@ -367,7 +368,7 @@ func (mgw *MapGw) get_ref(pb *PktBuf) int {
 		off += V1_MARK_LEN
 		arec.GW = rec.IP
 		arec.Ref = rec.Ref
-		arec.Encode(pkt[off:])
+		AddrRecEncode(pkt[off:], arec)
 	}
 
 	if pb.schan == nil {
@@ -535,7 +536,7 @@ func (mgw *MapGw) query_expired_refs(pb *PktBuf) int {
 		if !(rec.mark < mgw.cur_mark[rec.oid]) {
 			arec.IP = IPNum(arec.IP.Len(), 0)
 			arec.Ref = Ref{}
-			arec.Encode(pkt[off:])
+			AddrRecEncode(pkt[off:], arec)
 			if cli.debug["mapper"] {
 				log.debug("mgw:  keeping non-expired gw+ref(%v + %v) -> %v rec.mark(%v) not less than mark(%v)",
 					arec.GW, &arec.Ref, arec.IP, rec.mark, mgw.cur_mark[rec.oid])
@@ -817,7 +818,7 @@ func (mtun *MapTun) get_ea(pb *PktBuf) int {
 		be.PutUint32(pkt[off+V1_MARK:], uint32(iprec.mark))
 		off += V1_MARK_LEN
 		arec.EA = iprec.ip
-		arec.Encode(pkt[off:])
+		AddrRecEncode(pkt[off:], arec)
 	}
 
 	if pb.schan == nil {
@@ -1000,7 +1001,7 @@ func (mtun *MapTun) query_expired_eas(pb *PktBuf) int {
 
 		if !(rec.mark < mtun.cur_mark[rec.oid]) {
 			arec.EA = IPNum(ea_iplen, 0)
-			arec.Encode(pkt[off:])
+			AddrRecEncode(pkt[off:], arec)
 			if cli.debug["mapper"] {
 				log.debug("mtun: keeping non-expired ea(%v): %v + %v rec.mark(%v) not less than mark(%v)",
 					arec.EA, arec.GW, &arec.Ref, rec.mark, mtun.cur_mark[rec.oid])

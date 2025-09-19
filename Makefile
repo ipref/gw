@@ -28,7 +28,7 @@ bin/coredns: .FORCE | build bin
 		--exclude /plugin/ipref \
 		$(COREDNS)/ \
 		build/coredns/
-	echo "require github.com/ipref/common v1.3.1" >> build/coredns/go.mod
+	echo "require github.com/ipref/ref v1.0.0" >> build/coredns/go.mod
 	sed -i -e '/auto:auto/a\' -e 'ipref:ipref' build/coredns/plugin.cfg
 	rsync -v -rlp --delete --checksum \
 		--exclude .git \

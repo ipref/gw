@@ -4,7 +4,7 @@ package main
 
 import (
 	lru "github.com/hashicorp/golang-lru/v2/expirable"
-	. "github.com/ipref/common"
+	. "github.com/ipref/ref"
 	"golang.org/x/sys/unix"
 	"os"
 	"crypto/rand"

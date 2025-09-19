@@ -5,7 +5,7 @@ package main
 import (
 	"crypto/rand"
 	"net/netip"
-	. "github.com/ipref/common"
+	. "github.com/ipref/ref"
 	"time"
 )
 

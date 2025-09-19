@@ -1,10 +1,11 @@
-/* Copyright (c) 2018-2021 Waldemar Augustyn */
+/* Copyright (c) 2018-2021, 2025 Waldemar Augustyn */
 
 package main
 
 import (
 	"errors"
-	. "github.com/ipref/common"
+	. "github.com/ipref/ref"
+	. "github.com/ipref/ref/oldv1"
 	"math/rand"
 	"net"
 	"os"
@@ -109,7 +110,7 @@ func (mb *MB) get_ea(rpb *PktBuf) int {
 			mark: M32(be.Uint32(rpkt[roff-V1_MARK_LEN+V1_MARK:])),
 		}
 
-		arec.Encode(pkt[off:])
+		AddrRecEncode(pkt[off:], arec)
 		pkt[V1_CMD] = V1_ACK | V1_MC_GET_EA
 		pb.tail = pb.data + V1_HDR_LEN + v1_arec_len
 
@@ -165,7 +166,7 @@ func (mb *MB) mc_get_ea(pb *PktBuf) int {
 
 			pkt[V1_CMD] = V1_ACK | V1_MC_GET_EA
 			arec.EA = iprec.ip
-			arec.Encode(pkt[off:])
+			AddrRecEncode(pkt[off:], arec)
 			be.PutUint16(pkt[V1_PKTLEN:V1_PKTLEN+2], uint16((wlen / 4)))
 			pb.tail = pb.data + wlen
 

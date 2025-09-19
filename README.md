@@ -47,7 +47,7 @@ The project uses the following main dependencies (as specified in go.mod):
 
 - github.com/fsnotify/fsnotify v1.8.0
 - github.com/hashicorp/golang-lru/v2 v2.0.7
-- github.com/ipref/common v1.3.1
+- github.com/ipref/ref v1.0.0
 - go.etcd.io/bbolt v1.3.11
 - golang.org/x/sys v0.28.0
 
@@ -89,7 +89,7 @@ To build CoreDNS, you'll need to clone the CoreDNS repo and also the ipref plugi
 git clone https://github.com/coredns/coredns.git
 cd coredns/
 git checkout v1.12.1
-echo "require github.com/ipref/common v1.3.1" >> go.mod
+echo "require github.com/ipref/ref v1.0.0" >> go.mod
 cd plugin/
 git clone https://github.com/ipref/coredns-plugin-ipref.git
 mv coredns-plugin-ipref/ ipref/ # Rename

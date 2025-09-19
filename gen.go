@@ -4,7 +4,8 @@ package main
 
 import (
 	"crypto/rand"
-	. "github.com/ipref/common"
+	. "github.com/ipref/ref"
+	. "github.com/ipref/ref/oldv1"
 	prng "math/rand" // where crypto/rand would be an overkill
 )
 
@@ -76,7 +77,7 @@ func (gen *GenEA) recover_expired_eas() {
 
 		arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
 		arec.EA = search_ea
-		arec.Encode(pkt[off:])
+		AddrRecEncode(pkt[off:], arec)
 
 		off += v1_arec_len
 
@@ -283,7 +284,7 @@ func (gen *GenREF) recover_expired_refs() {
 
 		arec := AddrRecDecode(ea_iplen, gw_iplen, pkt[off:])
 		arec.Ref = search_ref
-		arec.Encode(pkt[off:])
+		AddrRecEncode(pkt[off:], arec)
 
 		off += v1_arec_len
 

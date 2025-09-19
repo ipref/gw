@@ -3,7 +3,8 @@
 package main
 
 import (
-	. "github.com/ipref/common"
+	. "github.com/ipref/ref"
+	. "github.com/ipref/ref/oldv1"
 	prng "math/rand"
 )
 
@@ -48,7 +49,7 @@ func allocate_eas(gw []IP, ref Ref, from, to uint64) {
 
 		arec.GW = gw[int(lword)%len(gw)]
 		arec.Ref.L++
-		arec.Encode(pkt[off:])
+		AddrRecEncode(pkt[off:], arec)
 
 		// send to fwd_to_tun and forget it
 
@@ -129,7 +130,7 @@ func allocate_refs(base, from, to IP) {
 		off += V1_MARK_LEN
 
 		arec.IP = base.Add(ip)
-		arec.Encode(pkt[off:])
+		AddrRecEncode(pkt[off:], arec)
 
 		// send to fwd_to_gw and forget it
 

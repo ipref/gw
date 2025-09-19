@@ -3,7 +3,7 @@
 package main
 
 import (
-	. "github.com/ipref/common"
+	. "github.com/ipref/ref"
 	"strings"
 	"testing"
 )
