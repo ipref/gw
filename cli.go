@@ -24,7 +24,6 @@ var cli struct { // no locks, once setup in cli, never modified thereafter
 	trace      bool
 	stamps     bool
 	datadir    string
-	gw         string
 	gw_bind    string
 	gw_pub     string
 	ea         string
@@ -77,8 +76,6 @@ func parse_cli() {
 	flag.BoolVar(&cli.devmode, "devmode", false, "development mode, disable forwarding, run as a standalone mapper broker")
 	flag.BoolVar(&cli.stamps, "time-stamps", false, "print logs with time stamps")
 	flag.StringVar(&cli.datadir, "data", ddir, "data directory")
-	flag.StringVar(&cli.gw, "gateway", "",
-		"short for -gateway-bind and -gateway-pub; this should usually be the ip address of the public network interface")
 	flag.StringVar(&cli.gw_bind, "gateway-bind", "", "ip address to bind/listen for the gateway tunnel server")
 	flag.StringVar(&cli.gw_pub, "gateway-pub", "", "ip address to use as the source context ip for ipref tunnel packets")
 	flag.IntVar(&cli.gw_ifc_mtu, "gateway-ifc-mtu", 0, "MTU of the gateway public network interface")
@@ -136,8 +133,8 @@ func parse_cli() {
 
 	if cli.devmode {
 
-		cli.gw = "198.51.100.1"
-		cli.gw_bind_ip = MustParseIP(cli.gw)
+		gw := "198.51.100.1"
+		cli.gw_bind_ip = MustParseIP(gw)
 		cli.gw_pub_ip = cli.gw_bind_ip
 		if cli.gw_ifc_mtu == 0 {
 			cli.gw_ifc_mtu = 1500
@@ -147,15 +144,8 @@ func parse_cli() {
 
 		// parse gw addresses
 
-		if cli.gw_bind == "" {
-			cli.gw_bind = cli.gw
-		}
-		if cli.gw_pub == "" {
-			cli.gw_pub = cli.gw
-		}
-
 		if cli.gw_bind == "" && cli.gw_pub == "" {
-			log.fatal("missing gateway IP address (try -gateway 0.0.0.0 or -gateway ::)")
+			log.fatal("missing gateway IP address (try -gateway-bind 0.0.0.0 or -gateway-bind ::)")
 		}
 
 		cli.gw_bind_ip = IP{}
