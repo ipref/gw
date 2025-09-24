@@ -21,8 +21,8 @@ listed in /etc/hosts.
 const (
 	GENQLEN     = 2
 	SECOND_BYTE = 16
-	MIN_REF     = 256 // low ref values are reserved
-	MAXTRIES    = 10  // num of tries to get unique random value before giving up
+	MIN_REF     = 1024 // low ref values are reserved
+	MAXTRIES    = 10   // num of tries to get unique random value before giving up
 
 	RCVY_INTERVAL = (MAPPER_TMOUT * 1000) / 3 // [ms] interval between recovery attempts
 	RCVY_PAUSE    = 257                       // [ms] pause between recovery batches

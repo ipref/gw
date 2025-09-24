@@ -404,6 +404,15 @@ func (mb *MB) mc_host_data(pb *PktBuf) int {
 
 		log.info("   host:  %v + %v -> %v", arec.GW, &arec.Ref, arec.IP)
 
+		if arec.Ref.H == 0 && arec.Ref.L < MIN_REF {
+			if arec.GW == cli.gw_pub_ip && arec.Ref == cli.gw_ref {
+				// We don't need to create a mapping for the gateway itself - it's hard-coded.
+				continue
+			}
+			log.err("mb: mc host data: skipping arec (refs < %v are reserved)", MIN_REF)
+			continue
+		}
+
 		copy(pkta[offa:], pkt[off:off+v1_arec_len])
 		dnssrc.recs[arec] = true
 		offa += v1_arec_len
