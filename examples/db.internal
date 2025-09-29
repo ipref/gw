@@ -1,0 +1,48 @@
+; Internal DNS zone for IPREF services
+; Place in /etc/coredns/db.internal
+;
+; This zone file maps internal hostnames to local IP addresses.
+; The DNS agent will match these names with external AA records
+; to create IPREF mappings.
+
+$ORIGIN internal.
+$TTL 120
+
+; SOA record
+internal.  IN  SOA  localhost. admin.internal. (
+    1          ; Serial
+    120        ; Refresh
+    120        ; Retry
+    120        ; Expire
+    120        ; Minimum TTL
+)
+
+; Nameserver record
+internal.  IN  NS   localhost.
+
+; Gateway
+; This is the internal IP address of the IPREF gateway
+gw.internal.           IN  A  10.0.0.1
+
+; Published services
+; These are services that will be accessible via IPREF
+; The hostname before .internal must match the hostname in external DNS
+webserver.internal.    IN  A  10.0.0.10
+ssh.internal.          IN  A  10.0.0.22
+api.internal.          IN  A  10.0.0.30
+db.internal.           IN  A  10.0.0.40
+
+; Example with multiple IPs (round-robin)
+; loadbalanced.internal. IN  A  10.0.0.50
+; loadbalanced.internal. IN  A  10.0.0.51
+
+; Example with CNAME
+; www.internal.          IN  CNAME  webserver.internal.
+
+; Example with service records
+; _http._tcp.internal.   IN  SRV  0 5 80 webserver.internal.
+
+; DMZ services (if using separate zone)
+; These would be in a different network segment
+; dmz-web.internal.      IN  A  10.1.0.10
+; dmz-api.internal.      IN  A  10.1.0.20

@@ -1,0 +1,41 @@
+[Unit]
+Description=IPREF DNS Agent
+Documentation=https://github.com/ipref/dns-agent
+After=ipref-gateway.service network-online.target
+Requires=ipref-gateway.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/sysconfig/ipref
+
+# Wait for gateway to be ready
+ExecStartPre=/bin/sleep 3
+
+# Start DNS agent
+ExecStart=/usr/local/bin/ipref-dns-agent \
+    -ea-ipver ${EA_IPVER} \
+    -gw-ipver ${GW_IPVER} \
+    -m unix:///run/ipref/mapper.sock \
+    -t ${DNS_UPDATE_INTERVAL} \
+    ${DNS_ZONE_CONFIG}
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ipref-dns-agent
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/ipref
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

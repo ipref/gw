@@ -1,279 +1,224 @@
-# IPREF gateway
-IPREF provides means of communication across different address spaces, such as private networks behind NAT, or across different protocols. It provides compatibility between IPv4 and IPv6. It can traverse NAT, NAT6, and cross protocol IPv4/IPv6. It is inherently peer-to-peer.
+# IPREF Gateway
 
-An IPREF gateway must be installed within each address space that wants to communicate. Here is an example of how such a gateway may be installed at a home network.
+Access services behind NAT without port forwarding.
 
-## Building
+## What is IPREF?
 
-For a complete IPREF gateway, you'll need three binaries: `gw`, `dns-agent`, and `coredns`. Below are instructions for manually building them. Alternatively, you can use the Makefile in this repository to perform the process automatically. Before using it, you'll need to clone these repositories alongside the `gw` repository:
+IPREF (**IP** addressing with **References**) is a networking protocol that provides direct connectivity between hosts across different address spaces--including private networks behind NAT, overlapping networks, and even across IPv4/IPv6 boundaries. It eliminates the need for traditional NAT port forwarding by using reference-based addressing.
 
-- https://github.com/ipref/dns-agent
-- https://github.com/coredns/coredns (it's recommended to checkout tag `v1.12.1`)
-- https://github.com/ipref/coredns-plugin-ipref
+Unlike VPNs or mesh networks, IPREF works at the protocol level and is inherently peer-to-peer. Services become accessible automatically once DNS is configured with no manual port forwarding, no complex NAT rules, no firewall exceptions.
 
-So the same directory should contain `gw`, `dns-agent`, `coredns`, and `coredns-plugin-ipref`.
+**Learn more:** [IETF Draft Specification](https://www.ietf.org/archive/id/draft-augustyn-intarea-ipref-06.html) | [Architecture Details](docs/ARCHITECTURE.md)
 
-Then just run `make` inside this repository, and you'll find the binaries in `bin/`.
+## Quick Start
 
-## Build the gateway
 ### Prerequisites
 
-- Go 1.22 or later
-- Git
+- Linux 64-bit (tested on Rocky Linux, RHEL, Debian, Ubuntu)
+- 1 vCPU, 2GB RAM minimum
+- UDP port 1045 accessible
+- Basic networking tools (`dig`, `ping`, `traceroute`)
 
-### Steps
+### Download Binaries
 
-1. Clone the repository:
-```bash
-git clone https://github.com/ipref/gw.git
-cd gw
-```
-
-2. Install dependencies:
-```bash
-go mod download
-```
-
-3. Build the project:
-```bash
-go build -o gw
-```
-
-The build will generate an executable named `gw` in your current directory.
-
-### Dependencies
-
-The project uses the following main dependencies (as specified in go.mod):
-
-- github.com/fsnotify/fsnotify v1.8.0
-- github.com/hashicorp/golang-lru/v2 v2.0.7
-- github.com/ipref/common v1.3.1
-- go.etcd.io/bbolt v1.3.11
-- golang.org/x/sys v0.28.0
-
-### Verify installation
-
-To verify the build was successful:
+Download pre-built binaries from GitHub releases:
 
 ```bash
-./gw -h
+# Download pre-built binaries (Linux amd64)
+wget https://github.com/ipref/gw/releases/latest/download/ipref-gw
+wget https://github.com/ipref/gw/releases/latest/download/ipref-dns-agent
+wget https://github.com/ipref/gw/releases/latest/download/ipref-coredns
+
+chmod +x ipref-*
+sudo mv ipref-* /usr/local/bin/
 ```
 
-## Build the DNS agent
+### Client Mode Setup
 
-The DNS agent informs the gateway about the mappings between public IPREF addresses and private IP addresses by periodically querying DNS servers.
+Client mode allows you to access IPREF network resources without publishing services.
 
-Clone the repository and build it:
+#### 1. Start the Gateway
 
-```sh
-git clone https://github.com/ipref/dns-agent.git
-cd dns-agent/
-go build
-```
+```bash
+# Create directories
+sudo mkdir -p /var/lib/ipref /run/ipref /etc/coredns
 
-The binary will be named `dns-agent`. Verify that it was built successfully:
-
-```sh
-./dns-agent -h
-```
-
-## Build CoreDNS with the `ipref` plugin
-
-CoreDNS can be used to host the special resolver (using the `ipref` plugin) and also optionally your `*.internal` and/or your public nameservers.
-
-The special resolver receives requests from the local network and translates AA records into A/AAAA records by asking `gw` to dynamically allocate addresses in the encoding network that are mapped to the IPREF address that appears in the AA record.
-
-To build CoreDNS, you'll need to clone the CoreDNS repo and also the ipref plugin repo inside CoreDNS's tree. You'll also need to add the dependencies for the ipref plugin to CoreDNS's `go.mod`.
-
-```sh
-git clone https://github.com/coredns/coredns.git
-cd coredns/
-git checkout v1.12.1
-echo "require github.com/ipref/common v1.3.1" >> go.mod
-cd plugin/
-git clone https://github.com/ipref/coredns-plugin-ipref.git
-mv coredns-plugin-ipref/ ipref/ # Rename
-```
-
-Additionally, to ensure that CoreDNS's build system can find the plugin, this line needs to be added to the `plugin.cfg` file at the top level of the CoreDNS repo:
-
-```
-ipref:ipref
-```
-
-The order in `plugin.cfg` determines the order that plugins apply. It is recommended to place the above line after the line `auto:auto`.
-
-Once these steps are complete, you can run `make` to build CoreDNS. Verify that it was build successfully:
-
-```sh
-./coredns -plugins
-```
-
-Make sure `ipref` is in the list of plugins. If not, then the build system might not have recognized the plugin. Also make sure that the `require` line mentioned above is still in `go.mod` - Go's build system might have removed it if it couldn't find the plugin. Make sure the plugin repo is in the correct place and has the correct name before running `make`.
-
-## Configuration
-
-For the sake of demonstration, we'll assume that you've decided to use:
-
-- `*.internal` as your internal, private TLD for hosting local IP addresses
-- `*.example.com` as your public domain for hosting IPREF addresses
-- `ns1.example.com` and `ns2.example.com` are your public nameservers for `example.com`
-- `10.240.0.0/12` as your encoding network (the virtual, local address space that the gateway uses to emulate remote IPREF hosts)
-- `1.2.3.4` is your gateway's public IP address
-
-Run the gateway using these arguments:
-
-```sh
-gw \
+# Start gateway
+sudo ipref-gw \
     -data /var/lib/ipref \
     -gateway-bind 0.0.0.0 \
-    -gateway-pub 1.2.3.4 \
+    -gateway-pub 0.0.0.0 \
     -encode-net 10.240.0.0/12 \
     -mapper-socket /run/ipref/mapper.sock
 ```
 
-The directory `/var/lib/ipref` is where the mapping database will be stored. `/run/ipref/mapper.sock` is the path to the Unix domain socket used for communication between `gw`, `dns-agent`, and the CoreDNS ipref plugin (it will be created by `gw` on startup).
+#### 2. Start DNS Agent (in another terminal)
 
-`-gateway-bind` can be used to tell the gateway to only listen for UDP tunnel packets on a specific interface. Specifying `0.0.0.0` will tell it to listen on all interfaces.
-
-Run the DNS agent like so:
-
-```sh
-dns-agent \
+```bash
+sudo ipref-dns-agent \
     -ea-ipver 4 \
     -gw-ipver 4 \
     -m unix:///run/ipref/mapper.sock \
-    -t 60 \
-    internal:example.com:ns1.example.com,ns2.example.com
+    -t 60
 ```
 
-The options `-ea-ipver` and `-gw-ipver` specify the IP version for the local network and UDP tunnel respectively. The `-t` option specifies the approximate interval in minutes at which the DNS agent will query the nameservers for updates.
+#### 3. Start CoreDNS (in another terminal)
 
-CoreDNS requires a Corefile (configuration file). Depending on your use case, there are a variety of ways to configure it. This example demonstrates a basic setup where CoreDNS acts as the special resolver (using the ipref plugin) and hosts the `*.internal` domain from a zone file.
+First, create `/etc/coredns/Corefile`:
 
-`/etc/coredns/Corefile`:
-
-```Corefile
-internal {
-    #bind 127.0.0.2 # Optional
-    file /etc/coredns/db.internal
-    transfer {
-        to *
-    }
-    log
-    debug
-}
+```
 . {
-    #bind 127.0.0.2 # Optional
     ipref {
         upstream 8.8.8.8
         ea-ipver 4
         gw-ipver 4
         mapper /run/ipref/mapper.sock
     }
-    #forward . 8.8.8.8 8.8.4.4 # Optional
+    forward . 8.8.8.8 8.8.4.4
     log
-    debug
 }
 ```
 
-The `ea-ipver` and `gw-ipver` options are the same as for `dns-agent`. The `upstream` specifies the nameserver to query for AA records.
+Then start CoreDNS:
 
-The `forward` built-in plugin can optionally be used to forward requests for non-IPREF domains to another nameserver. For requests where the domain name had no AA records in the upstream DNS server or no mappings could be found/created, the DNS query is proxied to the nameservers listed after `forward .`.
-
-If you do not use `forward`, then the DNS server will return SERVFAIL for requests where no mappings could be found/created (even if there was an A or AAAA record on the upstream DNS server). This can be useful if you want to put the special resolver in your list of nameservers before your usual nameserver - most operating systems will try the next nameserver if the first one returned SERVFAIL. In this case, it can be useful to use the `bind` option to bind the nameserver to an alternative address (eg. `127.0.0.2`) so it can exist alongside another nameserver (eg. `systemd-resolved`).
-
-Your `/etc/coredns/db.internal` is a zone file containing your local IP addresses. For example:
-
-```
-$ORIGIN internal.
-$TTL 120
-
-internal.  IN  SOA  localhost. admin.internal. ( 1 120 120 120 120 )
-internal.  IN  NS   localhost.
-
-gw.internal.      IN  A  10.0.0.1 ; The gateway itself
-host11.internal.  IN  A  10.0.0.11
-host22.internal.  IN  A  10.0.0.22
+```bash
+sudo ipref-coredns -conf /etc/coredns/Corefile
 ```
 
-You can then start CoreDNS with:
+#### 4. Configure DNS Resolution
 
-```sh
-coredns -conf /etc/coredns/Corefile
+Point your system's DNS resolver to the local CoreDNS instance:
+
+```bash
+# Temporarily set DNS resolver (will reset on reboot)
+echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
+
+# For systemd-resolved systems, alternatively:
+sudo mkdir -p /etc/systemd/resolved.conf.d
+echo -e "[Resolve]\nDNS=127.0.0.1\nDomains=~." | sudo tee /etc/systemd/resolved.conf.d/ipref.conf
+sudo systemctl restart systemd-resolved
 ```
 
-Finally, you will need to add AA records to your nameservers for your public domain (`example.com` in this example). Your zone file for this domain might look like:
+## Testing Your Installation
 
+### Demo Hosts
+
+Test your IPREF installation with these live demo hosts:
+
+| Host | Location | Access |
+|------|----------|--------|
+| k41.nexsand.us | United States | https://k41.nexsand.us |
+| m41.nexsand.ca | Canada | https://m41.nexsand.ca |
+| o61.nexsand.uk | United Kingdom | https://o61.nexsand.uk |
+
+### Verification Commands
+
+```bash
+# Test DNS resolution (should show 10.240.x.x address)
+dig k41.nexsand.us
+
+# Test connectivity
+ping k41.nexsand.us
+
+# Access web service
+curl http://k41.nexsand.us
 ```
-$ORIGIN example.com.
-$TTL 3600
 
-example.com.  IN  SOA  ns1.example.com. admin.example.com. ( 2024123101 7200 3600 1209600 3600 )
-example.com.  IN  NS   ns1
-example.com.  IN  NS   ns2
+**Success indicators:**
+- `dig` returns an address in the `10.240.0.0/12` range
+- `ping` receives responses from that encoded address
+- `curl` successfully fetches the webpage
 
-gw.example.com.      IN  A    1.2.3.4
+**Troubleshooting:** See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
-gw.example.com.      IN  TXT  "AA gw.example.com + 1" ; By convention, ref 1 is reserved for the gw itself
-host11.example.com.  IN  TXT  "AA gw.example.com + 11"
-host22.example.com.  IN  TXT  "AA gw.example.com + 22"
+## Publishing Your Own Services
+
+Once you have the gateway running, you can publish services from your local network without port forwarding. IPREF allows you to publish thousands of services from within a private address space.
+
+### Overview
+
+1. **Set up internal DNS** - Map local services to `.internal` TLD
+2. **Set up external DNS** - Add AA records to your public DNS zone
+3. **Configure gateway** - Gateway automatically matches domain segments to map IPREF addresses to local IPs
+
+### Example
+
+To publish `webserver.internal` at `10.0.0.10` as `web.example.com`:
+
+**Internal DNS** (`/etc/coredns/db.internal`):
+```
+webserver.internal.  IN  A  10.0.0.10
 ```
 
-## Install and configure the gateway at a home network.
-Blah, blah
+**External DNS** (in your public zone):
+```
+web.example.com.  IN  TXT  "AA gw.example.com + 1025"
+gw.example.com.   IN  A    YOUR_PUBLIC_IP
+gw.example.com.   IN  TXT  "AA gw.example.com + 1"
+```
 
-## Test the gateway's ability to connect to hosts in other address spaces.
-Blah, blah...
+The DNS agent synchronizes these records, and the gateway automatically maps incoming connections for `web.example.com` to `10.0.0.10`.
 
-Nexsand, Inc, has set up a demo network in the cloud. It publishes test websites in three locations:
+**Complete guide:** [docs/SETUP.md](docs/SETUP.md)
 
-	https://k41.nexsand.us
-	https://m41.nexsand.ca
-	https://o61.nexsand.uk
+## Building from Source
 
-These websites can be viewed with a successful installation of the gateway. It is a quick test to check if it operates correctly.
+### Quick Build (Recommended)
 
-Blah, blah...
+The provided Makefile builds all three required components automatically:
 
-## Publish local services to the Internet
+```bash
+# Clone all repositories in the same directory
+git clone https://github.com/ipref/gw
+git clone https://github.com/ipref/dns-agent
+git clone https://github.com/coredns/coredns
+git clone https://github.com/ipref/coredns-plugin-ipref
 
-There is no need to mess with NAT, no need to manipulate ports, no need to assign global IP addresses. IPREF allows to publish arbitrary number of services, thousands of them, from within a private address space (behind NAT)
+# Checkout specific CoreDNS version
+cd coredns
+git checkout v1.12.1
+cd ..
 
-### Setup some local service
+# Build all components
+cd gw
+make
 
-Blah, blah...
+# Find binaries in bin/ directory
+ls bin/
+```
 
-It could be a machine with an ssh access, or a web server.
+This automatically builds:
+- Gateway binary (`gw`)
+- DNS agent (`dns-agent`)
+- CoreDNS with IPREF plugin (`coredns`)
 
-Blah, blah...
+**Detailed build instructions:** [docs/BUILD.md](docs/BUILD.md)
 
-### Set up internal DNS server
+## IPv6 Support
 
-First publish the server in an internal DNS server. This server publishes local addresses of services hosted on the local network (local address space). These DNS names are only visible internally. Typically TLD '.internal' is used for the purpose
+IPREF fully supports IPv6. The gateway can:
+- Use IPv6 for the encoding network (e.g., `fd00:240::/64`)
+- Use IPv6 for UDP tunnels between gateways
+- Bridge IPv4 and IPv6 networks seamlessly
+- Traverse NAT, NAT6, and mixed protocol scenarios
 
-Blah, blah...
+Configure IP versions with the `-ea-ipver` (encoding) and `-gw-ipver` (gateway tunnel) options.
 
-### Set up external DNS server
+## Documentation
 
-Publish IPREF addresses of the local services in a publicly accessible DNS server.
+- **[Setup Guide](docs/SETUP.md)** - Detailed configuration for publishing services
+- **[Architecture](docs/ARCHITECTURE.md)** - Protocol details and technical internals
+- **[Build Guide](docs/BUILD.md)** - Detailed build instructions and development setup
+- **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and solutions
+- **[Examples](examples/)** - Configuration examples for various scenarios
+- **[Systemd Services](systemd/)** - Production deployment with systemd
 
-Blah, blah...
+## Related Repositories
 
-### Configure the gateway to publish local services to the Internet
+- [dns-agent](https://github.com/ipref/dns-agent) - DNS synchronization agent
+- [coredns-plugin-ipref](https://github.com/ipref/coredns-plugin-ipref) - CoreDNS IPREF plugin
+- [common](https://github.com/ipref/common) - Shared IPREF libraries
 
-Publishing a service via IPREF amounts to setting proper DNS entries in the internal and external DNS servers. The gateway makes a match between top domain segments. That way it knows which IPREF address corresponds to which local native address.
+## License
 
-Blah, blah, ...
-
-### Testing the services
-
-Blah, blah...
-
-## Dealing with IPv6 Internet
-
-If your Internet Service provider offers IPv6 addresses, and you router supports IPv6, you can connect to both IPv4 and IPv6 Internets and reach external hosts over either IPv4 or IPv6 Internet.
-
-Connect the IPv6 Internet to the IPREF gateway. There is no need to change anything in your local network.
-
-Blah, blah...
+[GPL-2.0](https://choosealicense.com/licenses/gpl-2.0/)
