@@ -1,0 +1,41 @@
+[Unit]
+Description=IPREF Gateway
+Documentation=https://github.com/ipref/gw
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/sysconfig/ipref
+
+# Ensure directories exist
+ExecStartPre=/bin/mkdir -p /var/lib/ipref /run/ipref
+
+# Start gateway
+ExecStart=/usr/local/bin/ipref-gw \
+    -data /var/lib/ipref \
+    -gateway-bind ${GATEWAY_BIND_IP} \
+    -gateway-pub ${GATEWAY_PUBLIC_IP} \
+    -encode-net ${ENCODE_NETWORK} \
+    -mapper-socket /run/ipref/mapper.sock
+
+# Restart policy
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ipref-gateway
+
+# Security settings
+# Note: Running as root is required for network operations
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ipref /run/ipref
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

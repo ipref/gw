@@ -1,0 +1,39 @@
+[Unit]
+Description=IPREF CoreDNS
+Documentation=https://coredns.io https://github.com/ipref/coredns-plugin-ipref
+After=ipref-gateway.service network-online.target
+Requires=ipref-gateway.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+
+# Wait for gateway to be ready
+ExecStartPre=/bin/sleep 5
+
+# Start CoreDNS
+ExecStart=/usr/local/bin/ipref-coredns -conf /etc/coredns/Corefile
+
+# Restart policy
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ipref-coredns
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/ipref
+ReadOnlyPaths=/etc/coredns
+PrivateTmp=true
+
+# Required for binding to port 53
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

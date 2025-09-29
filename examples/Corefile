@@ -1,0 +1,87 @@
+# CoreDNS configuration with IPREF plugin
+# Place in /etc/coredns/Corefile
+
+# Internal zone for local network services
+# This zone maps local hostnames to internal IP addresses
+internal {
+    file /etc/coredns/db.internal
+    transfer {
+        to *
+    }
+    log
+}
+
+# Root zone with IPREF plugin
+# This handles DNS resolution with IPREF address translation
+. {
+    ipref {
+        # Upstream DNS server to query for AA records
+        upstream 8.8.8.8
+
+        # IP version for encoded addresses (local network)
+        # Use 4 for IPv4, 6 for IPv6
+        ea-ipver 4
+
+        # IP version for gateway-to-gateway tunnel
+        # Use 4 for IPv4, 6 for IPv6
+        gw-ipver 4
+
+        # Path to mapper Unix socket
+        mapper /run/ipref/mapper.sock
+    }
+
+    # Forward non-IPREF queries to public DNS
+    # Comment out if you want SERVFAIL for non-IPREF domains
+    forward . 8.8.8.8 8.8.4.4
+
+    # Optional: Cache DNS responses
+    cache 300
+
+    log
+}
+
+# Alternative configuration: Bind to specific interface
+# Useful when running alongside systemd-resolved
+#
+# . {
+#     bind 127.0.0.2
+#     ipref {
+#         upstream 8.8.8.8
+#         ea-ipver 4
+#         gw-ipver 4
+#         mapper /run/ipref/mapper.sock
+#     }
+#     forward . 8.8.8.8 8.8.4.4
+#     log
+# }
+
+# IPv6 configuration example
+#
+# . {
+#     ipref {
+#         upstream 2001:4860:4860::8888
+#         ea-ipver 6
+#         gw-ipver 6
+#         mapper /run/ipref/mapper.sock
+#     }
+#     forward . 2001:4860:4860::8888 2001:4860:4860::8844
+#     log
+# }
+
+# Multiple internal zones
+#
+# dmz {
+#     file /etc/coredns/db.dmz
+#     transfer {
+#         to *
+#     }
+#     log
+# }
+#
+# corp {
+#     file /etc/coredns/db.corp
+#     transfer {
+#         to *
+#     }
+#     log
+# }
