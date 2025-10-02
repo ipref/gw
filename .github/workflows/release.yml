@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+# Component versions - update these when releasing
+env:
+  DNS_AGENT_REF: v0.0.1
+  COREDNS_REF: v1.12.1
+  COREDNS_PLUGIN_IPREF_REF: v0.0.1
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout gw
+      uses: actions/checkout@v4
+      with:
+        path: gw
+        fetch-depth: 0
+
+    - name: Checkout dns-agent
+      uses: actions/checkout@v4
+      with:
+        repository: ipref/dns-agent
+        path: dns-agent
+        ref: ${{ env.DNS_AGENT_REF }}
+
+    - name: Checkout coredns
+      uses: actions/checkout@v4
+      with:
+        repository: coredns/coredns
+        path: coredns
+        ref: ${{ env.COREDNS_REF }}
+
+    - name: Checkout coredns-plugin-ipref
+      uses: actions/checkout@v4
+      with:
+        repository: ipref/coredns-plugin-ipref
+        path: coredns-plugin-ipref
+        ref: ${{ env.COREDNS_PLUGIN_IPREF_REF }}
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22'
+
+    - name: Install build dependencies
+      run: sudo apt-get update && sudo apt-get install -y rsync
+
+    - name: Get version from tag
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Build all components
+      working-directory: gw
+      run: make release-linux-amd64
+
+    - name: Prepare release artifacts
+      working-directory: gw
+      run: |
+        # Copy binaries to release directory
+        mkdir -p release
+        cp bin/ipref-gw-linux-amd64 release/ipref-gw
+        cp bin/ipref-dns-agent-linux-amd64 release/ipref-dns-agent
+        cp bin/ipref-coredns-linux-amd64 release/ipref-coredns
+
+        # Make all binaries executable
+        chmod +x release/*
+
+        # Create archive
+        cd release
+        tar czf ipref-linux-amd64.tar.gz ipref-gw ipref-dns-agent ipref-coredns
+
+    - name: Generate release notes
+      id: release_notes
+      run: |
+        cat > release_notes.md << 'EOF'
+        ## IPREF Gateway Release ${{ steps.get_version.outputs.VERSION }}
+
+        ### Installation
+
+        Download and extract the complete package:
+
+        ```bash
+        wget https://github.com/ipref/gw/releases/download/v${{ steps.get_version.outputs.VERSION }}/ipref-linux-amd64.tar.gz
+        tar xzf ipref-linux-amd64.tar.gz
+        sudo mv ipref-gw ipref-dns-agent ipref-coredns /usr/local/bin/
+        ```
+
+        Or download individual binaries:
+
+        ```bash
+        wget https://github.com/ipref/gw/releases/download/v${{ steps.get_version.outputs.VERSION }}/ipref-gw
+        wget https://github.com/ipref/gw/releases/download/v${{ steps.get_version.outputs.VERSION }}/ipref-dns-agent
+        wget https://github.com/ipref/gw/releases/download/v${{ steps.get_version.outputs.VERSION }}/ipref-coredns
+        chmod +x ipref-*
+        sudo mv ipref-* /usr/local/bin/
+        ```
+
+        ### Quick Start
+
+        See the [README](https://github.com/ipref/gw#quick-start) for setup instructions.
+
+        ### Components
+
+        This release includes all three IPREF components:
+        - `ipref-gw` - Gateway service (v${{ steps.get_version.outputs.VERSION }})
+        - `ipref-dns-agent` - DNS synchronization agent (${{ env.DNS_AGENT_REF }})
+        - `ipref-coredns` - CoreDNS with IPREF plugin (${{ env.COREDNS_REF }} + plugin ${{ env.COREDNS_PLUGIN_IPREF_REF }})
+        EOF
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        body_path: release_notes.md
+        files: |
+          gw/release/ipref-linux-amd64.tar.gz
+          gw/release/ipref-gw
+          gw/release/ipref-dns-agent
+          gw/release/ipref-coredns
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
