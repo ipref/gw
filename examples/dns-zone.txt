@@ -29,16 +29,12 @@ ns2.example.com.  IN  A  203.0.113.11
 ; The gateway must have an A record with its public IP
 gw.example.com.       IN  A    203.0.113.5
 
-; Gateway AA record
-; Reference 1 is reserved for the gateway itself by convention
-gw.example.com.       IN  TXT  "AA gw.example.com + 1"
-
 ; Published services
 ; Use references ≥1025 for security (makes port scanning impractical)
-; The hostname (e.g., "webserver") must match the internal DNS zone
+; The hostname (e.g., "web") must match the internal DNS zone
 
-; Web server (matches webserver.internal -> 10.0.0.10)
-webserver.example.com. IN  TXT  "AA gw.example.com + 1025"
+; Web server (matches web.internal -> 10.0.0.10)
+web.example.com.       IN  TXT  "AA gw.example.com + 1025"
 
 ; SSH server (matches ssh.internal -> 10.0.0.22)
 ssh.example.com.       IN  TXT  "AA gw.example.com + 1026"
@@ -59,7 +55,7 @@ db.example.com.        IN  TXT  "AA gw.example.com + 1028"
 ; service2.example.com.  IN  TXT  "AA gw2.example.com + 2048"
 
 ; CNAME example (points to another IPREF-enabled host)
-; www.example.com.       IN  CNAME  webserver.example.com.
+; www.example.com.       IN  CNAME  web.example.com.
 
 ; Note: You can also add regular A/AAAA records for services
 ; that should be accessible via traditional IP addressing

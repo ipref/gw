@@ -379,7 +379,6 @@ example.com.  IN  NS   ns2
 gw.example.com.      IN  A    203.0.113.5
 
 ; AA records for IPREF addresses
-gw.example.com.      IN  TXT  "AA gw.example.com + 1"
 host11.example.com.  IN  TXT  "AA gw.example.com + 1025"
 host22.example.com.  IN  TXT  "AA gw.example.com + 1026"
 ```

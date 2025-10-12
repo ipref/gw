@@ -4,11 +4,65 @@ Access services behind NAT without port forwarding.
 
 ## What is IPREF?
 
-IPREF (**IP** addressing with **References**) is a networking protocol that provides direct connectivity between hosts across different address spaces--including private networks behind NAT, overlapping networks, and even across IPv4/IPv6 boundaries. It eliminates the need for traditional NAT port forwarding by using reference-based addressing.
+IPREF (**IP** addressing with **References**, pronounced "I-P-REF") is a networking protocol that provides direct connectivity between hosts across different address spaces--including private networks behind NAT, overlapping networks, and even across IPv4/IPv6 boundaries. It eliminates the need for traditional NAT port forwarding by using reference-based addressing.
+
+**Note:** IPREF should always be written in all capital letters.
 
 Unlike VPNs or mesh networks, IPREF works at the protocol level and is inherently peer-to-peer. Services become accessible automatically once DNS is configured with no manual port forwarding, no complex NAT rules, no firewall exceptions.
 
 **Learn more:** [IETF Draft Specification](https://www.ietf.org/archive/id/draft-augustyn-intarea-ipref-06.html) | [Architecture Details](docs/ARCHITECTURE.md)
+
+## Example Home Network Setup
+
+This diagram shows a typical home network with an IPREF gateway. A single-interface PC behind NAT serves as the gateway, making internal services accessible from the Internet without port forwarding:
+
+```
+    192.168.10.0/24       ┏━━━━━  Public Internet
+            ║             ┃
+            ║             ┃
+            ║    .1 ╭─────┸────╮
+            ╟───────┤ WiFi Rtr │
+            ║       ╰──────────╯
+            ║
+            ║    .5 ┏━━━━━━━━━━┓
+            ╟───────┨ IPREF gw ┃    single interface is OK
+            ║       ┗━━━━━━━━━━┛
+            ║
+            ║       ╭─────────╮
+            ║   .21 │ private │     sample private server with ssh access
+            ╟───────┤ server  │     will be reachable externally via IPREF
+            ║       │  ssh    │
+            ║       ╰─────────╯
+            ║
+            ║       ╭─────────╮
+            ║   .22 │ private │     sample private webserver with https access
+            ╟───────┤ website │     will be reachable externally via IPREF
+            ║       │  https  │
+            ║       ╰─────────╯
+            ║
+            ╟── private computers, laptops, tablets, etc.
+            ║
+            ╟── private devices, phones, printers, etc.
+            ║
+         private
+         network
+```
+
+**Configuration:**
+
+**WiFi Router (192.168.10.1):**
+- Forward UDP port 1045 to `192.168.10.5`
+- Add static route for `10.240.0.0/12` via `192.168.10.5`
+
+**IPREF Gateway (192.168.10.5):**
+- Encode network: `10.240.0.0/12`
+- DNS resolver listening on `192.168.10.5` (accessible to local network)
+
+**Local Computers and Devices:**
+- Option 1: Add nameserver `192.168.10.5` before existing nameservers
+- Option 2 (recommended): Configure your local resolver in the gateway's Corefile, then set `192.168.10.5` as the sole nameserver
+
+**Tip:** Configuring the static route on your WiFi router redirects IPREF traffic at the first hop, eliminating additional routing overhead and the need to configure routes on individual devices.
 
 ## Quick Start
 
@@ -143,18 +197,17 @@ Once you have the gateway running, you can publish services from your local netw
 
 ### Example
 
-To publish `webserver.internal` at `10.0.0.10` as `web.example.com`:
+To publish `web.internal` at `10.0.0.10` as `web.example.com`:
 
 **Internal DNS** (`/etc/coredns/db.internal`):
 ```
-webserver.internal.  IN  A  10.0.0.10
+web.internal.  IN  A  10.0.0.10
 ```
 
 **External DNS** (in your public zone):
 ```
 web.example.com.  IN  TXT  "AA gw.example.com + 1025"
 gw.example.com.   IN  A    YOUR_PUBLIC_IP
-gw.example.com.   IN  TXT  "AA gw.example.com + 1"
 ```
 
 The DNS agent synchronizes these records, and the gateway automatically maps incoming connections for `web.example.com` to `10.0.0.10`.
