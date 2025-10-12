@@ -10,9 +10,9 @@ permissions:
 
 # Component versions - update these when releasing
 env:
-  DNS_AGENT_REF: v0.0.1
+  DNS_AGENT_REF: v1.0.0
   COREDNS_REF: v1.12.1
-  COREDNS_PLUGIN_IPREF_REF: v0.0.1
+  COREDNS_PLUGIN_IPREF_REF: v1.0.0
 
 jobs:
   build:
