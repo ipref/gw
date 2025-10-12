@@ -27,7 +27,9 @@ gw.internal.           IN  A  10.0.0.1
 ; Published services
 ; These are services that will be accessible via IPREF
 ; The hostname before .internal must match the hostname in external DNS
-webserver.internal.    IN  A  10.0.0.10
+; NOTE: Hostname must match the top segment of the external DNS name
+; e.g., web.internal matches web.example.com
+web.internal.          IN  A  10.0.0.10
 ssh.internal.          IN  A  10.0.0.22
 api.internal.          IN  A  10.0.0.30
 db.internal.           IN  A  10.0.0.40
@@ -37,10 +39,10 @@ db.internal.           IN  A  10.0.0.40
 ; loadbalanced.internal. IN  A  10.0.0.51
 
 ; Example with CNAME
-; www.internal.          IN  CNAME  webserver.internal.
+; www.internal.          IN  CNAME  web.internal.
 
 ; Example with service records
-; _http._tcp.internal.   IN  SRV  0 5 80 webserver.internal.
+; _http._tcp.internal.   IN  SRV  0 5 80 web.internal.
 
 ; DMZ services (if using separate zone)
 ; These would be in a different network segment
